@@ -23,8 +23,8 @@ The core system should support:
   descriptors, depth, distance from nipple, view position, image orientation,
   nipple landmark, posterior nipple line, and optional posterior boundary
   landmarks.
-- Finding-to-ROI matching by comparing report-derived anatomical expectations
-  with image-derived ROI positions.
+- Finding-to-ROI matching by comparing MagView-derived clinical anatomical
+  expectations with image-derived ROI positions.
 - ROI translation between related acquisitions, especially FFDM, DBT, and
   synthetic 2D images from combination acquisitions.
 - Visualization and audit trails that make every localization or transfer
@@ -95,8 +95,45 @@ Issues to fix during migration:
   `Mammogram`.
 - Some BI-RADS descriptors in `clinical/findings.py` do not match the v2025
   mammography lexicon summary.
-- Findings do not yet have dataframe constructors or a complete report-code
-  reconciliation path.
+- Findings do not yet have dataframe constructors or a complete MagView/source
+  code reconciliation path.
+
+## EMBED Structural Reference
+
+Public EMBED documentation should guide the target object structure, while the
+checked-in code should win when current local conventions differ:
+
+- EMBED overview:
+  https://docs.hitilab.com/datasets/embed/overview
+- EMBED dataset structure:
+  https://docs.hitilab.com/datasets/embed/structure
+- EMBED label assignment:
+  https://docs.hitilab.com/datasets/embed/label-assignment
+- EMBED ROIs:
+  https://docs.hitilab.com/datasets/embed/rois
+
+Structural implications:
+
+- EMBED has two primary tabular sources: MagView clinical data and image
+  metadata.
+- MagView is the primary structured clinical source. Narrative reports are not a
+  major current information source because most clinical fields are derived from
+  MagView.
+- MagView rows represent findings, with exam-level and patient-level fields
+  repeated across rows for the same accession.
+- Image metadata rows represent files/images and should remain separate from
+  clinical rows until a workflow intentionally joins them.
+- Clinical and metadata joins should be side-aware: clinical `side` maps to
+  metadata `ImageLateralityFinal`, with bilateral or missing clinical side
+  expanding to both image sides when appropriate.
+- Procedures and pathology results are linked to findings, not directly to
+  exams. A finding can have multiple linked procedures, such as biopsy followed
+  by lumpectomy, and MagView rows may be duplicated with the same `numfind`
+  while procedure details differ.
+- `numfind` identifies a unique finding within an exam, but the stable finding
+  identity should include accession and side as well.
+- ROI coordinates are image-local boxes in `[y_min, x_min, y_max, x_max]`
+  order. DBT ROIs can also carry `ROI_frames`, aligned by ROI index.
 
 ## ACR BI-RADS Validation
 
@@ -214,6 +251,19 @@ Phase zero should be package hygiene before domain migration:
 
 ## Core Domain Model
 
+### Cohort
+
+Represents an EMBED cohort when table-level builders need a top-level dataset
+container. Most workflows can operate on patients, exams, or breast sides
+directly, so this should be a lightweight aggregate rather than a required
+parent for every object.
+
+Suggested fields:
+
+- `cohort_num`
+- `patients`
+- `metadata`
+
 ### Patient
 
 Owns stable patient identity and stable demographics.
@@ -228,8 +278,10 @@ Suggested fields:
 
 ### Exam
 
-Represents one breast imaging encounter/study/accession. It should own all
-clinical and imaging children for that accession.
+Represents one breast imaging encounter/study/accession. It should own
+accession-level facts and provide aggregate access to side-scoped clinical and
+imaging objects. Procedures are not primary exam children; they belong to the
+findings that triggered or received the procedure/pathology result.
 
 Suggested fields:
 
@@ -239,16 +291,18 @@ Suggested fields:
 - `description`
 - `visit_type`
 - `site_id`
+- `breast_density`
 - `patient_at_exam_demographics`
-- `findings`
-- `images`
-- `procedures`
+- `breast_sides`
+- `findings`, as an aggregate view over side findings
+- `images`, as an aggregate view over side images
 - `risk_snapshots`, if present later
 
 ### BreastSide
 
-Introduce this as an explicit side-scoped aggregate when workflows need it.
-This avoids repeatedly filtering `Exam.images` and `Exam.findings` by side.
+Introduce this as an explicit side-scoped aggregate. This matches the EMBED
+clinical/metadata hierarchy: MagView findings are side-indexed with `side`, and
+metadata images are side-indexed with `ImageLateralityFinal`.
 
 Suggested fields:
 
@@ -256,16 +310,21 @@ Suggested fields:
 - `laterality`
 - `findings`
 - `images`
-- `procedures`
+- `procedures`, as an aggregate view over linked finding procedures when useful
 - `side_level_assessment`, if available
+- `side_level_labels`, for study-specific labels such as cancer/no-cancer
 
 ### Finding
 
-Represents a clinically reported finding, preserving both source codes and
-normalized BI-RADS concepts.
+Represents one MagView clinical finding, preserving both source codes and
+normalized BI-RADS concepts. A stable finding identity should include accession,
+side, and `numfind`, because `numfind` is only unique within an exam and
+procedure rows can duplicate the same finding.
 
 Suggested fields:
 
+- `finding_id`
+- `acc_anon`
 - `finding_number`
 - `laterality`
 - `assessment`
@@ -277,6 +336,8 @@ Suggested fields:
 - `quadrant`
 - `depth`
 - `distance_from_nipple_cm`
+- `procedures`
+- `pathology_events`, as an aggregate view over procedure pathology
 - `raw_source`
 - `normalization_warnings`
 
@@ -284,9 +345,30 @@ Do not force all findings into one subclass hierarchy immediately. Prefer a
 stable base `Finding` with optional descriptor dataclasses by type. Subclasses
 are useful only where behavior truly differs.
 
+### Procedure / PathologyEvent
+
+Represents a procedure and any linked pathology result for a specific finding.
+This object is finding-owned, not exam-owned, though exams and breast sides can
+expose aggregate views for convenience.
+
+Suggested fields:
+
+- `procedure_id`
+- `finding`
+- `laterality`
+- `procedure_date_anon`
+- `procedure_type`
+- `pathology_diagnoses`
+- `pathology_severity`
+- `specimen_metadata`
+- `raw_source`
+- `normalization_warnings`
+
 ### MammogramImage
 
-Represents one DICOM-derived image or image-like object.
+Represents one image metadata row: a DICOM-derived image or image-like object.
+The image object is file-centered and should not directly embed MagView finding
+rows. Clinical linkage happens through side-aware workflows and evidence.
 
 Suggested fields:
 
@@ -330,17 +412,21 @@ Represents a spatial annotation on an image.
 Suggested fields:
 
 - `roi_id`
-- `coords`
+- `coords`, in EMBED `[y_min, x_min, y_max, x_max]` order
 - `source_image`
-- `frames`
+- `frames`, including DBT frame indices from `ROI_frames` when available
 - `origin_roi`
-- `annotation_source`
+- `annotation_source`, such as screensave-derived, DICOM annotation-derived,
+  model-derived, or manual
+- `source_match_evidence`, for mappings from screensaves or derived images back
+  to source mammograms
 - `label`
 - `metadata`
 
 Keep geometry methods on the ROI for local operations such as centroid, area,
 resize, realign, IoU, containment ratio, and center distance. Put breast
 anatomical localization in a workflow/service because it needs image landmarks.
+For DBT, preserve the pairing between each ROI coordinate box and its frame list.
 
 ### Anatomical Position
 
@@ -394,6 +480,11 @@ class EmbedColumnConfig:
     finding_depth: str = "depth"
     finding_distance: str = "distance"
     finding_assessment: str = "asses"
+    procedure_laterality: str = "bside"
+    procedure_date: str = "procdate_anon"
+    procedure_type: str = "type"
+    pathology_severity: str = "path_severity"
+    pathology_diagnosis_prefix: str = "path"
 ```
 
 Known placeholders to verify with EMBED/local exports:
@@ -412,13 +503,25 @@ Known placeholders to verify with EMBED/local exports:
 `from_series` should accept `config: EmbedColumnConfig`, while table-level
 builders should live in adapters:
 
+- `EmbedCohortAdapter.from_dataframes`
 - `EmbedPatientAdapter.from_dataframe`
 - `EmbedExamAdapter.from_dataframes`
 - `EmbedImageAdapter.from_dataframe`
 - `EmbedFindingAdapter.from_dataframe`
+- `EmbedProcedureAdapter.from_dataframe`
 - `EmbedRoiAdapter.from_dataframe`
 
-This keeps dataframe quirks out of core objects.
+This keeps dataframe quirks out of core objects. Table-level builders should
+keep MagView and metadata separated internally until they intentionally assemble
+side-aware exam objects:
+
+- Build patients and exams from repeated MagView and metadata identifiers.
+- Deduplicate MagView rows into findings by accession, side, and `numfind`.
+- Attach procedure/pathology rows to the corresponding finding.
+- Build image and ROI objects from metadata rows.
+- Assemble `BreastSide` objects by matching clinical `side` with metadata
+  `ImageLateralityFinal`, expanding bilateral or missing clinical side where the
+  workflow requires it.
 
 ## Workflow 1: Clinical Finding Localization
 
@@ -426,7 +529,8 @@ Input:
 
 - `Finding`
 - `Laterality`
-- source location codes, clock-face code, depth code, distance from nipple
+- MagView/source location codes, clock-face code, depth code, distance from
+  nipple
 
 Output:
 
@@ -521,7 +625,7 @@ Rules:
   depth-derived or projected.
 - Keep ROI transfer separate from finding-to-ROI matching. Transfer answers
   "where is this annotation on a related image?" Matching answers "which report
-  finding does this annotation correspond to?"
+  or MagView finding does this annotation correspond to?"
 
 ## Visualization and Audit
 
@@ -557,15 +661,16 @@ result that can export a simple mapping when needed.
 - Update BI-RADS descriptor enums against v2025 public summary.
 - Add source-code preservation objects.
 - Move MagView location/depth/clock mapping into `adapters/magview.py` or
-  `core/anatomy.py`.
+  a dedicated normalization module, not core anatomy objects.
 - Add tests for laterality-dependent clock-face mapping.
 
 ### Phase 3: Build configurable EMBED adapters
 
 - Add `EmbedColumnConfig`.
 - Convert current `from_series` methods to use config objects.
-- Add table-level builders that assemble patients, exams, images, findings, and
-  ROIs.
+- Add table-level builders that assemble patients, exams, breast sides, images,
+  findings, finding-linked procedures/pathology events, and ROIs.
+- Keep MagView and metadata tables separate until side-aware joins are required.
 - Flag missing column names with explicit `PLACEHOLDER_*` config fields.
 
 ### Phase 4: Port image geometry
@@ -603,6 +708,7 @@ Start with small deterministic tests before any real data is available:
   BI-RADS values.
 - Clock-face tests for left and right breasts.
 - MagView location/depth code tests.
+- MagView finding deduplication and procedure/pathology attachment tests.
 - Alignment flip tests with toy coordinates.
 - ROI centroid, resize, realign, IoU, containment, and distance tests.
 - BreastGeometry tests with synthetic nipple/PNL coordinates.
@@ -611,6 +717,8 @@ Start with small deterministic tests before any real data is available:
 - Matcher tests for zero, one, and multiple findings; ties; missing axes; and
   unmatched ROIs.
 - Adapter tests using tiny fixture DataFrames and custom column configs.
+- Side-aware clinical/metadata join tests for left, right, bilateral, and
+  missing clinical side cases.
 
 ## Clear Issues and Blockers
 
