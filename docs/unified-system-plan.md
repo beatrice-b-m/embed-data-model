@@ -190,67 +190,83 @@ other local code systems should normalize through adapter or normalization
 modules that produce core `Finding`, `AnatomicalPosition`, `Quadrant`, and
 evidence objects.
 
-## Target Package Shape
+## Target System Shape
 
-Recommended package layout:
+Build the new system from the ground up in `unified-system/`. The existing
+`embed_toolkit/` and `quadrant_matching/` trees are reference implementations
+for behavior, vocabulary, and parity tests; they should not constrain the new
+runtime API or be imported by the new package as dependencies.
+
+Recommended layout:
 
 ```text
-embed_toolkit/
-  __init__.py
-  config/
-    __init__.py
-    columns.py
-    defaults.py
-  core/
-    __init__.py
-    primitives.py
-    anatomy.py
-    birads.py
-  clinical/
-    __init__.py
-    patients.py
-    exams.py
-    findings.py
-    procedures.py
-  imaging/
-    __init__.py
-    general.py
-    alignment.py
-    images.py
-    landmarks.py
-    rois.py
-  adapters/
-    __init__.py
-    embed.py
-    magview.py
-    dicom.py
-  workflows/
-    __init__.py
-    contexts.py
-    roi_transfer.py
-    localization.py
-    finding_roi_matching.py
-    patch_extraction.py
-  visualization/
-    __init__.py
-    mammogram.py
-  audit/
-    __init__.py
-    evidence.py
-    results.py
+unified-system/
+  pyproject.toml
+  README.md
+  src/
+    embed_toolkit/
+      __init__.py
+      config/
+        __init__.py
+        columns.py
+        defaults.py
+      core/
+        __init__.py
+        primitives.py
+        anatomy.py
+        birads.py
+      clinical/
+        __init__.py
+        cohorts.py
+        patients.py
+        exams.py
+        findings.py
+        procedures.py
+      imaging/
+        __init__.py
+        general.py
+        alignment.py
+        images.py
+        landmarks.py
+        rois.py
+      adapters/
+        __init__.py
+        embed.py
+        magview.py
+        dicom.py
+      workflows/
+        __init__.py
+        contexts.py
+        roi_transfer.py
+        localization.py
+        finding_roi_matching.py
+        patch_extraction.py
+      visualization/
+        __init__.py
+        mammogram.py
+      audit/
+        __init__.py
+        evidence.py
+        results.py
+  tests/
+    unit/
+    integration/
+    fixtures/
 ```
 
-Keep the old `quadrant_matching/` package temporarily as a reference until the
-new `workflows/finding_roi_matching.py` has parity tests. Then remove or archive
-it in a separate cleanup commit.
+Use a `src/` layout so tests for the new system import only
+`unified-system/src/embed_toolkit`. The repository root contains an older
+`embed_toolkit/` tree, so test commands should run from `unified-system/` or use
+the new project metadata to avoid import ambiguity.
 
-Phase zero should be package hygiene before domain migration:
+Reference-code policy:
 
-- Add package `__init__.py` files and project metadata.
-- Repair internal import paths so `embed_toolkit` imports cleanly.
-- Add import smoke tests for the current clinical, imaging, and primitive
-  modules.
-- Establish the test harness before moving behavior out of `quadrant_matching/`.
+- Do not repair the old package as a prerequisite for the new implementation.
+- Do not import legacy modules from new runtime code.
+- Use legacy modules and docs to derive expected behavior, fixtures, and parity
+  tests.
+- Archive or remove legacy code only after the new implementation covers the
+  required behavior.
 
 ## Core Domain Model
 
@@ -728,66 +744,89 @@ result that can export a simple mapping when needed.
 
 ## Implementation Phases
 
-### Phase 1: Make the package coherent
+### Phase 1: Create the new project skeleton
 
-- Add package `__init__.py` files.
-- Rename or align `ImageBase`/`Mammogram`.
-- Fix internal imports.
-- Move shared enums into one primitive/core module.
-- Add project metadata and a minimal test harness.
-- Add import smoke tests.
+- Create `unified-system/` as the new implementation root.
+- Add `unified-system/pyproject.toml` and `README.md`.
+- Add `unified-system/src/embed_toolkit/` with package `__init__.py` files.
+- Add `unified-system/tests/` with unit, integration, and fixture directories.
+- Add import smoke tests for the new package only.
+- Document that legacy `embed_toolkit/` and `quadrant_matching/` are reference
+  code, not runtime dependencies.
 
-### Phase 2: Stabilize BI-RADS and source-code models
+### Phase 2: Build core primitives and clinical source models
 
+- Implement shared enums and primitives in `core/`.
 - Update BI-RADS descriptor enums against v2025 public summary.
 - Add source-code preservation objects.
+- Add core anatomy objects for laterality, clock/quadrant/depth, continuous
+  anatomical positions, and localization evidence.
 - Move MagView location/depth/clock mapping into `adapters/magview.py` or
   a dedicated normalization module, not core anatomy objects.
 - Add tests for laterality-dependent clock-face mapping.
 
-### Phase 3: Build configurable EMBED adapters
+### Phase 3: Build clinical and imaging domain objects
+
+- Implement `Cohort`, `Patient`, `Exam`, `BreastSide`, `Finding`,
+  `Procedure`/`PathologyEvent`, `MammogramImage`, landmarks, `BreastGeometry`,
+  and `RegionOfInterest`.
+- Keep methods on these objects limited to intrinsic behavior.
+- Add result and evidence objects in `audit/`.
+- Add unit tests for object identity, ownership, ROI geometry, landmarks, and
+  result serialization.
+
+### Phase 4: Build configurable EMBED adapters
 
 - Add `EmbedColumnConfig`.
-- Convert current `from_series` methods to use config objects.
 - Add table-level builders that assemble patients, exams, breast sides, images,
   findings, finding-linked procedures/pathology events, and ROIs.
 - Keep MagView and metadata tables separate until side-aware joins are required.
 - Flag missing column names with explicit `PLACEHOLDER_*` config fields.
+- Add adapter tests using synthetic MagView and metadata rows.
 
-### Phase 4: Port image geometry
+### Phase 5: Implement localization workflows
 
-- Create landmark and breast geometry objects.
-- Port nipple/PNL/depth-third calculations from `quadrant_matching`.
+- Implement breast geometry calculations from landmarks, using the old
+  nipple/PNL/depth-third behavior as a reference.
 - Implement `FindingLocalizer` and `RoiLocalizer` as service/context objects.
 - Add localization result objects with evidence payloads.
 - Replace enum/string mismatches with tests.
 - Make missing posterior landmarks produce partial positions where possible.
 
-### Phase 5: Port finding-to-ROI matching
+### Phase 6: Implement finding-to-ROI matching
 
 - Implement `FindingRoiMatcher` as a service/context object with parity tests
   against the old baseline behavior.
 - Add structured match result and candidate evidence objects.
 - Add one-to-one assignment mode and unmatched object reporting.
 
-### Phase 6: Restore ROI transfer
+### Phase 7: Implement ROI transfer and patch extraction
 
-- Reintroduce ROI resize, realign, IoU, containment, and distance operations.
 - Add acquisition relationship objects for FFDM, DBT, and synthetic 2D.
 - Implement `RoiTransferService` or `RoiTransferContext`.
 - Add transfer result objects, evidence, and visualization hooks.
 - Add `PatchExtractor` for ROI patch extraction and padding instead of placing
   patch workflow logic on the ROI object.
 
-### Phase 7: Remove the old workflow
+### Phase 8: Add visualization and audit exports
+
+- Implement mammogram visualization from workflow result/evidence objects.
+- Add export helpers for simple mapping outputs without losing structured
+  evidence.
+- Add visual/audit tests with synthetic images and landmarks where practical.
+
+### Phase 9: Retire or archive legacy code
 
 - Once parity tests and new adapters cover the old behavior, archive or remove
   `quadrant_matching/`.
+- Decide whether the old root-level `embed_toolkit/` should be archived,
+  removed, or retained as historical reference.
 - Keep the coordinate-system document and this plan as historical references.
 
 ## Test Strategy
 
-Start with small deterministic tests before any real data is available:
+Start with small deterministic tests in `unified-system/tests/` before any real
+data is available:
 
 - Import smoke tests for every public module.
 - Enum coercion tests for laterality, view position, modality, orientation, and
@@ -815,8 +854,8 @@ Start with small deterministic tests before any real data is available:
 Not blockers, but must be handled explicitly:
 
 - `hiti_preproc` is absent. Its alignment semantics should either be replaced by
-  the checked-in `embed_toolkit.imaging.alignment` module or wrapped behind an
-  optional compatibility adapter.
+  new alignment code in `unified-system/src/embed_toolkit/imaging/alignment.py`
+  or wrapped behind an optional compatibility adapter.
 - The isolated environment does not include private EMBED data, so adapter tests
   must use synthetic rows and placeholder column names where needed.
 - Posterior endpoint and pectoralis/chest-wall landmark columns are not present
@@ -825,17 +864,19 @@ Not blockers, but must be handled explicitly:
 - The public BI-RADS summary form is not the full licensed BI-RADS manual. Use
   it for public lexicon alignment, and keep a local extension layer for values
   present in historical MagView/EMBED exports.
-- There are currently no tests, no package metadata, and no importable package
-  boundary. Implementation should start there before domain behavior is moved.
+- The current root-level packages are not the target runtime. Implementation
+  should start by creating a clean `unified-system/` project boundary and test
+  harness before adding domain behavior.
 
 ## Immediate Next Step
 
-The first code change should be a narrow package-coherence commit:
+The first code change should be a narrow new-system skeleton commit:
 
-1. Add `__init__.py` files.
-2. Fix internal imports to match the checked-in tree.
-3. Resolve `ImageBase` versus `Mammogram`.
-4. Add import smoke tests.
+1. Create `unified-system/`.
+2. Add `pyproject.toml`, `README.md`, and `src/embed_toolkit/` package
+   initializers.
+3. Add `tests/` with an import smoke test for the new package.
+4. Document that existing root-level code is reference-only.
 
-That gives the later domain refactor a runnable base and makes every subsequent
-change measurable.
+That gives the greenfield implementation a runnable base and makes every
+subsequent change measurable without being coupled to legacy import issues.
