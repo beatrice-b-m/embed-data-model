@@ -106,6 +106,8 @@ Public validation source:
   https://www.acr.org/Clinical-Resources/Clinical-Tools-and-Reference/Reporting-and-Data-Systems/BI-RADS
 - ACR BI-RADS v2025 Mammography Lexicon Summary Form:
   https://edge.sitecorecloud.io/americancoldf5f-acrorgf92a-productioncb02-3650/media/ACR/Files/RADS/BI-RADS/BI-RADS-Summary-Form-Mammography.pdf
+- ACR BI-RADS v2025 Manual, What's New:
+  https://edge.sitecorecloud.io/americancoldf5f-acrorgf92a-productioncb02-3650/media/ACR/Files/RADS/BI-RADS/BIRADS-v2025-Whats-New.pdf
 
 The target model aligns with the v2025 mammography lexicon in these ways:
 
@@ -123,15 +125,19 @@ The target model aligns with the v2025 mammography lexicon in these ways:
 Required corrections for BI-RADS v2025 alignment:
 
 - Add `LOBULATED` to `MassShape`.
-- Review `MassMargin.MICROLOBULATED`; it is not listed on the public v2025
-  mammography summary form and may need to be retained only as a legacy/local
-  code value.
+- Move `MassMargin.MICROLOBULATED` out of the normalized v2025 mammography
+  lexicon. It was removed as a margin descriptor and should be retained only as
+  a legacy/local code value that normalizes to `INDISTINCT` when appropriate.
 - Replace or alias `CalcMorphology.MILK_OF_CALCIUM` with `LAYERING` for the
   v2025 mammography lexicon.
+- Move `CalcMorphology.DYSTROPHIC` out of the normalized v2025 mammography
+  lexicon. It should be retained only as a legacy/local code value that
+  normalizes to `COARSE` when appropriate.
 - Fix `COARSE_HETERO` spelling to `COARSE_HETEROGENEOUS`.
 - Represent `FINE_LINEAR_OR_FINE_LINEAR_BRANCHING`, not just `FINE_LINEAR`.
-- Review `AsymType.DEVELOPING`; it may need to remain as a legacy/local value
-  unless present in the full licensed atlas or local reporting exports.
+- Move `AsymType.DEVELOPING` out of the normalized v2025 mammography lexicon.
+  It was discontinued as a descriptor and should be retained only as a
+  legacy/local code value with change-over-time represented separately.
 - Add missing first-class finding categories over time: lymph nodes, skin
   lesions, dilated ducts, associated features, implants/augmentation,
   mastectomy, and gynecomastia.
@@ -141,6 +147,11 @@ Design implication:
 The toolkit should distinguish `BiradsLexiconValue` from `LocalSourceCode`.
 Local/MagView/EMBED codes can be preserved losslessly, while normalized BI-RADS
 concepts are exposed for clinical logic.
+
+Source-code parsing should not live in core anatomy objects. MagView, EMBED, and
+other local code systems should normalize through adapter or normalization
+modules that produce core `Finding`, `AnatomicalPosition`, `Quadrant`, and
+evidence objects.
 
 ## Target Package Shape
 
@@ -192,6 +203,14 @@ embed_toolkit/
 Keep the old `quadrant_matching/` package temporarily as a reference until the
 new `workflows/finding_roi_matching.py` has parity tests. Then remove or archive
 it in a separate cleanup commit.
+
+Phase zero should be package hygiene before domain migration:
+
+- Add package `__init__.py` files and project metadata.
+- Repair internal import paths so `embed_toolkit` imports cleanly.
+- Add import smoke tests for the current clinical, imaging, and primitive
+  modules.
+- Establish the test harness before moving behavior out of `quadrant_matching/`.
 
 ## Core Domain Model
 
@@ -474,6 +493,10 @@ Recommended matching model:
   allow one finding to have multiple ROIs when clinically plausible.
 - Preserve the old nearest-neighbor behavior as a baseline matcher for parity
   tests, then add richer assignment logic.
+- Parity tests should distinguish intentional legacy behavior from defects. In
+  particular, old enum/string view mismatches and silent averaging of
+  conflicting location codes should be documented as changed behavior when the
+  unified workflow handles them differently.
 
 ## Workflow 4: ROI Transfer Across Related Acquisitions
 
