@@ -226,15 +226,18 @@ embed_toolkit/
     dicom.py
   workflows/
     __init__.py
+    contexts.py
     roi_transfer.py
     localization.py
     finding_roi_matching.py
+    patch_extraction.py
   visualization/
     __init__.py
     mammogram.py
   audit/
     __init__.py
     evidence.py
+    results.py
 ```
 
 Keep the old `quadrant_matching/` package temporarily as a reference until the
@@ -448,6 +451,80 @@ This lets a CC image contribute mostly medial/lateral and depth, an MLO image
 contribute superior/inferior and depth, and a fused breast-side position carry
 all three axes.
 
+## Workflow Architecture
+
+Do not use mixins as the primary extension mechanism for modular workflows.
+Finding-to-ROI matching, ROI localization, ROI transfer, patch extraction, and
+visualization all depend on context outside any single domain object. That
+context can include breast side, paired images, acquisition relationships,
+landmarks, geometry, source-code provenance, scoring weights, and evidence
+policy.
+
+Use plain domain objects plus service/context objects:
+
+- Domain objects represent intrinsic clinical and imaging facts.
+- Domain object methods should be limited to local behavior that needs no
+  external workflow context.
+- Workflow service/context objects should coordinate multiple domain objects and
+  configuration.
+- Workflow methods should return structured result objects with evidence, not
+  mutate domain objects as their primary output.
+
+Acceptable intrinsic domain behavior:
+
+- `RegionOfInterest.centroid`, `area`, `resize`, `realign`, IoU, containment,
+  and center distance.
+- `MammogramImage` pixel loading and local alignment helpers.
+- `Finding` accessors for normalized descriptors and source-code provenance.
+- `BreastGeometry` coordinate-frame calculations from landmarks.
+
+Workflow objects:
+
+- `FindingLocalizer`: converts MagView/source clinical location fields into an
+  anatomical expectation.
+- `RoiLocalizer`: converts image ROI geometry plus breast geometry into
+  continuous and discrete anatomical positions.
+- `FindingRoiMatcher`: scores localized findings against localized ROIs for an
+  `Exam` or `BreastSide`.
+- `RoiTransferService` or `RoiTransferContext`: transfers an ROI across related
+  acquisitions using source image, target image, and acquisition relationship.
+- `PatchExtractor`: extracts and pads image patches from image/ROI pairs.
+- `MammogramVisualizer`: renders pixels, landmarks, ROIs, localized findings,
+  and workflow evidence.
+
+Recommended context/result shapes:
+
+```python
+@dataclass
+class BreastSideContext:
+    breast_side: BreastSide
+    geometry_by_image_id: dict[str, BreastGeometry]
+    matching_config: MatchingConfig
+    evidence_policy: EvidencePolicy
+
+
+@dataclass
+class RoiTransferContext:
+    source_image: MammogramImage
+    target_image: MammogramImage
+    relationship: AcquisitionRelationship
+    transfer_config: TransferConfig
+```
+
+Result objects should be explicit and serializable:
+
+- `FindingLocalizationResult`
+- `RoiLocalizationResult`
+- `MatchCandidate`
+- `FindingRoiMatchResult`
+- `RoiTransferResult`
+- `PatchExtractionResult`
+
+Avoid wrapper subclasses such as `MatchableFinding` or `TranslatableROI` unless
+there is a strong reason to create a new domain concept. They tend to duplicate
+the object model. Prefer wrappers around workflow context, not wrappers that
+pretend to be enhanced versions of the base objects.
+
 ## Adapter and Configuration Strategy
 
 Column names should be configured once and passed through adapter objects.
@@ -534,6 +611,7 @@ Input:
 
 Output:
 
+- `FindingLocalizationResult`
 - `AnatomicalPosition`
 - evidence describing which source values were used
 - warnings for unrecognized, conflicting, or ambiguous codes
@@ -557,6 +635,7 @@ Input:
 
 Output:
 
+- `RoiLocalizationResult`
 - continuous image-view position
 - discrete anatomical bin
 - evidence with raw distances and normalized coordinates
@@ -581,6 +660,7 @@ Input:
 
 Output:
 
+- `FindingRoiMatchResult`
 - match candidates
 - final assignments
 - per-candidate costs
@@ -613,6 +693,7 @@ Input:
 
 Output:
 
+- `RoiTransferResult`
 - transferred ROI
 - transform evidence
 - warnings if transfer is approximate
@@ -677,21 +758,26 @@ result that can export a simple mapping when needed.
 
 - Create landmark and breast geometry objects.
 - Port nipple/PNL/depth-third calculations from `quadrant_matching`.
+- Implement `FindingLocalizer` and `RoiLocalizer` as service/context objects.
+- Add localization result objects with evidence payloads.
 - Replace enum/string mismatches with tests.
 - Make missing posterior landmarks produce partial positions where possible.
 
 ### Phase 5: Port finding-to-ROI matching
 
-- Implement baseline nearest-neighbor matcher with parity tests against the old
-  behavior.
-- Add structured match evidence.
+- Implement `FindingRoiMatcher` as a service/context object with parity tests
+  against the old baseline behavior.
+- Add structured match result and candidate evidence objects.
 - Add one-to-one assignment mode and unmatched object reporting.
 
 ### Phase 6: Restore ROI transfer
 
 - Reintroduce ROI resize, realign, IoU, containment, and distance operations.
 - Add acquisition relationship objects for FFDM, DBT, and synthetic 2D.
-- Add transfer evidence and visualization hooks.
+- Implement `RoiTransferService` or `RoiTransferContext`.
+- Add transfer result objects, evidence, and visualization hooks.
+- Add `PatchExtractor` for ROI patch extraction and padding instead of placing
+  patch workflow logic on the ROI object.
 
 ### Phase 7: Remove the old workflow
 
@@ -716,6 +802,10 @@ Start with small deterministic tests before any real data is available:
   and axillary tail cases.
 - Matcher tests for zero, one, and multiple findings; ties; missing axes; and
   unmatched ROIs.
+- Workflow service tests that assert results are returned as explicit result
+  objects rather than hidden domain-object mutation.
+- Result serialization tests for localization, matching, transfer, and patch
+  extraction outputs.
 - Adapter tests using tiny fixture DataFrames and custom column configs.
 - Side-aware clinical/metadata join tests for left, right, bilateral, and
   missing clinical side cases.
