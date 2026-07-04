@@ -48,11 +48,15 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         adapters = importlib.import_module("embed_toolkit.adapters")
         audit = importlib.import_module("embed_toolkit.audit")
         clinical = importlib.import_module("embed_toolkit.clinical")
+        config = importlib.import_module("embed_toolkit.config")
         core = importlib.import_module("embed_toolkit.core")
         imaging = importlib.import_module("embed_toolkit.imaging")
 
+    assert adapters.build_clinical_tables
     assert adapters.normalize_magview_location
     assert audit.WorkflowResult
     assert clinical.Finding
+    assert config.EmbedColumnConfig().accession == "acc_anon"
     assert core.MassShape.LOBULATED.value == "lobulated"
+    assert imaging.Alignment.reference().is_reference
     assert imaging.RegionOfInterest((0, 0, 1, 1)).area == 1
