@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from embed_toolkit.adapters.embed import (
+    build_clinical_tables,
+    build_image_tables,
+    join_findings_to_images,
+)
 from embed_toolkit.audit.results import ResultStatus
 from embed_toolkit.core.primitives import Laterality, ViewPosition
 from embed_toolkit.imaging.alignment import Alignment, AlignmentDirection
@@ -91,6 +96,106 @@ def test_legacy_parity_clock_mapping_is_laterality_aware_before_matching() -> No
         "si": "central",
         "depth": "posterior",
     }
+
+
+def test_legacy_parity_bilateral_and_missing_side_expand_for_image_join() -> None:
+    clinical = build_clinical_tables(
+        [
+            {"empi_anon": "P1", "acc_anon": "ACC-EXPAND", "numfind": "B", "side": "B"},
+            {"empi_anon": "P1", "acc_anon": "ACC-EXPAND", "numfind": "U"},
+        ]
+    )
+    images = build_image_tables(
+        [
+            {
+                "image_id": "left-cc",
+                "acc_anon": "ACC-EXPAND",
+                "ImageLateralityFinal": "L",
+                "ViewPosition": "CC",
+            },
+            {
+                "image_id": "right-cc",
+                "acc_anon": "ACC-EXPAND",
+                "ImageLateralityFinal": "R",
+                "ViewPosition": "CC",
+            },
+            {
+                "image_id": "other-left-cc",
+                "acc_anon": "ACC-OTHER",
+                "ImageLateralityFinal": "L",
+                "ViewPosition": "CC",
+            },
+        ]
+    )
+
+    joins = join_findings_to_images(clinical.findings, images.images)
+    joined_image_ids = {
+        join.finding.finding_id: [image.image_id for image in join.images]
+        for join in joins
+    }
+
+    assert [finding.laterality for finding in clinical.findings] == [
+        Laterality.LEFT,
+        Laterality.RIGHT,
+        Laterality.UNKNOWN,
+    ]
+    assert joined_image_ids == {
+        "ACC-EXPAND:L:B": ["left-cc"],
+        "ACC-EXPAND:R:B": ["right-cc"],
+        "ACC-EXPAND:UNKNOWN:U": ["left-cc", "right-cc"],
+    }
+
+
+def test_legacy_parity_localization_preserves_source_evidence() -> None:
+    result = FindingLocalizer(source="magview-parity").localize(
+        laterality="L",
+        raw_source_fields={"loc_code": "L", "depth_code": "P", "clock": "3"},
+        subject_id="finding-source-evidence",
+    )
+
+    assert result.status is ResultStatus.SUCCESS
+    assert result.metadata["source"] == "magview-parity"
+    assert result.metadata["preferred_source"] == "magview-parity"
+    assert [
+        (item.kind, item.source, item.payload["field"], item.payload["raw_value"])
+        for item in result.evidence
+    ] == [
+        ("depth", "magview-parity", "depth_code", "P"),
+        ("clock", "magview-parity", "clock_code", "3"),
+        ("location", "magview-parity", "location_code", "L"),
+    ]
+
+
+def test_legacy_parity_roi_localization_preserves_geometry_evidence() -> None:
+    roi = RegionOfInterest(
+        (75, 85, 85, 95),
+        roi_id="roi-source-evidence",
+        image_id="left-cc",
+        frame_index=7,
+        source="roi-table",
+        confidence=0.75,
+        coordinate_frame_id="left-cc-aligned",
+    )
+
+    result = RoiLocalizer(expected_axes=("ml", "depth")).localize(roi, cc_geometry())
+
+    roi_evidence = result.evidence[0]
+    geometry_evidence = result.evidence[1]
+    assert result.status is ResultStatus.SUCCESS
+    assert result.metadata["frame_index"] == 7
+    assert roi_evidence.kind == "roi_geometry"
+    assert roi_evidence.source == "roi-table"
+    assert roi_evidence.confidence == 0.75
+    assert roi_evidence.payload == {
+        "roi_id": "roi-source-evidence",
+        "image_id": "left-cc",
+        "frame_index": 7,
+        "coordinates": [75, 85, 85, 95],
+        "centroid": [80.0, 90.0],
+        "coordinate_frame_id": "left-cc-aligned",
+    }
+    assert geometry_evidence.kind == "breast_geometry"
+    assert geometry_evidence.payload["coordinate_frame_id"] == "left-cc-aligned"
 
 
 def test_legacy_parity_mlo_roi_geometry_maps_view_observable_axis() -> None:
