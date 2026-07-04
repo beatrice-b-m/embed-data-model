@@ -168,3 +168,112 @@ def test_deterministic_tie_breaking_prefers_lower_roi_id() -> None:
 
     assert result.matched_roi_id == "roi-a"
     assert [candidate.roi_id for candidate in result.candidates] == ["roi-a", "roi-b"]
+
+
+def test_legacy_parity_side_mismatch_cannot_win_over_same_side_candidate() -> None:
+    finding = localized(
+        "finding-left",
+        "finding",
+        "L",
+        ml="lateral",
+        si="superior",
+        depth="posterior",
+    )
+    rois = [
+        localized(
+            "roi-right-perfect-location",
+            "roi",
+            "R",
+            ml="lateral",
+            si="superior",
+            depth="posterior",
+        ),
+        localized(
+            "roi-left-partial-location",
+            "roi",
+            "L",
+            ml="lateral",
+            si="inferior",
+            depth="posterior",
+        ),
+    ]
+
+    result = FindingRoiMatcher().match([finding], rois)[0]
+    side_mismatch = candidate_for(result, "roi-right-perfect-location")
+    same_side = candidate_for(result, "roi-left-partial-location")
+
+    assert result.matched_roi_id == "roi-left-partial-location"
+    assert result.unmatched_roi_ids == ["roi-right-perfect-location"]
+    assert same_side.payload["possible"] is True
+    assert same_side.score == 2 / 3
+    assert side_mismatch.score == 0.0
+    assert side_mismatch.payload["possible"] is False
+    assert side_mismatch.payload["skipped_reason"] == "side_mismatch"
+
+
+def test_legacy_parity_one_to_one_assignment_reports_unclaimed_rois_globally() -> None:
+    findings = [
+        localized("finding-upper", "finding", "R", si="superior", depth="posterior"),
+        localized("finding-lower", "finding", "R", si="inferior", depth="anterior"),
+    ]
+    rois = [
+        localized("roi-upper", "roi", "R", si="superior", depth="posterior"),
+        localized("roi-lower", "roi", "R", si="inferior", depth="anterior"),
+        localized("roi-extra", "roi", "R", si="central", depth="middle"),
+    ]
+
+    results = FindingRoiMatcher().match(findings, rois)
+
+    assert [result.finding_id for result in results] == [
+        "finding-lower",
+        "finding-upper",
+    ]
+    assert [result.matched_roi_id for result in results] == ["roi-lower", "roi-upper"]
+    assert [result.unmatched_roi_ids for result in results] == [
+        ["roi-extra"],
+        ["roi-extra"],
+    ]
+    assert all(result.status is ResultStatus.PARTIAL for result in results)
+    assert all("unmatched_rois" in warning_codes(result) for result in results)
+
+
+def test_legacy_parity_scoring_does_not_require_every_anatomical_axis() -> None:
+    finding = localized(
+        "finding-cc-observable",
+        "finding",
+        "L",
+        ml="medial",
+        si="superior",
+        depth="middle",
+    )
+    rois = [
+        localized(
+            "roi-cc-observable",
+            "roi",
+            "L",
+            ml="medial",
+            si="unknown",
+            depth="posterior",
+        ),
+        localized(
+            "roi-no-overlap",
+            "roi",
+            "L",
+            ml="unknown",
+            si="unknown",
+            depth="unknown",
+        ),
+    ]
+
+    result = FindingRoiMatcher().match([finding], rois)[0]
+    scored = candidate_for(result, "roi-cc-observable")
+    unscored = candidate_for(result, "roi-no-overlap")
+
+    assert result.matched_roi_id == "roi-cc-observable"
+    assert scored.score == 0.5
+    assert scored.payload["possible"] is True
+    assert scored.payload["scored_axes"] == ["ml", "depth"]
+    assert scored.payload["matched_axis_count"] == 1
+    assert scored.payload["scored_axis_count"] == 2
+    assert unscored.payload["possible"] is False
+    assert unscored.payload["skipped_reason"] == "no_comparable_axes"
