@@ -21,6 +21,37 @@ and parity tests. They should not be repaired as a prerequisite for the unified
 implementation, and fixes for unified behavior should land under
 `unified-system/`, not in the root-level legacy packages.
 
+The accepted final-batch decision is to keep both root-level legacy trees in the
+repository as read-only historical references until the retirement gate below is
+accepted. They are not candidates for active maintenance during parity work.
+
+## Parity Ownership
+
+Current parity coverage is owned by the unified-system modules and tests that
+exercise the replacement behavior:
+
+- Source values and normalized clinical vocabulary:
+  `core/birads.py`, `adapters/magview.py`, `tests/unit/test_birads.py`, and
+  `tests/unit/test_magview.py`.
+- Laterality, clock-face, quadrant, and depth semantics:
+  `core/anatomy.py`, `workflows/finding_localization.py`,
+  `tests/unit/test_anatomy.py`, and
+  `tests/unit/test_finding_localization.py`.
+- Alignment, landmark geometry, posterior boundary handling, and ROI
+  localization: `imaging/alignment.py`, `imaging/landmarks.py`,
+  `workflows/roi_localization.py`, `tests/unit/test_alignment.py`,
+  `tests/unit/test_imaging.py`, and `tests/unit/test_roi_localization.py`.
+- Finding-to-ROI matching and unmatched object reporting:
+  `workflows/finding_roi_matching.py`,
+  `tests/unit/test_finding_roi_matching.py`, and
+  `tests/unit/test_legacy_parity.py`.
+- ROI transfer, patch extraction, visualization, and audit exports:
+  `workflows/roi_transfer.py`, `workflows/patch_extraction.py`,
+  `visualization/mammogram.py`, `audit/export.py`, and their focused unit
+  tests.
+- Import isolation: `tests/unit/test_imports.py` proves the new package is
+  imported from `unified-system/src` rather than the root-level legacy package.
+
 ## Intentional Parity Decisions
 
 These differences from the legacy code are intentional and should be documented
@@ -47,9 +78,17 @@ in parity tests or review notes when relevant:
   should prefer explicit posterior breast or chest-wall landmarks when present,
   fall back to a documented approximation when absent, and return partial
   localization with evidence warnings when an axis cannot be observed.
+- Unmatched ROI reporting: legacy matching behavior could drop non-selected ROI
+  candidates from the final result surface. Unified matching must preserve
+  unmatched finding and ROI identifiers in structured result objects so audit,
+  visualization, and export code can review them.
 - Legacy BI-RADS and source codes: local or discontinued values should be
   preserved losslessly as source codes while normalized clinical logic uses the
   current unified BI-RADS/source-value model.
+- Source-code preservation: MagView, EMBED, and other local source values are
+  evidence attached by adapters or workflow results, not core anatomy concepts.
+  Unknown, conflicting, or legacy-only codes should be retained with warnings
+  instead of being silently coerced or discarded.
 
 ## Reference-Only Rules
 
