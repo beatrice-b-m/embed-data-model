@@ -52,7 +52,10 @@ The first four implementation batches have landed at a high level:
 The focused final batch is now limited to parity/retirement work: verify
 selected legacy behaviors against the new implementation, document intentional
 behavior changes, and decide the repository policy for the root-level legacy
-trees.
+trees. The current decision is recorded in
+[`legacy-retirement-policy.md`](legacy-retirement-policy.md): retain the
+root-level legacy trees as historical reference only until parity coverage is
+accepted, with no runtime imports from `unified-system/`.
 
 ## Orchestration Principles
 
@@ -347,6 +350,8 @@ Scope:
   archived, removed, or retained as historical reference.
 - Keep legacy trees reference-only during this decision. Do not introduce new
   runtime imports from those trees into `unified-system/`.
+- Use [`legacy-retirement-policy.md`](legacy-retirement-policy.md) as the
+  accepted policy record for intentional behavior changes and retirement gates.
 
 ## Review Checklist For The Orchestration Agent
 
