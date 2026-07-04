@@ -51,6 +51,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         config = importlib.import_module("embed_toolkit.config")
         core = importlib.import_module("embed_toolkit.core")
         imaging = importlib.import_module("embed_toolkit.imaging")
+        workflows = importlib.import_module("embed_toolkit.workflows")
 
     assert adapters.build_clinical_tables
     assert adapters.normalize_magview_location
@@ -60,3 +61,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert core.MassShape.LOBULATED.value == "lobulated"
     assert imaging.Alignment.reference().is_reference
     assert imaging.RegionOfInterest((0, 0, 1, 1)).area == 1
+    assert workflows.FindingLocalizer
+    assert workflows.RoiLocalizer
+    assert workflows.transfer_roi
+    assert workflows.extract_patch
