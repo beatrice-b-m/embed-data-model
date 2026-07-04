@@ -6,6 +6,7 @@ from embed_toolkit.audit.evidence import (
     Evidence,
     WarningSeverity,
 )
+from embed_toolkit.audit.export import export_result, export_results, summarize_results
 from embed_toolkit.audit.results import (
     LocalizationResult,
     MatchCandidate,
@@ -28,4 +29,7 @@ __all__ = [
     "TransferResult",
     "WarningSeverity",
     "WorkflowResult",
+    "export_result",
+    "export_results",
+    "summarize_results",
 ]

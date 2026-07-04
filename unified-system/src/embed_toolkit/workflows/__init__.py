@@ -1,6 +1,7 @@
 """Workflow services for localization, matching, transfer, and extraction."""
 
 from embed_toolkit.workflows.finding_localization import FindingLocalizer
+from embed_toolkit.workflows.finding_roi_matching import FindingRoiMatcher
 from embed_toolkit.workflows.patch_extraction import (
     PatchExtractionConfig,
     PatchExtractor,
@@ -17,6 +18,7 @@ __all__ = [
     "AcquisitionKind",
     "AcquisitionRelationship",
     "FindingLocalizer",
+    "FindingRoiMatcher",
     "PatchExtractionConfig",
     "PatchExtractor",
     "RoiLocalizer",
