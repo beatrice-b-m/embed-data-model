@@ -11,8 +11,8 @@ kb_status: draft
 
 ## Purpose
 
-This document summarizes how to parallelize the remaining implementation of the
-unified EMBED mammography toolkit described in
+This document summarizes the parallel implementation status of the unified
+EMBED mammography toolkit described in
 [`unified-system-plan.md`](unified-system-plan.md).
 
 It is intended for an orchestration agent that will assign scoped work to
@@ -21,17 +21,38 @@ each completed unit is tested and committed independently.
 
 ## Current Starting Point
 
-The initial implementation has already created:
+The implementation has already created:
 
 - `unified-system/` with a `src/` package layout.
 - Import smoke tests isolated from the legacy root-level `embed_toolkit/`.
 - Source-neutral core primitives in `core/primitives.py`.
 - Source-neutral breast anatomy axes and clock-face mapping in
   `core/anatomy.py`.
+- Focused unit tests for the core, adapter, clinical, imaging, workflow,
+  visualization, and audit-export modules.
 
 The remaining work should continue inside `unified-system/`. The legacy
-`embed_toolkit/` and `quadrant_matching/` directories remain reference code and
-should not be imported by the new runtime package.
+root-level `embed_toolkit/` and `quadrant_matching/` trees are reference-only
+sources for behavior, vocabulary, and parity review. They are not runtime
+dependencies of `unified-system/` and should not be imported by the new package.
+
+## Implementation Status
+
+The first four implementation batches have landed at a high level:
+
+- Foundation modules: core BI-RADS/source values, MagView normalization,
+  clinical domain objects, imaging domain objects, and audit result models.
+- Adapters and geometry: EMBED column configuration, local alignment/breast
+  geometry, and EMBED table builders.
+- Localization, transfer, and extraction workflows: finding localization, ROI
+  localization, ROI transfer, and patch extraction.
+- Matching, visualization, and exports: finding-to-ROI matching, mammogram
+  visualization helpers, and audit export helpers.
+
+The focused final batch is now limited to parity/retirement work: verify
+selected legacy behaviors against the new implementation, document intentional
+behavior changes, and decide the repository policy for the root-level legacy
+trees.
 
 ## Orchestration Principles
 
@@ -46,6 +67,9 @@ should not be imported by the new runtime package.
 - After every commit, verify with `git log --oneline -3`.
 
 ## First Parallel Batch: Foundation Modules
+
+Status: implemented at a high level in `unified-system/`; retain this section
+as the original ownership record.
 
 These tasks can be started simultaneously because they touch mostly independent
 modules.
@@ -137,7 +161,8 @@ Scope:
 
 ## Second Parallel Batch: Adapters And Geometry
 
-Start this batch after the first batch lands and module names stabilize.
+Status: implemented at a high level in `unified-system/`; retain this section
+as the original ownership record.
 
 ### Agent F: EMBED Column Configuration
 
@@ -190,8 +215,8 @@ Scope:
 
 ## Third Parallel Batch: Localization, Transfer, And Extraction
 
-Start this batch after MagView normalization, imaging geometry, and audit result
-models are available.
+Status: implemented at a high level in `unified-system/`; retain this section
+as the original ownership record.
 
 ### Agent I: Finding Localization
 
@@ -253,7 +278,8 @@ Scope:
 
 ## Fourth Parallel Batch: Matching, Visualization, And Exports
 
-Start this batch after both finding and ROI localization are available.
+Status: implemented at a high level in `unified-system/`; retain this section
+as the original ownership record.
 
 ### Agent M: Finding-To-ROI Matching
 
@@ -298,7 +324,10 @@ Scope:
 
 ## Final Batch: Parity And Legacy Retirement
 
-Start only after matching and localization behavior is implemented.
+Status: remaining focused final-batch work. Matching, localization,
+visualization, and export modules now exist under `unified-system/`, so this
+batch should avoid broad feature work and concentrate on parity review,
+documentation, and retirement policy.
 
 ### Agent P: Legacy Parity Review
 
@@ -309,10 +338,15 @@ Owned files:
 
 Scope:
 
-- Add targeted parity tests derived from `quadrant_matching/`.
-- Document intentional behavior changes versus legacy defects.
+- Add or confirm targeted parity coverage derived from `quadrant_matching/` for
+  representative anatomy, alignment, localization, and matching behavior.
+- Document intentional behavior changes versus legacy defects, especially where
+  `unified-system/` corrects missing dependencies, import issues, or collapsed
+  anatomical axes in the old implementation.
 - Decide whether root-level `embed_toolkit/` and `quadrant_matching/` should be
   archived, removed, or retained as historical reference.
+- Keep legacy trees reference-only during this decision. Do not introduce new
+  runtime imports from those trees into `unified-system/`.
 
 ## Review Checklist For The Orchestration Agent
 
@@ -340,4 +374,3 @@ integration pass:
 - Add cross-module smoke tests where imports or shared result models interact.
 - Run the full `unified-system/` test suite.
 - Commit integration cleanup separately from subagent feature commits.
-
