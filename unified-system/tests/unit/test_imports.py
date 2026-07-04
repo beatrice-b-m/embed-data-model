@@ -7,6 +7,18 @@ from collections.abc import Iterator
 from pathlib import Path
 
 
+PUBLIC_NAMESPACE_MODULES = [
+    "embed_toolkit.adapters",
+    "embed_toolkit.audit",
+    "embed_toolkit.clinical",
+    "embed_toolkit.config",
+    "embed_toolkit.core",
+    "embed_toolkit.imaging",
+    "embed_toolkit.visualization",
+    "embed_toolkit.workflows",
+]
+
+
 @contextmanager
 def new_src_imports() -> Iterator[Path]:
     project_root = Path(__file__).resolve().parents[2]
@@ -27,20 +39,29 @@ def test_imports_new_src_package() -> None:
 
 
 def test_public_namespace_packages_import() -> None:
-    modules = [
-        "embed_toolkit.adapters",
-        "embed_toolkit.audit",
-        "embed_toolkit.clinical",
-        "embed_toolkit.config",
-        "embed_toolkit.core",
-        "embed_toolkit.imaging",
-        "embed_toolkit.visualization",
-        "embed_toolkit.workflows",
-    ]
-
     with new_src_imports():
-        for module in modules:
+        for module in PUBLIC_NAMESPACE_MODULES:
             importlib.import_module(module)
+
+
+def test_public_namespace_imports_stay_inside_new_src_tree() -> None:
+    with new_src_imports() as src_path:
+        loaded = [
+            importlib.import_module(module)
+            for module in ["embed_toolkit", *PUBLIC_NAMESPACE_MODULES]
+        ]
+
+        for module in loaded:
+            assert Path(module.__file__).resolve().is_relative_to(src_path)
+
+        assert not any(
+            name == "quadrant_matching" or name.startswith("quadrant_matching.")
+            for name in sys.modules
+        )
+        assert not any(
+            name == "hiti_preproc" or name.startswith("hiti_preproc.")
+            for name in sys.modules
+        )
 
 
 def test_foundation_exports_are_available_from_namespaces() -> None:
