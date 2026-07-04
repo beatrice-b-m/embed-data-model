@@ -41,3 +41,18 @@ def test_public_namespace_packages_import() -> None:
     with new_src_imports():
         for module in modules:
             importlib.import_module(module)
+
+
+def test_foundation_exports_are_available_from_namespaces() -> None:
+    with new_src_imports():
+        adapters = importlib.import_module("embed_toolkit.adapters")
+        audit = importlib.import_module("embed_toolkit.audit")
+        clinical = importlib.import_module("embed_toolkit.clinical")
+        core = importlib.import_module("embed_toolkit.core")
+        imaging = importlib.import_module("embed_toolkit.imaging")
+
+    assert adapters.normalize_magview_location
+    assert audit.WorkflowResult
+    assert clinical.Finding
+    assert core.MassShape.LOBULATED.value == "lobulated"
+    assert imaging.RegionOfInterest((0, 0, 1, 1)).area == 1
