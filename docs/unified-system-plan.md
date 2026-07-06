@@ -30,16 +30,16 @@ The core system should support:
 - Visualization and audit trails that make every localization or transfer
   decision inspectable.
 
-Backwards compatibility with either current code path should not constrain the
-design. The old implementations are references for behavior and vocabulary, not
-APIs to preserve.
+Backwards compatibility with the retired code paths should not constrain the
+design. Their behavior and vocabulary have been captured in unified tests and
+documentation, not preserved as APIs.
 
 ## Current Repository Assessment
 
-### `quadrant_matching/`
+### Former `quadrant_matching/`
 
-This is the older working concept for matching clinical findings to ROIs. It
-contains:
+This was the older working concept for matching clinical findings to ROIs. It
+contained:
 
 - A MagView/code lookup table mapping location, depth, and clock codes to
   view-specific positions.
@@ -58,7 +58,7 @@ Important behavior to preserve:
 
 Issues to fix during migration:
 
-- It depends on `hiti_preproc.alignment`, which is not present in this repo.
+- It depended on `hiti_preproc.alignment`, which is not present in this repo.
 - Modules use local imports (`from quadrants import ...`) rather than package
   imports.
 - Some comparisons use strings such as `"MLO"` even though construction uses
@@ -69,10 +69,10 @@ Issues to fix during migration:
 - Image geometry assumes posterior extent from image edge/intercept rather than
   an explicit posterior breast/chest-wall landmark object.
 
-### `embed_toolkit/`
+### Former Root-Level `embed_toolkit/`
 
-This is the right direction for the unified system. It already separates
-clinical concepts, imaging concepts, primitive enums, alignment, and ROIs.
+This pointed toward the unified system by separating clinical concepts, imaging
+concepts, primitive enums, alignment, and ROIs.
 
 Important behavior to preserve or complete:
 
@@ -192,10 +192,10 @@ evidence objects.
 
 ## Target System Shape
 
-Build the new system from the ground up in `unified-system/`. The existing
-`embed_toolkit/` and `quadrant_matching/` trees are reference implementations
-for behavior, vocabulary, and parity tests; they should not constrain the new
-runtime API or be imported by the new package as dependencies.
+Build the new system from the ground up in `unified-system/`. The former
+`embed_toolkit/` and `quadrant_matching/` trees informed behavior, vocabulary,
+and parity tests before retirement; they should not constrain the runtime API or
+be reintroduced as dependencies.
 
 Recommended layout:
 
@@ -254,19 +254,17 @@ unified-system/
     fixtures/
 ```
 
-Use a `src/` layout so tests for the new system import only
-`unified-system/src/embed_toolkit`. The repository root contains an older
-`embed_toolkit/` tree, so test commands should run from `unified-system/` or use
-the new project metadata to avoid import ambiguity.
+Use a `src/` layout so tests for the system import only
+`unified-system/src/embed_toolkit`. Test commands should run from
+`unified-system/` or use the project metadata to preserve that import boundary.
 
-Reference-code policy:
+Retired-code policy:
 
-- Do not repair the old package as a prerequisite for the new implementation.
-- Do not import legacy modules from new runtime code.
-- Use legacy modules and docs to derive expected behavior, fixtures, and parity
-  tests.
-- Archive or remove legacy code only after the new implementation covers the
-  required behavior.
+- Do not reintroduce or repair old packages as prerequisites for the unified
+  implementation.
+- Do not import legacy module paths from runtime code.
+- Keep expected behavior, fixtures, and parity decisions owned by unified tests
+  and documentation.
 
 ## Core Domain Model
 
@@ -751,8 +749,8 @@ result that can export a simple mapping when needed.
 - Add `unified-system/src/embed_toolkit/` with package `__init__.py` files.
 - Add `unified-system/tests/` with unit, integration, and fixture directories.
 - Add import smoke tests for the new package only.
-- Document that legacy `embed_toolkit/` and `quadrant_matching/` are reference
-  code, not runtime dependencies.
+- Document the import boundary between `unified-system/src` and former legacy
+  paths.
 
 ### Phase 2: Build core primitives and clinical source models
 
@@ -815,12 +813,12 @@ result that can export a simple mapping when needed.
   evidence.
 - Add visual/audit tests with synthetic images and landmarks where practical.
 
-### Phase 9: Retire or archive legacy code
+### Phase 9: Retire legacy code
 
-- Once parity tests and new adapters cover the old behavior, archive or remove
-  `quadrant_matching/`.
-- Decide whether the old root-level `embed_toolkit/` should be archived,
-  removed, or retained as historical reference.
+- Removed `quadrant_matching/` after parity tests and new adapters covered the
+  required behavior.
+- Removed the old root-level `embed_toolkit/` after import isolation and parity
+  coverage were accepted.
 - Keep the coordinate-system document and this plan as historical references.
 
 ## Test Strategy
@@ -864,9 +862,8 @@ Not blockers, but must be handled explicitly:
 - The public BI-RADS summary form is not the full licensed BI-RADS manual. Use
   it for public lexicon alignment, and keep a local extension layer for values
   present in historical MagView/EMBED exports.
-- The current root-level packages are not the target runtime. Implementation
-  should start by creating a clean `unified-system/` project boundary and test
-  harness before adding domain behavior.
+- Former root-level packages are not the target runtime. The clean
+  `unified-system/` project boundary and test harness own domain behavior.
 
 ## Immediate Next Step
 
@@ -876,7 +873,7 @@ The first code change should be a narrow new-system skeleton commit:
 2. Add `pyproject.toml`, `README.md`, and `src/embed_toolkit/` package
    initializers.
 3. Add `tests/` with an import smoke test for the new package.
-4. Document that existing root-level code is reference-only.
+4. Document the import boundary from former root-level code.
 
 That gives the greenfield implementation a runnable base and makes every
 subsequent change measurable without being coupled to legacy import issues.

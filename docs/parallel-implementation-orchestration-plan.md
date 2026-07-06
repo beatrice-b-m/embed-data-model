@@ -24,17 +24,17 @@ each completed unit is tested and committed independently.
 The implementation has already created:
 
 - `unified-system/` with a `src/` package layout.
-- Import smoke tests isolated from the legacy root-level `embed_toolkit/`.
+- Import smoke tests isolated from former legacy package paths.
 - Source-neutral core primitives in `core/primitives.py`.
 - Source-neutral breast anatomy axes and clock-face mapping in
   `core/anatomy.py`.
 - Focused unit tests for the core, adapter, clinical, imaging, workflow,
   visualization, and audit-export modules.
 
-The remaining work should continue inside `unified-system/`. The legacy
-root-level `embed_toolkit/` and `quadrant_matching/` trees are reference-only
-sources for behavior, vocabulary, and parity review. They are not runtime
-dependencies of `unified-system/` and should not be imported by the new package.
+The remaining work should continue inside `unified-system/`. The former
+root-level `embed_toolkit/` and `quadrant_matching/` trees have been retired and
+removed after parity review. They are not runtime dependencies of
+`unified-system/` and should not be imported by the package.
 
 ## Implementation Status
 
@@ -49,13 +49,12 @@ The first four implementation batches have landed at a high level:
 - Matching, visualization, and exports: finding-to-ROI matching, mammogram
   visualization helpers, and audit export helpers.
 
-The focused final batch is now limited to parity/retirement work: verify
-selected legacy behaviors against the new implementation, document intentional
-behavior changes, and decide the repository policy for the root-level legacy
-trees. The current decision is recorded in
-[`legacy-retirement-policy.md`](legacy-retirement-policy.md): retain the
-root-level legacy trees as historical reference only until parity coverage is
-accepted, with no runtime imports from `unified-system/`.
+The focused final batch completed parity/retirement work: selected legacy
+behaviors were verified against the new implementation, intentional behavior
+changes were documented, and the root-level legacy trees were removed. The
+retirement decision is recorded in
+[`legacy-retirement-policy.md`](legacy-retirement-policy.md), with no runtime
+imports from `unified-system/`.
 
 ## Orchestration Principles
 
@@ -327,10 +326,9 @@ Scope:
 
 ## Final Batch: Parity And Legacy Retirement
 
-Status: remaining focused final-batch work. Matching, localization,
-visualization, and export modules now exist under `unified-system/`, so this
-batch should avoid broad feature work and concentrate on parity review,
-documentation, and retirement policy.
+Status: completed focused final-batch work. Matching, localization,
+visualization, and export modules now exist under `unified-system/`; parity
+review, documentation, and retirement policy have been recorded.
 
 ### Agent P: Legacy Parity Review
 
@@ -341,15 +339,14 @@ Owned files:
 
 Scope:
 
-- Add or confirm targeted parity coverage derived from `quadrant_matching/` for
+- Added or confirmed targeted parity coverage derived from legacy behavior for
   representative anatomy, alignment, localization, and matching behavior.
-- Document intentional behavior changes versus legacy defects, especially where
+- Documented intentional behavior changes versus legacy defects, especially where
   `unified-system/` corrects missing dependencies, import issues, or collapsed
   anatomical axes in the old implementation.
-- Decide whether root-level `embed_toolkit/` and `quadrant_matching/` should be
-  archived, removed, or retained as historical reference.
-- Keep legacy trees reference-only during this decision. Do not introduce new
-  runtime imports from those trees into `unified-system/`.
+- Removed root-level `embed_toolkit/` and `quadrant_matching/`.
+- Keep former legacy import paths blocked. Do not introduce new runtime imports
+  from those paths into `unified-system/`.
 - Use [`legacy-retirement-policy.md`](legacy-retirement-policy.md) as the
   accepted policy record for intentional behavior changes and retirement gates.
 

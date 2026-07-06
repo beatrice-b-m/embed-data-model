@@ -1,7 +1,7 @@
 ---
 type: Policy
 title: Legacy Retirement Policy
-description: Reference-only policy and intentional parity decisions for the root-level EMBED toolkit trees.
+description: Retired legacy policy and intentional parity decisions for the former root-level EMBED toolkit trees.
 tags: [mammography, embed, legacy, parity, retirement]
 timestamp: 2026-07-04T00:00:00-04:00
 kb_status: draft
@@ -11,19 +11,14 @@ kb_status: draft
 
 ## Decision
 
-The root-level `embed_toolkit/` and `quadrant_matching/` trees are retained as
-historical reference only until unified-system parity coverage is accepted. They
-are not runtime dependencies of `unified-system/`, and new unified-system code
-must not import from them.
+The root-level `embed_toolkit/` and `quadrant_matching/` trees have been
+removed after acceptance of unified-system parity coverage. They are not runtime
+dependencies of `unified-system/`, and new unified-system code must not import
+from their former module paths.
 
-The legacy trees may be used to derive expected behavior, vocabulary, fixtures,
-and parity tests. They should not be repaired as a prerequisite for the unified
-implementation, and fixes for unified behavior should land under
-`unified-system/`, not in the root-level legacy packages.
-
-The accepted final-batch decision is to keep both root-level legacy trees in the
-repository as read-only historical references until the retirement gate below is
-accepted. They are not candidates for active maintenance during parity work.
+The legacy trees were used to derive expected behavior, vocabulary, fixtures,
+and parity tests. They are no longer candidates for active maintenance; fixes
+for unified behavior should land under `unified-system/`.
 
 ## Parity Ownership
 
@@ -49,19 +44,19 @@ exercise the replacement behavior:
   `workflows/roi_transfer.py`, `workflows/patch_extraction.py`,
   `visualization/mammogram.py`, `audit/export.py`, and their focused unit
   tests.
-- Import isolation: `tests/unit/test_imports.py` proves the new package is
-  imported from `unified-system/src` rather than the root-level legacy package.
+- Import isolation: `tests/unit/test_imports.py` proves the package is imported
+  from `unified-system/src` and rejects former legacy import paths.
 
 ## Intentional Parity Decisions
 
 These differences from the legacy code are intentional and should be documented
 in parity tests or review notes when relevant:
 
-- Missing `hiti_preproc`: `quadrant_matching/` depends on
+- Missing `hiti_preproc`: `quadrant_matching/` depended on
   `hiti_preproc.alignment`, which is not present in this repository. The unified
   system replaces that dependency with local alignment and image-orientation
   semantics under `unified-system/src/embed_toolkit/imaging/alignment.py`.
-- Legacy import problems: root-level legacy modules contain local or stale
+- Legacy import problems: root-level legacy modules contained local or stale
   package imports, including `from quadrants import ...` and package paths such
   as `embed_toolkit.structure...` or `embed_toolkit.elements...`. The unified
   system treats those as legacy defects, not APIs to preserve.
@@ -92,8 +87,8 @@ in parity tests or review notes when relevant:
 
 ## Reference-Only Rules
 
-- Do not add runtime imports from root-level `embed_toolkit/` or
-  `quadrant_matching/` into `unified-system/`.
+- Do not add runtime imports from former root-level `embed_toolkit/` or
+  `quadrant_matching/` paths into `unified-system/`.
 - Do not make new tests depend on those packages importing successfully.
 - Keep parity fixtures small and synthetic; copy only the minimal behavior
   needed to assert a unified-system invariant.
@@ -104,16 +99,15 @@ in parity tests or review notes when relevant:
 
 ## Retirement Gate
 
-The root-level legacy trees can be archived or removed only after the
-orchestration agent accepts parity coverage for:
+The retirement gate has been accepted based on parity coverage for:
 
 - MagView location, depth, clock-face, laterality, and bilateral expansion.
 - Alignment and coordinate normalization behavior needed by localization and
   matching.
 - ROI localization, finding-to-ROI matching, unmatched ROI reporting, and
   representative transfer behavior.
-- Import isolation proving `unified-system/` does not depend on root-level
-  legacy packages.
+- Import isolation proving `unified-system/` does not depend on former
+  root-level legacy packages.
 
-Until that gate is met, keep the trees in place as read-only references for
-review and fixture derivation.
+With that gate met, the legacy trees were removed from the repository. Their
+behavioral ownership now lives in the unified modules and tests listed above.

@@ -1,7 +1,7 @@
 ---
 type: Evaluation
 title: Legacy Removal Evaluation
-description: Readiness review for removing root-level legacy EMBED toolkit trees.
+description: Completion record for removing root-level legacy EMBED toolkit trees.
 tags: [mammography, embed, legacy, parity, retirement]
 timestamp: 2026-07-06T00:00:00-04:00
 kb_status: draft
@@ -9,14 +9,13 @@ kb_status: draft
 
 # Legacy Removal Evaluation
 
-The root-level `embed_toolkit/` and `quadrant_matching/` directories are no
-longer runtime dependencies of the unified implementation. The retained
-unified package under `unified-system/src/embed_toolkit` owns the current
-implementation, parity behavior, import isolation, and tests.
+The root-level `embed_toolkit/` and `quadrant_matching/` directories have been
+removed. The retained unified package under `unified-system/src/embed_toolkit`
+owns the current implementation, parity behavior, import isolation, and tests.
 
 ## Result
 
-Removal is mechanically feasible once the project accepts the retirement gate
+Removal was mechanically feasible after the project accepted the retirement gate
 in `docs/legacy-retirement-policy.md`. No blocking runtime references were
 found outside the legacy trees themselves.
 
@@ -33,32 +32,32 @@ found outside the legacy trees themselves.
   and import isolation.
 - The full unified-system test suite passes with `170 passed`.
 
-## Remaining References
+## Updated References
 
-The remaining references to root-level `embed_toolkit/` and `quadrant_matching/`
-are policy, planning, README, and import-isolation test references. They should
-be updated as part of the removal commit so the repository no longer describes
-deleted directories as present reference code.
+References to root-level `embed_toolkit/` and `quadrant_matching/` now describe
+former legacy paths, historical behavior, or import-isolation guardrails rather
+than present reference code.
 
-Expected documentation edits:
+Completed documentation edits:
 
-- `docs/legacy-retirement-policy.md`: mark the retirement gate accepted and
+- `docs/legacy-retirement-policy.md`: marked the retirement gate accepted and
   describe the legacy trees as removed rather than retained.
-- `docs/parallel-implementation-orchestration-plan.md`: update final-batch
-  notes that currently say to retain the legacy trees until parity is accepted.
-- `docs/unified-system-plan.md`: update Phase 9 from a future retirement step
+- `docs/parallel-implementation-orchestration-plan.md`: updated final-batch
+  notes that previously said to retain the legacy trees until parity was
+  accepted.
+- `docs/unified-system-plan.md`: updated Phase 9 from a future retirement step
   to a completed retirement decision.
-- `unified-system/README.md`: remove language that says root-level legacy
+- `unified-system/README.md`: removed language that says root-level legacy
   directories are present reference code.
 
-Expected test edit:
+Test note:
 
 - Keep import-isolation coverage in `unified-system/tests/unit/test_imports.py`;
   only adjust wording if needed. The blocker prefixes remain useful after
   deletion because they prevent reintroducing stale dependencies.
 
-## Recommendation
+## Outcome
 
-Proceed with a separate removal commit that deletes `embed_toolkit/` and
-`quadrant_matching/`, updates the documentation references above, and reruns
-`uv run pytest` from `unified-system/`.
+The removal commit deletes `embed_toolkit/` and `quadrant_matching/`, updates
+the documentation references above, and reruns `uv run pytest` from
+`unified-system/`.
