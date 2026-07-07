@@ -21,7 +21,7 @@ The clinical reporting frame is laterality first, then clock-face or quadrant lo
 
 ## View Axes
 
-The MLO view is an oblique lateral projection rather than a perfectly vertical mediolateral projection. Its obliquity follows the pectoralis/chest-wall geometry, which helps include posterior tissue, the axillary tail, and sometimes axillary lymph nodes. A true mediolateral or lateromedial view can help with localization when a stricter lateral projection is needed.
+The MLO view is an oblique lateral projection rather than a perfectly vertical mediolateral projection. Its obliquity helps include posterior tissue, the axillary tail, and sometimes axillary lymph nodes. A true mediolateral or lateromedial view can help with localization when a stricter lateral projection is needed.
 
 For quadrant assignment, the MLO view primarily contributes the superior-inferior axis:
 
@@ -37,21 +37,21 @@ Correction to the transcript: medial and lateral should not be treated as global
 
 ## Posterior Nipple Line
 
-The posterior nipple line (PNL) is the working reference from the nipple back toward the posterior breast/chest-wall boundary. In an MLO image it often appears oblique because the projection itself is oblique. Its exact angle varies with patient anatomy, positioning, and image display.
+The posterior nipple line (PNL) is the working reference from the nipple back toward the posterior image edge after alignment. In an MLO image it often appears oblique because the projection itself is oblique. Its exact angle varies with patient anatomy, positioning, and image display.
 
 For a quadrant/depth algorithm, the PNL can be treated as a nipple-to-posterior reference axis:
 
 - It provides a practical divider for upper versus lower regions on the MLO projection.
 - It anchors depth segmentation from the nipple/anterior breast toward the posterior breast.
-- Its endpoint should be derived from the visible posterior boundary or pectoralis/chest-wall context rather than assumed from a fixed image angle.
+- Its image-edge point is derived from the nipple position and PNL slope at `x=0` when the posterior breast is aligned to the left image edge, or at `x=x_max` when aligned to the right image edge.
 
 ## Depth Regions
 
-Depth adds a third localization axis from the nipple/anterior breast toward the chest wall/posterior breast. Segment the nipple-to-posterior reference distance into thirds:
+Depth adds a third localization axis from the nipple/anterior breast toward the posterior breast. Segment the nipple-to-PNL-edge reference distance into thirds:
 
 - `anterior`: closest to the nipple.
 - `middle`: central third.
-- `posterior`: closest to the chest wall.
+- `posterior`: closest to the posterior image-edge point on the PNL.
 
 Combining the four quadrants with three depth regions yields twelve coarse 3D localization bins:
 
@@ -67,7 +67,7 @@ These bins are useful for algorithmic localization, ROI assignment, toy mammogra
 - Prefer clock-face position when report text provides it, while preserving quadrant and depth when available.
 - Treat `inner` and `outer` as laterality-dependent anatomical terms, not display-position terms.
 - Keep CC and MLO localization logic separate until they are fused into a breast-side coordinate assignment.
-- Store enough metadata to reconstruct how a quadrant/depth assignment was made: laterality, view, image orientation, nipple point, posterior reference endpoint, and any pectoralis/chest-wall landmark used.
+- Store enough metadata to reconstruct how a quadrant/depth assignment was made: laterality, view, image orientation or alignment, nipple point, PNL slope, image dimensions, and which image edge was used for the derived PNL point.
 
 ## References
 

@@ -177,8 +177,8 @@ Owned files:
 Scope:
 
 - Implement `EmbedColumnConfig`.
-- Include known placeholder fields for identifiers, DBT frames, ROI source,
-  nipple confidence, and posterior landmarks.
+- Include known placeholder fields for identifiers, DBT frames, ROI source, and
+  nipple confidence.
 - Test default and custom column-name behavior.
 
 ### Agent G: Alignment And Breast Geometry
@@ -193,9 +193,8 @@ Scope:
 
 - Replace missing `hiti_preproc` behavior with local alignment semantics.
 - Add coordinate and image realignment helpers.
-- Implement breast geometry from nipple, posterior nipple line, and optional
-  posterior/chest-wall landmarks.
-- Test flips, depth thirds, and partial geometry when posterior landmarks are
+- Implement breast geometry from nipple and posterior nipple line.
+- Test flips, depth thirds, and partial geometry when nipple or PNL geometry is
   missing.
 
 ### Agent H: EMBED Table Builders

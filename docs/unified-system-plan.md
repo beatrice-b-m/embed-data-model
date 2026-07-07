@@ -21,8 +21,7 @@ The core system should support:
   procedures.
 - Breast-side anatomical localization using laterality, clock-face or quadrant
   descriptors, depth, distance from nipple, view position, image orientation,
-  nipple landmark, posterior nipple line, and optional posterior boundary
-  landmarks.
+  nipple landmark, and posterior nipple line.
 - Finding-to-ROI matching by comparing MagView-derived clinical anatomical
   expectations with image-derived ROI positions.
 - ROI translation between related acquisitions, especially FFDM, DBT, and
@@ -66,8 +65,8 @@ Issues to fix during migration:
 - The old two-axis `loc/depth` model collapses different anatomical axes into
   the active image view. That is useful for matching but should not be the
   clinical domain model.
-- Image geometry assumes posterior extent from image edge/intercept rather than
-  an explicit posterior breast/chest-wall landmark object.
+- Image geometry derives posterior extent from the posterior nipple line
+  intercept at the aligned image edge, rather than from a separate landmark.
 
 ### Former Root-Level `embed_toolkit/`
 
@@ -413,9 +412,9 @@ Landmarks should be first-class objects, not loose image attributes.
 
 Suggested objects:
 
-- `PointLandmark`: nipple, optional posterior endpoint, optional pectoralis
-  anchor points.
-- `LineLandmark`: posterior nipple line, pectoralis/chest-wall line if present.
+- `PointLandmark`: nipple point with provenance.
+- `LineLandmark`: posterior nipple line represented by a nipple point and a
+  derived image-edge point.
 - `BreastGeometry`: computed coordinate frame for a specific image.
 
 The nipple model output is an input landmark source. It should carry provenance:
@@ -588,8 +587,6 @@ Known placeholders to verify with EMBED/local exports:
 - DBT frame index or slice range for ROIs: `PLACEHOLDER_ROI_FRAMES`
 - ROI annotation source/model: `PLACEHOLDER_ROI_SOURCE`
 - Nipple model confidence: `PLACEHOLDER_NIPPLE_CONFIDENCE`
-- Posterior endpoint/chest-wall landmark columns:
-  `PLACEHOLDER_POSTERIOR_ENDPOINT_X`, `PLACEHOLDER_POSTERIOR_ENDPOINT_Y`
 
 `from_series` should accept `config: EmbedColumnConfig`, while table-level
 builders should live in adapters:
@@ -789,7 +786,8 @@ result that can export a simple mapping when needed.
 - Implement `FindingLocalizer` and `RoiLocalizer` as service/context objects.
 - Add localization result objects with evidence payloads.
 - Replace enum/string mismatches with tests.
-- Make missing posterior landmarks produce partial positions where possible.
+- Make missing nipple or posterior nipple line geometry produce partial
+  positions where possible.
 
 ### Phase 6: Implement finding-to-ROI matching
 
@@ -856,9 +854,9 @@ Not blockers, but must be handled explicitly:
   or wrapped behind an optional compatibility adapter.
 - The isolated environment does not include private EMBED data, so adapter tests
   must use synthetic rows and placeholder column names where needed.
-- Posterior endpoint and pectoralis/chest-wall landmark columns are not present
-  in this repo. The geometry layer should accept them if available and fall back
-  to the current PNL slope/image-boundary approximation with an evidence warning.
+- Posterior nipple line geometry is derived from nipple position, PNL slope,
+  image dimensions, and alignment. The current source model has no additional
+  landmark input columns for posterior geometry.
 - The public BI-RADS summary form is not the full licensed BI-RADS manual. Use
   it for public lexicon alignment, and keep a local extension layer for values
   present in historical MagView/EMBED exports.

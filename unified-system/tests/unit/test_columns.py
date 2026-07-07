@@ -20,7 +20,7 @@ def test_default_embed_columns_match_documented_embed_names() -> None:
     assert config.to_dict() == DEFAULT_EMBED_COLUMN_NAMES
 
 
-def test_placeholder_columns_cover_identifiers_roi_frames_and_landmarks() -> None:
+def test_placeholder_columns_cover_identifiers_roi_frames_and_landmark_provenance() -> None:
     config = EmbedColumnConfig.default()
 
     assert config.image_id == "PLACEHOLDER_IMAGE_ID"
@@ -30,8 +30,6 @@ def test_placeholder_columns_cover_identifiers_roi_frames_and_landmarks() -> Non
     assert config.roi_frames == "PLACEHOLDER_ROI_FRAMES"
     assert config.roi_source == "PLACEHOLDER_ROI_SOURCE"
     assert config.nipple_confidence == "PLACEHOLDER_NIPPLE_CONFIDENCE"
-    assert config.posterior_endpoint_x == "PLACEHOLDER_POSTERIOR_ENDPOINT_X"
-    assert config.posterior_endpoint_y == "PLACEHOLDER_POSTERIOR_ENDPOINT_Y"
 
     assert config.roi_columns() == (
         "ROI_coords",
@@ -43,8 +41,6 @@ def test_placeholder_columns_cover_identifiers_roi_frames_and_landmarks() -> Non
         "nipple_y",
         "PLACEHOLDER_NIPPLE_CONFIDENCE",
         "pnl_slope",
-        "PLACEHOLDER_POSTERIOR_ENDPOINT_X",
-        "PLACEHOLDER_POSTERIOR_ENDPOINT_Y",
     )
 
 
@@ -55,8 +51,6 @@ def test_custom_column_names_can_be_supplied_directly() -> None:
         image_laterality="laterality",
         roi_coords="boxes",
         roi_frames="frame_range",
-        posterior_endpoint_x="posterior_x",
-        posterior_endpoint_y="posterior_y",
     )
 
     assert config.patient_id == "patient_key"
@@ -66,7 +60,12 @@ def test_custom_column_names_can_be_supplied_directly() -> None:
         "ViewPosition",
     )
     assert config.required_roi_columns() == ("boxes",)
-    assert config.landmark_columns()[-2:] == ("posterior_x", "posterior_y")
+    assert config.landmark_columns() == (
+        "nipple_x",
+        "nipple_y",
+        "PLACEHOLDER_NIPPLE_CONFIDENCE",
+        "pnl_slope",
+    )
 
 
 def test_with_overrides_preserves_original_config() -> None:

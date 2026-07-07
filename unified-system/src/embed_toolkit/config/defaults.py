@@ -24,8 +24,6 @@ DEFAULT_EMBED_COLUMN_NAMES = {
     "nipple_y": "nipple_y",
     "nipple_confidence": "PLACEHOLDER_NIPPLE_CONFIDENCE",
     "pnl_slope": "pnl_slope",
-    "posterior_endpoint_x": "PLACEHOLDER_POSTERIOR_ENDPOINT_X",
-    "posterior_endpoint_y": "PLACEHOLDER_POSTERIOR_ENDPOINT_Y",
     "finding_number": "numfind",
     "finding_laterality": "side",
     "finding_location": "location",

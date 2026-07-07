@@ -20,8 +20,6 @@ class LandmarkType(Enum):
     NIPPLE = "nipple"
     POSTERIOR_NIPPLE_LINE_START = "posterior_nipple_line_start"
     POSTERIOR_NIPPLE_LINE_END = "posterior_nipple_line_end"
-    CHEST_WALL = "chest_wall"
-    POSTERIOR_BREAST_BOUNDARY = "posterior_breast_boundary"
     OTHER = "other"
 
 
@@ -70,7 +68,6 @@ class BreastGeometry:
     coordinate_frame_id: Optional[str] = None
     nipple: Optional[ImageLandmark] = None
     posterior_nipple_line: Optional[Tuple[ImageLandmark, ImageLandmark]] = None
-    posterior_boundary: Optional[ImageLandmark] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "laterality", Laterality.coerce(self.laterality))
@@ -98,10 +95,8 @@ class BreastGeometry:
 
     @property
     def posterior_reference(self) -> Optional[ImageLandmark]:
-        """Best available posterior reference for depth measurements."""
+        """Derived PNL endpoint used as the posterior reference."""
 
-        if self.posterior_boundary is not None:
-            return self.posterior_boundary
         if self.posterior_nipple_line is None or self.nipple is None:
             return None
         start, end = self.posterior_nipple_line

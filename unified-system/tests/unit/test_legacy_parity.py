@@ -37,7 +37,10 @@ def cc_geometry(
         image_shape=(120, 120),
         coordinate_frame_id=f"{image_id}-aligned",
         nipple=ImageLandmark(50, 90, LandmarkType.NIPPLE),
-        posterior_boundary=ImageLandmark(50, 10, LandmarkType.POSTERIOR_BREAST_BOUNDARY),
+        posterior_nipple_line=(
+            ImageLandmark(50, 10, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
+            ImageLandmark(50, 90, LandmarkType.POSTERIOR_NIPPLE_LINE_END),
+        ),
     )
 
 
@@ -49,7 +52,10 @@ def mlo_geometry() -> BreastGeometry:
         image_shape=(120, 120),
         coordinate_frame_id="left-mlo-aligned",
         nipple=ImageLandmark(90, 50, LandmarkType.NIPPLE),
-        posterior_boundary=ImageLandmark(10, 50, LandmarkType.CHEST_WALL),
+        posterior_nipple_line=(
+            ImageLandmark(10, 50, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
+            ImageLandmark(90, 50, LandmarkType.POSTERIOR_NIPPLE_LINE_END),
+        ),
     )
 
 

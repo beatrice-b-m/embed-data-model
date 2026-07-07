@@ -100,7 +100,7 @@ def test_breast_geometry_depth_thirds_from_nipple_and_posterior_line() -> None:
     assert geometry.depth_value_for_point((50, 50)) == pytest.approx(1.0)
 
 
-def test_breast_geometry_prefers_explicit_posterior_boundary_for_depth() -> None:
+def test_breast_geometry_uses_farthest_pnl_endpoint_for_depth() -> None:
     geometry = BreastGeometry(
         image_id="img-1",
         laterality=Laterality.RIGHT,
@@ -108,15 +108,14 @@ def test_breast_geometry_prefers_explicit_posterior_boundary_for_depth() -> None
         coordinate_frame_id="aligned-img-1",
         nipple=ImageLandmark(20, 20, LandmarkType.NIPPLE),
         posterior_nipple_line=(
-            ImageLandmark(20, 0, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
+            ImageLandmark(80, 20, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
             ImageLandmark(20, 20, LandmarkType.POSTERIOR_NIPPLE_LINE_END),
         ),
-        posterior_boundary=ImageLandmark(80, 20, LandmarkType.CHEST_WALL),
     )
 
     position = geometry.continuous_position_for_point((50, 35))
 
-    assert geometry.posterior_reference == geometry.posterior_boundary
+    assert geometry.posterior_reference == geometry.posterior_nipple_line[0]
     assert position.depth_value == pytest.approx(1.0)
     assert position.si_value == pytest.approx(0.25)
     assert position.ml_value is None

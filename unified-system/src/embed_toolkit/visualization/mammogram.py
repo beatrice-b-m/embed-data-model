@@ -231,8 +231,6 @@ def _geometry_landmarks(geometry: BreastGeometry) -> tuple[ImageLandmark, ...]:
     landmarks: list[ImageLandmark] = []
     if geometry.nipple is not None:
         landmarks.append(geometry.nipple)
-    if geometry.posterior_boundary is not None:
-        landmarks.append(geometry.posterior_boundary)
     if geometry.posterior_nipple_line is not None:
         landmarks.extend(geometry.posterior_nipple_line)
     return tuple(landmarks)

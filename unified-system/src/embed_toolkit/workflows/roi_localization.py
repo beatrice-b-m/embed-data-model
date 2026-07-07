@@ -100,7 +100,7 @@ def _depth_warning(geometry: BreastGeometry) -> AuditWarning:
     if geometry.nipple is None:
         missing.append("nipple")
     if geometry.posterior_reference is None:
-        missing.append("posterior_reference")
+        missing.append("posterior_nipple_line")
 
     if missing:
         return AuditWarning(
@@ -125,7 +125,7 @@ def _transverse_warning(axis: AxisName, geometry: BreastGeometry) -> AuditWarnin
     if geometry.nipple is None:
         missing.append("nipple")
     if geometry.depth_vector is None:
-        missing.append("posterior_reference")
+        missing.append("posterior_nipple_line")
 
     if missing:
         return AuditWarning(
@@ -204,5 +204,4 @@ def _geometry_payload(geometry: BreastGeometry) -> dict:
         "coordinate_frame_id": geometry.frame_id,
         "has_nipple": geometry.has_nipple,
         "has_posterior_nipple_line": geometry.has_posterior_nipple_line,
-        "has_posterior_boundary": geometry.posterior_boundary is not None,
     }

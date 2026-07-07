@@ -45,8 +45,6 @@ class EmbedColumnConfig:
     nipple_y: str = DEFAULT_EMBED_COLUMN_NAMES["nipple_y"]
     nipple_confidence: str = DEFAULT_EMBED_COLUMN_NAMES["nipple_confidence"]
     pnl_slope: str = DEFAULT_EMBED_COLUMN_NAMES["pnl_slope"]
-    posterior_endpoint_x: str = DEFAULT_EMBED_COLUMN_NAMES["posterior_endpoint_x"]
-    posterior_endpoint_y: str = DEFAULT_EMBED_COLUMN_NAMES["posterior_endpoint_y"]
     finding_number: str = DEFAULT_EMBED_COLUMN_NAMES["finding_number"]
     finding_laterality: str = DEFAULT_EMBED_COLUMN_NAMES["finding_laterality"]
     finding_location: str = DEFAULT_EMBED_COLUMN_NAMES["finding_location"]
@@ -132,15 +130,13 @@ class EmbedColumnConfig:
         )
 
     def landmark_columns(self) -> Tuple[str, ...]:
-        """Return configured nipple and posterior landmark columns."""
+        """Return configured nipple and PNL columns."""
 
         return self._columns_for(
             "nipple_x",
             "nipple_y",
             "nipple_confidence",
             "pnl_slope",
-            "posterior_endpoint_x",
-            "posterior_endpoint_y",
         )
 
     def finding_columns(self) -> Tuple[str, ...]:

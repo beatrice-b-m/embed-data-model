@@ -85,7 +85,10 @@ def test_roi_localizer_names_si_unobservable_for_cc_view() -> None:
         laterality=Laterality.LEFT,
         view_position=ViewPosition.CC,
         nipple=ImageLandmark(50, 90, LandmarkType.NIPPLE),
-        posterior_boundary=ImageLandmark(50, 10, LandmarkType.POSTERIOR_BREAST_BOUNDARY),
+        posterior_nipple_line=(
+            ImageLandmark(50, 10, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
+            ImageLandmark(50, 90, LandmarkType.POSTERIOR_NIPPLE_LINE_END),
+        ),
     )
 
     result = RoiLocalizer().localize(roi, geometry)
@@ -110,7 +113,10 @@ def test_roi_localizer_names_ml_unobservable_for_mlo_view() -> None:
         laterality=Laterality.RIGHT,
         view_position=ViewPosition.MLO,
         nipple=ImageLandmark(20, 20, LandmarkType.NIPPLE),
-        posterior_boundary=ImageLandmark(80, 20, LandmarkType.CHEST_WALL),
+        posterior_nipple_line=(
+            ImageLandmark(80, 20, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
+            ImageLandmark(20, 20, LandmarkType.POSTERIOR_NIPPLE_LINE_END),
+        ),
     )
 
     result = RoiLocalizer().localize(roi, geometry)
@@ -144,7 +150,10 @@ def test_roi_localizer_preserves_dbt_frame_in_metadata_and_evidence() -> None:
         view_position=ViewPosition.CC,
         coordinate_frame_id="aligned-dbt",
         nipple=ImageLandmark(50, 90, LandmarkType.NIPPLE),
-        posterior_boundary=ImageLandmark(50, 10, LandmarkType.POSTERIOR_BREAST_BOUNDARY),
+        posterior_nipple_line=(
+            ImageLandmark(50, 10, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
+            ImageLandmark(50, 90, LandmarkType.POSTERIOR_NIPPLE_LINE_END),
+        ),
     )
 
     serialized = RoiLocalizer(expected_axes=("ml", "depth")).localize(roi, geometry).to_dict()

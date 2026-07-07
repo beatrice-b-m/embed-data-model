@@ -68,11 +68,10 @@ in parity tests or review notes when relevant:
   active image view for matching. That behavior is useful as a baseline matcher,
   but the unified clinical model keeps medial/lateral, superior/inferior, and
   depth as separate anatomical axes.
-- Posterior-boundary assumptions: legacy geometry can infer posterior extent
-  from the image edge or posterior nipple line intercept. Unified geometry
-  should prefer explicit posterior breast or chest-wall landmarks when present,
-  fall back to a documented approximation when absent, and return partial
-  localization with evidence warnings when an axis cannot be observed.
+- Posterior reference assumptions: posterior extent is derived from the
+  posterior nipple line intercept at the aligned image edge. Unified geometry
+  treats nipple position and PNL as the canonical image-local geometry inputs
+  and returns partial localization with evidence warnings when either is absent.
 - Unmatched ROI reporting: legacy matching behavior could drop non-selected ROI
   candidates from the final result surface. Unified matching must preserve
   unmatched finding and ROI identifiers in structured result objects so audit,

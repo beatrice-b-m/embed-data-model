@@ -93,7 +93,6 @@ class MammogramImage:
         *,
         nipple: Optional[ImageLandmark] = None,
         posterior_nipple_line: Optional[Tuple[ImageLandmark, ImageLandmark]] = None,
-        posterior_boundary: Optional[ImageLandmark] = None,
     ) -> BreastGeometry:
         """Build a coordinate-frame fact object for this image."""
 
@@ -109,8 +108,5 @@ class MammogramImage:
                 posterior_nipple_line[1].owned_by(self.image_id),
             )
             if posterior_nipple_line is not None
-            else None,
-            posterior_boundary=posterior_boundary.owned_by(self.image_id)
-            if posterior_boundary is not None
             else None,
         )

@@ -140,12 +140,15 @@ def test_mammogram_render_plan_omits_depth_thirds_without_image_shape() -> None:
         laterality=Laterality.RIGHT,
         view_position=ViewPosition.MLO,
         nipple=ImageLandmark(10, 10, LandmarkType.NIPPLE),
-        posterior_boundary=ImageLandmark(30, 10, LandmarkType.POSTERIOR_BREAST_BOUNDARY),
+        posterior_nipple_line=(
+            ImageLandmark(30, 10, LandmarkType.POSTERIOR_NIPPLE_LINE_START),
+            ImageLandmark(10, 10, LandmarkType.POSTERIOR_NIPPLE_LINE_END),
+        ),
     )
 
     plan = build_mammogram_render_plan(geometry=geometry).to_dict()
 
-    assert "posterior_nipple_line" not in [layer["type"] for layer in plan["layers"]]
+    assert "posterior_nipple_line" in [layer["type"] for layer in plan["layers"]]
     assert "depth_third_boundary" not in [layer["type"] for layer in plan["layers"]]
     assert plan["metadata"]["coordinate_frame_id"] == "img-no-shape"
 
