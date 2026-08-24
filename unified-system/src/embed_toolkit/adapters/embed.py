@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import Any, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
 
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.patients import Patient
-from embed_toolkit.clinical.procedures import PathologyEvent, Procedure
+from embed_toolkit.clinical.procedures import (
+    PathologyEvent,
+    PathologySeverity,
+    Procedure,
+)
 from embed_toolkit.config.columns import EmbedColumnConfig, default_embed_columns
 from embed_toolkit.core.primitives import (
     ImageModality,
@@ -77,6 +81,7 @@ class _ColumnAliases:
     pathology_category: Tuple[str, ...] = ()
     pathology_date: Tuple[str, ...] = ("pathology_date", "path_date")
     pathology_malignant: Tuple[str, ...] = ("pathology_malignant", "malignant")
+    pathology_descriptor_prefix: str = "path"
     image_id: Tuple[str, ...] = ()
     image_side: Tuple[str, ...] = ()
     view_position: Tuple[str, ...] = ()
@@ -124,6 +129,7 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
             "pathology_category",
             "path_result",
         ),
+        pathology_descriptor_prefix=columns.pathology_diagnosis_prefix,
         image_id=_aliases(columns.image_id, "image_id", "ImageID", columns.image_path),
         image_side=_aliases(columns.image_laterality, "image_laterality"),
         view_position=_aliases(columns.image_view, "view_position"),
@@ -156,9 +162,12 @@ def build_clinical_tables(
     rows: Iterable[Row],
     *,
     columns: Optional[EmbedColumnConfig] = None,
+    pathology_validation: Literal["strict", "audit"] = "audit",
 ) -> EmbedClinicalTables:
     """Build patients, exams, sides, findings, procedures, and pathology."""
 
+    if pathology_validation not in {"strict", "audit"}:
+        raise ValueError("pathology_validation must be 'strict' or 'audit'")
     column_aliases = _column_aliases(columns)
     patients: dict[str, Patient] = {}
     exams: dict[str, Exam] = {}
@@ -206,6 +215,7 @@ def build_clinical_tables(
             accession,
             finding.finding_number,
             procedure_registry,
+            pathology_validation,
         )
         if procedure is not None:
             finding.add_procedure(procedure)
@@ -360,6 +370,7 @@ def _procedure_from_row(
     accession: str,
     finding_number: str,
     registry: dict[tuple[str, str, str, Laterality], Procedure],
+    pathology_validation: Literal["strict", "audit"],
 ) -> Optional[Procedure]:
     procedure_id = _string_value(_get(row, columns.procedure_id))
     procedure_type = _string_value(_get(row, columns.procedure_type))
@@ -383,19 +394,48 @@ def _procedure_from_row(
     identity = candidate.release_scoped_identity
     procedure = registry.setdefault(identity, candidate) if identity is not None else candidate
     procedure.add_finding_reference(accession, finding_number)
-    pathology = _pathology_from_row(row, columns)
+    pathology = _pathology_from_row(row, columns, pathology_validation)
     if pathology is not None:
         procedure.add_pathology_event(pathology)
     return procedure
 
 
-def _pathology_from_row(row: Row, columns: _ColumnAliases) -> Optional[PathologyEvent]:
+def _pathology_from_row(
+    row: Row,
+    columns: _ColumnAliases,
+    validation_mode: Literal["strict", "audit"],
+) -> Optional[PathologyEvent]:
     pathology_id = _string_value(_get(row, columns.pathology_id))
     diagnosis = _string_value(_get(row, columns.pathology_diagnosis))
     category = _string_value(_get(row, columns.pathology_category))
     event_date = _string_value(_get(row, columns.pathology_date))
     malignant = _optional_bool(_get(row, columns.pathology_malignant))
-    if not any((pathology_id, diagnosis, category, event_date, malignant is not None)):
+    raw_severity = _get(row, columns.pathology_category)
+    if raw_severity is _MISSING or _is_blank(raw_severity):
+        raw_severity = None
+    descriptors = tuple(
+        descriptor
+        for index in range(1, 11)
+        if (
+            descriptor := _string_value(
+                row.get(f"{columns.pathology_descriptor_prefix}{index}", _MISSING)
+            )
+        )
+        is not None
+    )
+    severity, issues = _govern_pathology_severity(raw_severity, descriptors)
+    if issues and validation_mode == "strict":
+        raise ValueError(issues[0]["message"])
+    if not any(
+        (
+            pathology_id,
+            diagnosis,
+            event_date,
+            malignant is not None,
+            raw_severity is not None,
+            descriptors,
+        )
+    ):
         return None
     return PathologyEvent(
         pathology_id=pathology_id,
@@ -403,8 +443,44 @@ def _pathology_from_row(row: Row, columns: _ColumnAliases) -> Optional[Pathology
         result_category=category,
         event_date=event_date,
         malignant=malignant,
+        severity=severity,
+        raw_severity=raw_severity,
+        descriptors=descriptors,
+        validation_issues=issues,
         raw_source_fields=dict(row),
     )
+
+
+def _govern_pathology_severity(
+    raw_severity: Any,
+    descriptors: Tuple[str, ...],
+) -> Tuple[Optional[PathologySeverity], List[Dict[str, Any]]]:
+    issues: List[Dict[str, Any]] = []
+    if raw_severity is None:
+        if descriptors:
+            issues.append(
+                {
+                    "code": "descriptors_without_severity",
+                    "message": "Pathology descriptors require a populated severity",
+                    "raw_severity": None,
+                }
+            )
+        return None, issues
+    try:
+        numeric = int(raw_severity)
+        if float(raw_severity) != numeric:
+            raise ValueError
+        severity = PathologySeverity(numeric)
+    except (TypeError, ValueError):
+        issues.append(
+            {
+                "code": "invalid_pathology_severity",
+                "message": f"Pathology severity must be an integer from 0 through 5, got {raw_severity!r}",
+                "raw_severity": raw_severity,
+            }
+        )
+        return None, issues
+    return severity, issues
 
 
 def _rois_from_row(

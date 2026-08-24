@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Any, Dict, List, Optional, Tuple
 
 from embed_toolkit.core.primitives import Laterality
@@ -23,6 +23,17 @@ def _to_plain(value: Any) -> Any:
     return value
 
 
+class PathologySeverity(IntEnum):
+    """Governed EMBED pathology severities without inferred clinical labels."""
+
+    SEVERITY_0 = 0
+    SEVERITY_1 = 1
+    SEVERITY_2 = 2
+    SEVERITY_3 = 3
+    SEVERITY_4 = 4
+    SEVERITY_5 = 5
+
+
 @dataclass
 class PathologyEvent:
     """Pathology information linked through a clinical procedure."""
@@ -32,8 +43,17 @@ class PathologyEvent:
     result_category: Optional[str] = None
     event_date: Optional[str] = None
     malignant: Optional[bool] = None
+    severity: Optional[PathologySeverity] = None
+    raw_severity: Any = None
+    descriptors: Tuple[str, ...] = ()
+    validation_issues: List[Dict[str, Any]] = field(default_factory=list)
     raw_source_fields: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.severity is not None:
+            self.severity = PathologySeverity(self.severity)
+        self.descriptors = tuple(str(value) for value in self.descriptors)
 
     def to_dict(self) -> Dict[str, Any]:
         return _to_plain(self)
@@ -48,6 +68,8 @@ class PathologyEvent:
             self.result_category,
             self.event_date,
             self.malignant,
+            self.raw_severity,
+            self.descriptors,
         )
 
 

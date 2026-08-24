@@ -4,7 +4,7 @@ from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding, FindingRecordType
 from embed_toolkit.clinical.patients import Patient
-from embed_toolkit.clinical.procedures import PathologyEvent, Procedure
+from embed_toolkit.clinical.procedures import PathologyEvent, PathologySeverity, Procedure
 
 __all__ = [
     "BreastSide",
@@ -13,6 +13,7 @@ __all__ = [
     "Finding",
     "FindingRecordType",
     "PathologyEvent",
+    "PathologySeverity",
     "Patient",
     "Procedure",
 ]

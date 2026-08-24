@@ -8,6 +8,7 @@ from embed_toolkit.adapters.embed import (
     join_findings_to_images,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig
+from embed_toolkit.clinical.procedures import PathologySeverity
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 
 
@@ -192,6 +193,98 @@ def test_incomplete_or_distinct_procedure_tuples_are_not_merged() -> None:
     )
 
     assert len(tables.findings[0].procedures) == 6
+
+
+@pytest.mark.parametrize("raw", range(6))
+def test_valid_pathology_severities_use_governed_type(raw: int) -> None:
+    tables = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P1",
+                "acc_anon": f"ACC-{raw}",
+                "numfind": 1,
+                "side": "L",
+                "procedure_id": f"P-{raw}",
+                "path_severity": raw,
+            }
+        ]
+    )
+
+    event = tables.findings[0].pathology_events[0]
+    assert event.severity is PathologySeverity(raw)
+    assert event.raw_severity == raw
+
+
+def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
+    invalid = {
+        "empi_anon": "P1",
+        "acc_anon": "ACC-6",
+        "numfind": 1,
+        "side": "L",
+        "procedure_id": "P-6",
+        "path_severity": 6,
+        "path1": "KNOWN",
+    }
+    audited = build_clinical_tables([invalid], pathology_validation="audit")
+    event = audited.findings[0].pathology_events[0]
+    assert event.severity is None
+    assert event.raw_severity == 6
+    assert event.descriptors == ("KNOWN",)
+    assert event.validation_issues[0]["code"] == "invalid_pathology_severity"
+
+    with pytest.raises(ValueError, match="0 through 5"):
+        build_clinical_tables([invalid], pathology_validation="strict")
+
+    missing = {**invalid, "path_severity": None, "path1": "UNKNOWN_TOKEN"}
+    audited_missing = build_clinical_tables([missing], pathology_validation="audit")
+    missing_event = audited_missing.findings[0].pathology_events[0]
+    assert missing_event.descriptors == ("UNKNOWN_TOKEN",)
+    assert missing_event.validation_issues[0]["code"] == "descriptors_without_severity"
+    with pytest.raises(ValueError, match="require a populated severity"):
+        build_clinical_tables([missing], pathology_validation="strict")
+
+
+def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> None:
+    columns = EmbedColumnConfig(pathology_diagnosis_prefix="dx")
+    tables = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": 1,
+                "side": "L",
+                "procedure_id": "P-1",
+                "path_severity": 2,
+                "dx1": "A",
+                "dx2": "A",
+                "dx3": "UNMAPPED",
+            }
+        ],
+        columns=columns,
+    )
+
+    assert tables.findings[0].pathology_events[0].descriptors == (
+        "A",
+        "A",
+        "UNMAPPED",
+    )
+
+
+def test_null_pathology_without_descriptors_is_unattached() -> None:
+    tables = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": 1,
+                "side": "L",
+                "procedure_id": "P-1",
+                "path_severity": None,
+            }
+        ]
+    )
+
+    assert tables.findings[0].pathology_events == ()
 
 
 def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> None:
