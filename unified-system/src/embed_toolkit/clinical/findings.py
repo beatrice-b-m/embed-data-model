@@ -99,11 +99,11 @@ class Finding:
 
         procedure.accession_number = procedure.accession_number or self.accession_number
         procedure.laterality = Laterality.coerce(procedure.laterality)
-        if procedure.laterality is Laterality.UNKNOWN:
-            procedure.laterality = self.laterality
         procedure.finding_number = procedure.finding_number or self.finding_number
         procedure.finding_number = str(procedure.finding_number)
-        self.procedures.append(procedure)
+        procedure.add_finding_reference(self.accession_number, self.finding_number)
+        if not any(existing is procedure for existing in self.procedures):
+            self.procedures.append(procedure)
         return procedure
 
     def to_dict(self) -> Dict[str, Any]:

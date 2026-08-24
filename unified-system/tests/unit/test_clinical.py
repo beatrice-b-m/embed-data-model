@@ -87,8 +87,30 @@ def test_procedure_rows_attach_to_finding_without_replacing_each_other() -> None
 
     assert finding.procedures == [first, second]
     assert first.accession_number == "ACC-4"
-    assert first.laterality is Laterality.LEFT
+    assert first.laterality is Laterality.UNKNOWN
     assert first.finding_number == "2"
+
+
+def test_procedure_release_identity_requires_all_governed_components() -> None:
+    complete = Procedure(
+        patient_id="P1",
+        performed_date="2020-01-01",
+        procedure_type="biopsy",
+        laterality="R",
+    )
+    incomplete = Procedure(
+        patient_id="P1",
+        performed_date="2020-01-01",
+        procedure_type="biopsy",
+    )
+
+    assert complete.release_scoped_identity == (
+        "P1",
+        "2020-01-01",
+        "biopsy",
+        Laterality.RIGHT,
+    )
+    assert incomplete.release_scoped_identity is None
 
 
 def test_exam_aggregates_side_views_procedures_and_pathology() -> None:

@@ -71,6 +71,7 @@ class _ColumnAliases:
     procedure_id: Tuple[str, ...] = ("procedure_id", "proc_id")
     procedure_type: Tuple[str, ...] = ()
     procedure_date: Tuple[str, ...] = ()
+    procedure_laterality: Tuple[str, ...] = ()
     pathology_id: Tuple[str, ...] = ("pathology_id", "path_id")
     pathology_diagnosis: Tuple[str, ...] = ("pathology_diagnosis", "path_diag")
     pathology_category: Tuple[str, ...] = ()
@@ -113,6 +114,11 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
         assessment=_aliases(columns.finding_assessment, "assessment", "birads"),
         procedure_type=_aliases(columns.procedure_type, "procedure_type", "proc_type"),
         procedure_date=_aliases(columns.procedure_date, "procedure_date", "proc_date"),
+        procedure_laterality=_aliases(
+            columns.procedure_laterality,
+            "bside",
+            "procedure_laterality",
+        ),
         pathology_category=_aliases(
             columns.pathology_severity,
             "pathology_category",
@@ -156,6 +162,7 @@ def build_clinical_tables(
     column_aliases = _column_aliases(columns)
     patients: dict[str, Patient] = {}
     exams: dict[str, Exam] = {}
+    procedure_registry: dict[tuple[str, str, str, Laterality], Procedure] = {}
 
     for row in rows:
         patient_id = (
@@ -195,9 +202,10 @@ def build_clinical_tables(
         procedure = _procedure_from_row(
             row,
             column_aliases,
+            patient_id,
             accession,
-            side,
             finding.finding_number,
+            procedure_registry,
         )
         if procedure is not None:
             finding.add_procedure(procedure)
@@ -348,25 +356,33 @@ def _join_sides(value: Any) -> Tuple[Laterality, ...]:
 def _procedure_from_row(
     row: Row,
     columns: _ColumnAliases,
+    patient_id: str,
     accession: str,
-    side: Laterality,
     finding_number: str,
+    registry: dict[tuple[str, str, str, Laterality], Procedure],
 ) -> Optional[Procedure]:
     procedure_id = _string_value(_get(row, columns.procedure_id))
     procedure_type = _string_value(_get(row, columns.procedure_type))
     procedure_date = _string_value(_get(row, columns.procedure_date))
+    procedure_laterality = Laterality.coerce(
+        _get(row, columns.procedure_laterality)
+    )
     if not any((procedure_id, procedure_type, procedure_date)):
         return None
 
-    procedure = Procedure(
+    candidate = Procedure(
         procedure_id=procedure_id,
         procedure_type=procedure_type,
+        patient_id=patient_id,
         accession_number=accession,
-        laterality=side,
+        laterality=procedure_laterality,
         finding_number=finding_number,
         performed_date=procedure_date,
         raw_source_fields=dict(row),
     )
+    identity = candidate.release_scoped_identity
+    procedure = registry.setdefault(identity, candidate) if identity is not None else candidate
+    procedure.add_finding_reference(accession, finding_number)
     pathology = _pathology_from_row(row, columns)
     if pathology is not None:
         procedure.add_pathology_event(pathology)

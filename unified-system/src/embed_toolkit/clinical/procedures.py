@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from embed_toolkit.core.primitives import Laterality
 
@@ -38,6 +38,18 @@ class PathologyEvent:
     def to_dict(self) -> Dict[str, Any]:
         return _to_plain(self)
 
+    @property
+    def evidence_identity(self) -> Tuple[Any, ...]:
+        if self.pathology_id is not None:
+            return ("pathology_id", self.pathology_id)
+        return (
+            "source_values",
+            self.diagnosis,
+            self.result_category,
+            self.event_date,
+            self.malignant,
+        )
+
 
 @dataclass
 class Procedure:
@@ -45,6 +57,7 @@ class Procedure:
 
     procedure_id: Optional[str] = None
     procedure_type: Optional[str] = None
+    patient_id: Optional[str] = None
     accession_number: Optional[str] = None
     laterality: Laterality = Laterality.UNKNOWN
     finding_number: Optional[str] = None
@@ -52,6 +65,7 @@ class Procedure:
     pathology_events: List[PathologyEvent] = field(default_factory=list)
     raw_source_fields: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    finding_references: List[Tuple[str, str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.laterality = Laterality.coerce(self.laterality)
@@ -61,8 +75,36 @@ class Procedure:
     def add_pathology_event(self, event: PathologyEvent) -> PathologyEvent:
         """Attach pathology to this procedure and return it for chaining."""
 
+        for existing in self.pathology_events:
+            if existing.evidence_identity == event.evidence_identity:
+                return existing
         self.pathology_events.append(event)
         return event
+
+    @property
+    def release_scoped_identity(
+        self,
+    ) -> Optional[Tuple[str, str, str, Laterality]]:
+        """Return the complete EMBED procedure identity, or no identity."""
+
+        if (
+            self.patient_id is None
+            or self.performed_date is None
+            or self.procedure_type is None
+            or self.laterality is Laterality.UNKNOWN
+        ):
+            return None
+        return (
+            self.patient_id,
+            self.performed_date,
+            self.procedure_type,
+            self.laterality,
+        )
+
+    def add_finding_reference(self, accession: str, finding_number: str) -> None:
+        reference = (accession, str(finding_number))
+        if reference not in self.finding_references:
+            self.finding_references.append(reference)
 
     def to_dict(self) -> Dict[str, Any]:
         return _to_plain(self)

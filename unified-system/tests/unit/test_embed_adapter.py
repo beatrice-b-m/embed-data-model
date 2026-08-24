@@ -118,6 +118,82 @@ def test_repeated_finding_identity_flags_conflicting_side() -> None:
     ]
 
 
+def test_procedure_laterality_is_independent_and_null_remains_unknown() -> None:
+    tables = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": 1,
+                "side": "L",
+                "procedure_id": "P-R",
+                "bside": "R",
+            },
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": 2,
+                "side": "L",
+                "procedure_id": "P-U",
+            },
+        ]
+    )
+
+    assert tables.findings[0].laterality is Laterality.LEFT
+    assert tables.findings[0].procedures[0].laterality is Laterality.RIGHT
+    assert tables.findings[1].procedures[0].laterality is Laterality.UNKNOWN
+
+
+def test_complete_procedures_are_patient_deduplicated_without_duplicate_pathology() -> None:
+    base = {
+        "empi_anon": "P1",
+        "acc_anon": "ACC-1",
+        "side": "L",
+        "procdate_anon": "2020-01-01",
+        "type": "core biopsy",
+        "bside": "R",
+        "pathology_id": "PATH-1",
+        "pathology_diagnosis": "dcis",
+    }
+    tables = build_clinical_tables(
+        [
+            {**base, "numfind": 1},
+            {**base, "numfind": 1},
+            {**base, "numfind": 2},
+        ]
+    )
+
+    first, second = tables.findings
+    procedure = first.procedures[0]
+    assert second.procedures[0] is procedure
+    assert len(first.procedures) == 1
+    assert len(procedure.pathology_events) == 1
+    assert procedure.finding_references == [("ACC-1", "1"), ("ACC-1", "2")]
+
+
+def test_incomplete_or_distinct_procedure_tuples_are_not_merged() -> None:
+    base = {
+        "empi_anon": "P1",
+        "acc_anon": "ACC-1",
+        "numfind": 1,
+        "side": "L",
+        "type": "biopsy",
+        "bside": "L",
+    }
+    tables = build_clinical_tables(
+        [
+            base,
+            base,
+            {**base, "procdate_anon": "2020-01-01"},
+            {**base, "procdate_anon": "2020-01-02"},
+            {**base, "procdate_anon": "2020-01-01", "type": "excision"},
+            {**base, "procdate_anon": "2020-01-01", "bside": "R"},
+        ]
+    )
+
+    assert len(tables.findings[0].procedures) == 6
+
+
 def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> None:
     rows = [
         {
