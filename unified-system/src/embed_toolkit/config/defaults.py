@@ -2,6 +2,8 @@
 
 DEFAULT_EMBED_COLUMN_NAMES = {
     "patient_id": "empi_anon",
+    "birth_year": "birth_year",
+    "sex": "sex",
     "cohort_id": "cohort_num",
     "accession": "acc_anon",
     "study_date": "studydate_anon",

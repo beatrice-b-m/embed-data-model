@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
+from embed_toolkit.clinical.attributes import PatientAttributeObservation
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.procedures import _to_plain
@@ -16,9 +17,22 @@ class Patient:
 
     patient_id: str
     exams: List[Exam] = field(default_factory=list)
-    sex: Optional[str] = None
-    birth_year: Optional[int] = None
+    attribute_observations: List[PatientAttributeObservation] = field(
+        default_factory=list
+    )
     metadata: Dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.patient_id, str) or not self.patient_id.strip():
+            raise ValueError("patient_id must be a non-empty string")
+        initial_exams = list(self.exams)
+        initial_observations = list(self.attribute_observations)
+        self.exams = []
+        self.attribute_observations = []
+        for exam in initial_exams:
+            self.add_exam(exam)
+        for observation in initial_observations:
+            self.add_attribute_observation(observation)
 
     @property
     def findings(self) -> Tuple[Finding, ...]:
@@ -35,11 +49,38 @@ class Patient:
         self.exams.append(exam)
         return exam
 
+    def add_attribute_observation(
+        self,
+        observation: PatientAttributeObservation,
+    ) -> PatientAttributeObservation:
+        """Own one uniquely source-attributed observation for this patient."""
+
+        if not isinstance(observation, PatientAttributeObservation):
+            raise TypeError(
+                "observation must be a PatientAttributeObservation"
+            )
+        if observation.patient_id != self.patient_id:
+            raise ValueError(
+                "PatientAttributeObservation patient_id must match Patient"
+            )
+        for existing in self.attribute_observations:
+            if existing.identity == observation.identity:
+                if existing != observation:
+                    raise ValueError(
+                        "One patient attribute observation identity cannot "
+                        "represent different values"
+                    )
+                return existing
+        self.attribute_observations.append(observation)
+        return observation
+
     def to_dict(self) -> Dict[str, object]:
         return {
             "patient_id": self.patient_id,
-            "sex": self.sex,
-            "birth_year": self.birth_year,
             "exams": [exam.to_dict() for exam in self.exams],
+            "attribute_observations": [
+                observation.to_dict()
+                for observation in self.attribute_observations
+            ],
             "metadata": _to_plain(self.metadata),
         }

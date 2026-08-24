@@ -1,5 +1,14 @@
 """Clinical domain objects."""
 
+from embed_toolkit.clinical.attributes import (
+    PatientAttributeAsOfPolicy,
+    PatientAttributeName,
+    PatientAttributeObservation,
+    PatientAttributeSelection,
+    PatientObservationTimeBasis,
+    UndatedObservationPolicy,
+    select_patient_attribute_as_of,
+)
 from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import (
@@ -32,5 +41,12 @@ __all__ = [
     "PathologyObservation",
     "PathologySeverity",
     "Patient",
+    "PatientAttributeAsOfPolicy",
+    "PatientAttributeName",
+    "PatientAttributeObservation",
+    "PatientAttributeSelection",
+    "PatientObservationTimeBasis",
     "Procedure",
+    "UndatedObservationPolicy",
+    "select_patient_attribute_as_of",
 ]

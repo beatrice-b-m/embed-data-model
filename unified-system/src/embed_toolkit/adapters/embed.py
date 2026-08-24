@@ -13,8 +13,16 @@ import ast
 import math
 import uuid
 from dataclasses import dataclass, field, replace
+from decimal import Decimal, InvalidOperation
+from datetime import date, datetime
+from numbers import Integral, Real
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
+from embed_toolkit.clinical.attributes import (
+    PatientAttributeName,
+    PatientAttributeObservation,
+    PatientObservationTimeBasis,
+)
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.adapters.magview import normalize_magview_location
 from embed_toolkit.clinical.findings import (
@@ -80,6 +88,7 @@ class EmbedClinicalTables:
     """Clinical objects built from MagView-derived rows."""
 
     patients: Tuple[Patient, ...]
+    patient_attribute_observations: Tuple[PatientAttributeObservation, ...]
     exams: Tuple[Exam, ...]
     findings: Tuple[Finding, ...]
     interpretations: Tuple[ImagingInterpretation, ...]
@@ -100,14 +109,20 @@ class EmbedClinicalTables:
             "patients": [
                 {
                     "patient_id": patient.patient_id,
-                    "sex": patient.sex,
-                    "birth_year": patient.birth_year,
                     "exam_references": [
                         exam.accession_number for exam in patient.exams
+                    ],
+                    "patient_attribute_observation_references": [
+                        observation.reference_dict()
+                        for observation in patient.attribute_observations
                     ],
                     "metadata": _to_plain(patient.metadata),
                 }
                 for patient in self.patients
+            ],
+            "patient_attribute_observations": [
+                observation.to_dict()
+                for observation in self.patient_attribute_observations
             ],
             "exams": [
                 {
@@ -314,6 +329,7 @@ class _FindingAnatomyObservation:
 @dataclass
 class _ClinicalBuildState:
     patients: dict[str, Patient]
+    patient_attribute_observations: list[PatientAttributeObservation]
     exams: dict[str, Exam]
     procedure_registry: dict[ProcedureIdentity, Procedure]
     finding_procedure_links: list[FindingProcedureLink]
@@ -324,12 +340,15 @@ class _ClinicalBuildState:
 
 
 _MISSING = object()
+_INVALID_PATIENT_ATTRIBUTE_VALUE = object()
 
 
 def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
     columns = config or default_embed_columns()
     return _ColumnAliases(
         patient_id=_aliases(columns.patient_id, "patient_id", "PatientID"),
+        birth_year=_aliases(columns.birth_year, "birth_year", "PatientBirthYear"),
+        sex=_aliases(columns.sex, "sex", "PatientSex"),
         accession=_aliases(columns.accession, "accession_number", "AccessionNumber"),
         exam_date=_aliases(columns.study_date, "exam_date", "StudyDate"),
         finding_number=_aliases(columns.finding_number, "finding_number"),
@@ -437,6 +456,7 @@ def build_clinical_tables(
 
     column_aliases = _column_aliases(columns)
     patients: dict[str, Patient] = {}
+    patient_attribute_observations: list[PatientAttributeObservation] = []
     exams: dict[str, Exam] = {}
     procedure_registry: dict[ProcedureIdentity, Procedure] = {}
     finding_procedure_links: list[FindingProcedureLink] = []
@@ -448,6 +468,7 @@ def build_clinical_tables(
     build_issues: list[BuildIssue] = []
     state = _ClinicalBuildState(
         patients=patients,
+        patient_attribute_observations=patient_attribute_observations,
         exams=exams,
         procedure_registry=procedure_registry,
         finding_procedure_links=finding_procedure_links,
@@ -500,6 +521,7 @@ def build_clinical_tables(
     )
     return EmbedClinicalTables(
         patients=ordered_patients,
+        patient_attribute_observations=tuple(patient_attribute_observations),
         exams=ordered_exams,
         findings=ordered_findings,
         interpretations=ordered_interpretations,
@@ -589,14 +611,19 @@ def _build_clinical_row(
     _review_row_issues(policy, missing_finding_issues)
     issues.extend(missing_finding_issues)
 
-    patient = state.patients.setdefault(
+    attribute_observations, attribute_issues = _patient_attributes_from_row(
+        row,
+        columns,
         patient_id,
-        Patient(
-            patient_id=patient_id,
-            sex=_string_value(_get(row, columns.sex)),
-            birth_year=_optional_int(_get(row, columns.birth_year)),
-        ),
+        locator,
     )
+    _review_row_issues(policy, attribute_issues)
+    issues.extend(attribute_issues)
+
+    patient = state.patients.setdefault(patient_id, Patient(patient_id=patient_id))
+    for observation in attribute_observations:
+        owned_observation = patient.add_attribute_observation(observation)
+        state.patient_attribute_observations.append(owned_observation)
     exam = existing_exam
     if exam is None:
         exam = Exam(
@@ -780,6 +807,163 @@ def _review_row_issues(
 ) -> None:
     for issue in issues:
         policy.handle_issue(issue)
+
+
+def _patient_attributes_from_row(
+    row: Row,
+    columns: _ColumnAliases,
+    patient_id: str,
+    locator: SourceLocator,
+) -> Tuple[Tuple[PatientAttributeObservation, ...], Tuple[BuildIssue, ...]]:
+    """Project physically present patient attributes with exam-date context."""
+
+    matched_attributes = []
+    for attribute, aliases in (
+        (PatientAttributeName.SEX, columns.sex),
+        (PatientAttributeName.BIRTH_YEAR, columns.birth_year),
+    ):
+        source_field, raw_value = _matched_value(row, aliases)
+        if source_field is not None:
+            matched_attributes.append((attribute, source_field, raw_value))
+    if not matched_attributes:
+        return (), ()
+
+    context_date, context_issue = _patient_attribute_context_date(
+        row,
+        columns.exam_date,
+        patient_id,
+        tuple(attribute for attribute, _, _ in matched_attributes),
+        locator,
+    )
+    issues = [context_issue] if context_issue is not None else []
+    observations = []
+    for attribute, source_field, raw_value in matched_attributes:
+        if attribute is PatientAttributeName.SEX:
+            value = (
+                None
+                if _is_patient_attribute_blank(raw_value)
+                else str(raw_value).strip()
+            )
+        elif _is_explicit_patient_attribute_null(raw_value):
+            value = None
+        else:
+            value = _normalize_birth_year_source_value(raw_value)
+            if value is _INVALID_PATIENT_ATTRIBUTE_VALUE:
+                issues.append(
+                    BuildIssue(
+                        code="invalid_patient_attribute_value",
+                        message=(
+                            "Populated birth_year patient observation must "
+                            "represent an exact finite integer."
+                        ),
+                        severity=IssueSeverity.ERROR,
+                        source=locator,
+                        context={
+                            "patient_id": patient_id,
+                            "attribute": attribute.value,
+                            "source_field": source_field,
+                            "raw_value": raw_value,
+                        },
+                    )
+                )
+                continue
+        observations.append(
+            PatientAttributeObservation(
+                patient_id=patient_id,
+                attribute=attribute,
+                value=value,
+                source=locator,
+                context_date=context_date,
+                time_basis=PatientObservationTimeBasis.EXAM_DATE_CONTEXT,
+            )
+        )
+    return tuple(observations), tuple(issues)
+
+
+def _patient_attribute_context_date(
+    row: Row,
+    aliases: Tuple[str, ...],
+    patient_id: str,
+    attributes: Tuple[PatientAttributeName, ...],
+    locator: SourceLocator,
+) -> Tuple[Optional[date], Optional[BuildIssue]]:
+    source_field, raw_value = _matched_value(row, aliases)
+    if source_field is None or _is_patient_attribute_blank(raw_value):
+        return None, None
+    parsed = _parse_patient_context_date(raw_value)
+    if parsed is not None:
+        return parsed, None
+    return (
+        None,
+        BuildIssue(
+            code="invalid_patient_attribute_context_date",
+            message=(
+                "Patient attribute exam-date context is populated but cannot "
+                "be parsed as an ISO or compact calendar date."
+            ),
+            severity=IssueSeverity.ERROR,
+            source=locator,
+            context={
+                "patient_id": patient_id,
+                "attributes": [attribute.value for attribute in attributes],
+                "source_field": source_field,
+                "raw_value": raw_value,
+            },
+        ),
+    )
+
+
+def _parse_patient_context_date(value: Any) -> Optional[date]:
+    if isinstance(value, datetime):
+        return value.date()
+    if type(value) is date:
+        return value
+    text = str(value).strip()
+    try:
+        if len(text) == 8 and text.isdigit():
+            return date(int(text[:4]), int(text[4:6]), int(text[6:]))
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _is_patient_attribute_blank(value: Any) -> bool:
+    if _is_blank(value):
+        return True
+    try:
+        return bool(math.isnan(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_explicit_patient_attribute_null(value: Any) -> bool:
+    if value is None:
+        return True
+    return isinstance(value, str) and value.strip().lower() in {
+        "",
+        "none",
+        "null",
+    }
+
+
+def _normalize_birth_year_source_value(value: Any) -> Any:
+    if isinstance(value, bool):
+        return _INVALID_PATIENT_ATTRIBUTE_VALUE
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Real):
+        numeric = float(value)
+        if math.isfinite(numeric) and numeric.is_integer():
+            return int(numeric)
+        return _INVALID_PATIENT_ATTRIBUTE_VALUE
+    if isinstance(value, str):
+        try:
+            numeric_text = Decimal(value.strip())
+        except InvalidOperation:
+            return _INVALID_PATIENT_ATTRIBUTE_VALUE
+        if numeric_text.is_finite() and numeric_text == numeric_text.to_integral():
+            return int(numeric_text)
+    return _INVALID_PATIENT_ATTRIBUTE_VALUE
 
 
 def _finding_attribute_issues(

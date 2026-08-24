@@ -23,6 +23,8 @@ class EmbedColumnConfig:
     """
 
     patient_id: str = DEFAULT_EMBED_COLUMN_NAMES["patient_id"]
+    birth_year: str = DEFAULT_EMBED_COLUMN_NAMES["birth_year"]
+    sex: str = DEFAULT_EMBED_COLUMN_NAMES["sex"]
     cohort_id: str = DEFAULT_EMBED_COLUMN_NAMES["cohort_id"]
     accession: str = DEFAULT_EMBED_COLUMN_NAMES["accession"]
     study_date: str = DEFAULT_EMBED_COLUMN_NAMES["study_date"]
