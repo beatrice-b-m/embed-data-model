@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
-from embed_toolkit.clinical.procedures import PathologyEvent, Procedure, _to_plain
+from embed_toolkit.clinical.procedures import _to_plain
 from embed_toolkit.core.anatomy import AnatomicalPosition
 from embed_toolkit.core.primitives import Laterality
 
@@ -34,7 +34,6 @@ class Finding:
     descriptors: Dict[str, Any] = field(default_factory=dict)
     normalization_warnings: List[str] = field(default_factory=list)
     validation_issues: List[Dict[str, Any]] = field(default_factory=list)
-    procedures: List[Procedure] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     record_type: FindingRecordType = field(init=False)
 
@@ -83,28 +82,6 @@ class Finding:
         self.metadata["source_row_count"] = int(
             self.metadata.get("source_row_count", 1)
         ) + 1
-
-    @property
-    def pathology_events(self) -> Tuple[PathologyEvent, ...]:
-        """Pathology aggregated from all procedures attached to this finding."""
-
-        return tuple(
-            event
-            for procedure in self.procedures
-            for event in procedure.pathology_events
-        )
-
-    def add_procedure(self, procedure: Procedure) -> Procedure:
-        """Attach a duplicate-capable procedure row to this finding."""
-
-        procedure.accession_number = procedure.accession_number or self.accession_number
-        procedure.laterality = Laterality.coerce(procedure.laterality)
-        procedure.finding_number = procedure.finding_number or self.finding_number
-        procedure.finding_number = str(procedure.finding_number)
-        procedure.add_finding_reference(self.accession_number, self.finding_number)
-        if not any(existing is procedure for existing in self.procedures):
-            self.procedures.append(procedure)
-        return procedure
 
     def to_dict(self) -> Dict[str, Any]:
         return _to_plain(self)

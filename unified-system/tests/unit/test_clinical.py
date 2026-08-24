@@ -9,7 +9,7 @@ from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding, FindingRecordType
 from embed_toolkit.clinical.patients import Patient
-from embed_toolkit.clinical.procedures import PathologyEvent, Procedure
+from embed_toolkit.clinical.procedures import Procedure, ProcedureIdentity
 from embed_toolkit.core.anatomy import (
     AnatomicalPosition,
     ClockFacePosition,
@@ -17,6 +17,12 @@ from embed_toolkit.core.anatomy import (
     Quadrant,
 )
 from embed_toolkit.core.primitives import Laterality
+from embed_toolkit.core.provenance import (
+    ResolutionState,
+    SourceLocator,
+    SourceOccurrence,
+    SourceScopeKind,
+)
 
 
 def test_finding_identity_uses_accession_and_number_with_side_as_attribute() -> None:
@@ -58,19 +64,15 @@ def test_negative_nine_remains_a_governed_no_finding_sentinel() -> None:
     assert finding.to_dict()["record_type"] == "no_finding_sentinel"
 
 
-def test_breast_side_aggregates_findings_procedures_and_pathology() -> None:
+def test_breast_side_contains_findings_without_attribution_edges() -> None:
     finding = Finding("ACC-2", Laterality.RIGHT, "3")
-    procedure = finding.add_procedure(Procedure(procedure_id="P1", procedure_type="biopsy"))
-    pathology = procedure.add_pathology_event(
-        PathologyEvent(pathology_id="PATH-1", diagnosis="benign")
-    )
 
     side = BreastSide(Laterality.RIGHT)
     side.add_finding(finding)
 
     assert side.findings == [finding]
-    assert side.procedures == (procedure,)
-    assert side.pathology_events == (pathology,)
+    assert not hasattr(side, "procedures")
+    assert not hasattr(finding, "procedures")
 
 
 def test_breast_side_rejects_wrong_side_finding() -> None:
@@ -80,45 +82,38 @@ def test_breast_side_rejects_wrong_side_finding() -> None:
         side.add_finding(Finding("ACC-3", Laterality.RIGHT, 1))
 
 
-def test_procedure_rows_attach_to_finding_without_replacing_each_other() -> None:
-    finding = Finding("ACC-4", Laterality.LEFT, "2")
-    first = finding.add_procedure(Procedure(procedure_id="BIOPSY"))
-    second = finding.add_procedure(Procedure(procedure_id="SURGERY"))
-
-    assert finding.procedures == [first, second]
-    assert first.accession_number == "ACC-4"
-    assert first.laterality is Laterality.UNKNOWN
-    assert first.finding_number == "2"
-
-
-def test_procedure_release_identity_requires_all_governed_components() -> None:
-    complete = Procedure(
+def test_procedure_owns_resolved_source_evidence_not_finding_references() -> None:
+    identity = ProcedureIdentity(
         patient_id="P1",
         performed_date="2020-01-01",
         procedure_type="biopsy",
         laterality="R",
     )
-    incomplete = Procedure(
-        patient_id="P1",
-        performed_date="2020-01-01",
-        procedure_type="biopsy",
+    source = SourceOccurrence(
+        locator=SourceLocator(
+            scope="materialization-1",
+            scope_kind=SourceScopeKind.MATERIALIZATION,
+            source_profile="embed_context_internal",
+            source_table="magview",
+            row_ordinal=1,
+        ),
+        raw_values={"procedure_id": "source-only-id"},
+        resolution_state=ResolutionState.RESOLVED,
     )
+    procedure = Procedure(identity=identity, source_occurrences=[source])
 
-    assert complete.release_scoped_identity == (
-        "P1",
-        "2020-01-01",
-        "biopsy",
-        Laterality.RIGHT,
-    )
-    assert incomplete.release_scoped_identity is None
+    assert procedure.identity is identity
+    assert procedure.source_occurrences == [source]
+    assert not hasattr(procedure, "finding_number")
+    assert not hasattr(procedure, "finding_references")
+    assert procedure.to_dict()["source_occurrences"][0]["raw_values"] == {
+        "procedure_id": "source-only-id"
+    }
 
 
-def test_exam_aggregates_side_views_procedures_and_pathology() -> None:
+def test_exam_aggregates_side_views_without_procedure_containment() -> None:
     left = Finding("ACC-5", Laterality.LEFT, 1)
-    left_procedure = left.add_procedure(Procedure(procedure_id="LP"))
-    left_pathology = left_procedure.add_pathology_event(PathologyEvent(diagnosis="dcis"))
     right = Finding("ACC-5", Laterality.RIGHT, 2)
-    right_procedure = right.add_procedure(Procedure(procedure_id="RP"))
 
     exam = Exam("ACC-5")
     exam.extend_findings([left, right])
@@ -127,8 +122,8 @@ def test_exam_aggregates_side_views_procedures_and_pathology() -> None:
     assert set(sides) == {Laterality.LEFT, Laterality.RIGHT}
     assert sides[Laterality.LEFT].findings == [left]
     assert sides[Laterality.RIGHT].findings == [right]
-    assert exam.procedures == (left_procedure, right_procedure)
-    assert exam.pathology_events == (left_pathology,)
+    assert not hasattr(exam, "procedures")
+    assert not hasattr(exam, "pathology_events")
 
 
 def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> None:

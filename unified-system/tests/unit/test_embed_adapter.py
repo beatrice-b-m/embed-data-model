@@ -9,6 +9,7 @@ from embed_toolkit.adapters.embed import (
 )
 from embed_toolkit.config.columns import EmbedColumnConfig
 from embed_toolkit.clinical.procedures import PathologySeverity
+from embed_toolkit.core.build_policy import BuildMode, BuildPolicy
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 
 
@@ -23,6 +24,8 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
             "asses": "4",
             "procedure_id": "BIO-1",
             "procedure_type": "biopsy",
+            "procedure_date": "2020-01-01",
+            "bside": "L",
             "pathology_id": "PATH-1",
             "pathology_diagnosis": "fibroadenoma",
             "pathology_malignant": "N",
@@ -35,6 +38,8 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
             "finding_type": "mass",
             "procedure_id": "LUMP-1",
             "procedure_type": "lumpectomy",
+            "procedure_date": "2020-01-02",
+            "bside": "L",
             "pathology_id": "PATH-2",
             "pathology_diagnosis": "dcis",
             "pathology_malignant": "Y",
@@ -50,16 +55,24 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
     assert finding.identity == ("ACC-1", "1")
     assert finding.finding_type == "mass"
     assert finding.assessment == "4"
-    assert [procedure.procedure_id for procedure in finding.procedures] == [
+    assert [
+        procedure.source_occurrences[0].raw_values["procedure_id"]
+        for procedure in tables.procedures
+    ] == [
         "BIO-1",
         "LUMP-1",
     ]
-    assert [event.diagnosis for event in finding.pathology_events] == [
+    assert [
+        event.diagnosis
+        for procedure in tables.procedures
+        for event in procedure.pathology_events
+    ] == [
         "fibroadenoma",
         "dcis",
     ]
-    assert finding.pathology_events[0].malignant is False
-    assert finding.pathology_events[1].malignant is True
+    assert tables.procedures[0].pathology_events[0].malignant is False
+    assert tables.procedures[1].pathology_events[0].malignant is True
+    assert len(tables.finding_procedure_links) == 2
     assert tables.breast_sides[0].laterality is Laterality.LEFT
     assert tables.breast_sides[0].findings == [finding]
 
@@ -72,7 +85,6 @@ def test_clinical_builder_expands_bilateral_findings_to_breast_sides() -> None:
                 "acc_anon": "ACC-B",
                 "numfind": "2",
                 "side": "B",
-                "procedure_id": "BIO-B",
             }
         ]
     )
@@ -87,7 +99,7 @@ def test_clinical_builder_expands_bilateral_findings_to_breast_sides() -> None:
         tables.findings[0],
         tables.findings[0],
     ]
-    assert len(tables.findings[0].procedures) == 1
+    assert tables.procedures == ()
 
 
 def test_null_finding_side_is_one_bilateral_finding() -> None:
@@ -128,6 +140,8 @@ def test_procedure_laterality_is_independent_and_null_remains_unknown() -> None:
                 "numfind": 1,
                 "side": "L",
                 "procedure_id": "P-R",
+                "procedure_date": "2020-01-01",
+                "procedure_type": "biopsy",
                 "bside": "R",
             },
             {
@@ -137,12 +151,14 @@ def test_procedure_laterality_is_independent_and_null_remains_unknown() -> None:
                 "side": "L",
                 "procedure_id": "P-U",
             },
-        ]
+        ],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
     )
 
     assert tables.findings[0].laterality is Laterality.LEFT
-    assert tables.findings[0].procedures[0].laterality is Laterality.RIGHT
-    assert tables.findings[1].procedures[0].laterality is Laterality.UNKNOWN
+    assert tables.procedures[0].identity.laterality is Laterality.RIGHT
+    assert len(tables.unresolved_procedure_occurrences) == 1
+    assert tables.unresolved_procedure_occurrences[0].laterality is Laterality.UNKNOWN
 
 
 def test_complete_procedures_are_patient_deduplicated_without_duplicate_pathology() -> None:
@@ -164,15 +180,17 @@ def test_complete_procedures_are_patient_deduplicated_without_duplicate_patholog
         ]
     )
 
-    first, second = tables.findings
-    procedure = first.procedures[0]
-    assert second.procedures[0] is procedure
-    assert len(first.procedures) == 1
+    procedure = tables.procedures[0]
+    assert len(tables.procedures) == 1
     assert len(procedure.pathology_events) == 1
-    assert procedure.finding_references == [("ACC-1", "1"), ("ACC-1", "2")]
+    assert len(procedure.source_occurrences) == 3
+    assert [
+        (link.accession_number, link.finding_number)
+        for link in tables.finding_procedure_links
+    ] == [("ACC-1", "1"), ("ACC-1", "1"), ("ACC-1", "2")]
 
 
-def test_incomplete_or_distinct_procedure_tuples_are_not_merged() -> None:
+def test_incomplete_procedures_are_evidence_and_complete_tuples_are_interned() -> None:
     base = {
         "empi_anon": "P1",
         "acc_anon": "ACC-1",
@@ -189,10 +207,13 @@ def test_incomplete_or_distinct_procedure_tuples_are_not_merged() -> None:
             {**base, "procdate_anon": "2020-01-02"},
             {**base, "procdate_anon": "2020-01-01", "type": "excision"},
             {**base, "procdate_anon": "2020-01-01", "bside": "R"},
-        ]
+        ],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
     )
 
-    assert len(tables.findings[0].procedures) == 6
+    assert len(tables.unresolved_procedure_occurrences) == 2
+    assert len(tables.procedures) == 4
+    assert len(tables.finding_procedure_links) == 4
 
 
 @pytest.mark.parametrize("raw", range(6))
@@ -205,12 +226,15 @@ def test_valid_pathology_severities_use_governed_type(raw: int) -> None:
                 "numfind": 1,
                 "side": "L",
                 "procedure_id": f"P-{raw}",
+                "procedure_type": "biopsy",
+                "procedure_date": "2020-01-01",
+                "bside": "L",
                 "path_severity": raw,
             }
         ]
     )
 
-    event = tables.findings[0].pathology_events[0]
+    event = tables.procedures[0].pathology_events[0]
     assert event.severity is PathologySeverity(raw)
     assert event.raw_severity == raw
 
@@ -222,11 +246,14 @@ def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
         "numfind": 1,
         "side": "L",
         "procedure_id": "P-6",
+        "procedure_type": "biopsy",
+        "procedure_date": "2020-01-01",
+        "bside": "L",
         "path_severity": 6,
         "path1": "KNOWN",
     }
     audited = build_clinical_tables([invalid], pathology_validation="audit")
-    event = audited.findings[0].pathology_events[0]
+    event = audited.procedures[0].pathology_events[0]
     assert event.severity is None
     assert event.raw_severity == 6
     assert event.descriptors == ("KNOWN",)
@@ -237,7 +264,7 @@ def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
 
     missing = {**invalid, "path_severity": None, "path1": "UNKNOWN_TOKEN"}
     audited_missing = build_clinical_tables([missing], pathology_validation="audit")
-    missing_event = audited_missing.findings[0].pathology_events[0]
+    missing_event = audited_missing.procedures[0].pathology_events[0]
     assert missing_event.descriptors == ("UNKNOWN_TOKEN",)
     assert missing_event.validation_issues[0]["code"] == "descriptors_without_severity"
     with pytest.raises(ValueError, match="require a populated severity"):
@@ -254,6 +281,9 @@ def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> 
                 "numfind": 1,
                 "side": "L",
                 "procedure_id": "P-1",
+                "procedure_type": "biopsy",
+                "procedure_date": "2020-01-01",
+                "bside": "L",
                 "path_severity": 2,
                 "dx1": "A",
                 "dx2": "A",
@@ -263,7 +293,7 @@ def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> 
         columns=columns,
     )
 
-    assert tables.findings[0].pathology_events[0].descriptors == (
+    assert tables.procedures[0].pathology_events[0].descriptors == (
         "A",
         "A",
         "UNMAPPED",
@@ -279,12 +309,15 @@ def test_null_pathology_without_descriptors_is_unattached() -> None:
                 "numfind": 1,
                 "side": "L",
                 "procedure_id": "P-1",
+                "procedure_type": "biopsy",
+                "procedure_date": "2020-01-01",
+                "bside": "L",
                 "path_severity": None,
             }
         ]
     )
 
-    assert tables.findings[0].pathology_events == ()
+    assert tables.procedures[0].pathology_events == []
 
 
 def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> None:

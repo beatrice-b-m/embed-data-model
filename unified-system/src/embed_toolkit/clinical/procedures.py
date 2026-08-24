@@ -1,4 +1,4 @@
-"""Finding-owned procedures and pathology events."""
+"""Resolved procedures, unresolved occurrences, and legacy pathology events."""
 
 from __future__ import annotations
 
@@ -167,24 +167,35 @@ class PathologyEvent:
 
 @dataclass
 class Procedure:
-    """Clinical procedure row associated with a finding."""
+    """One resolved procedure shared independently of finding attribution."""
 
-    procedure_id: Optional[str] = None
-    procedure_type: Optional[str] = None
-    patient_id: Optional[str] = None
-    accession_number: Optional[str] = None
-    laterality: Laterality = Laterality.UNKNOWN
-    finding_number: Optional[str] = None
-    performed_date: Optional[str] = None
+    identity: ProcedureIdentity
+    source_occurrences: List[SourceOccurrence] = field(default_factory=list)
     pathology_events: List[PathologyEvent] = field(default_factory=list)
-    raw_source_fields: Dict[str, Any] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    finding_references: List[Tuple[str, str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        self.laterality = Laterality.coerce(self.laterality)
-        if self.finding_number is not None:
-            self.finding_number = str(self.finding_number)
+        if not isinstance(self.identity, ProcedureIdentity):
+            raise TypeError("identity must be a ProcedureIdentity")
+        occurrences = list(self.source_occurrences)
+        if any(
+            occurrence.resolution_state is not ResolutionState.RESOLVED
+            for occurrence in occurrences
+        ):
+            raise ValueError("Resolved procedures require resolved source occurrences")
+        self.source_occurrences = occurrences
+
+    def add_source_occurrence(
+        self,
+        occurrence: SourceOccurrence,
+    ) -> SourceOccurrence:
+        """Attach resolved source evidence without changing clinical identity."""
+
+        if occurrence.resolution_state is not ResolutionState.RESOLVED:
+            raise ValueError("Resolved procedures require resolved source occurrences")
+        if occurrence not in self.source_occurrences:
+            self.source_occurrences.append(occurrence)
+        return occurrence
 
     def add_pathology_event(self, event: PathologyEvent) -> PathologyEvent:
         """Attach pathology to this procedure and return it for chaining."""
@@ -195,30 +206,12 @@ class Procedure:
         self.pathology_events.append(event)
         return event
 
-    @property
-    def release_scoped_identity(
-        self,
-    ) -> Optional[Tuple[str, str, str, Laterality]]:
-        """Return the complete EMBED procedure identity, or no identity."""
-
-        if (
-            self.patient_id is None
-            or self.performed_date is None
-            or self.procedure_type is None
-            or self.laterality is Laterality.UNKNOWN
-        ):
-            return None
-        return (
-            self.patient_id,
-            self.performed_date,
-            self.procedure_type,
-            self.laterality,
-        )
-
-    def add_finding_reference(self, accession: str, finding_number: str) -> None:
-        reference = (accession, str(finding_number))
-        if reference not in self.finding_references:
-            self.finding_references.append(reference)
-
     def to_dict(self) -> Dict[str, Any]:
-        return _to_plain(self)
+        return {
+            "identity": self.identity.to_dict(),
+            "source_occurrences": [
+                occurrence.to_dict() for occurrence in self.source_occurrences
+            ],
+            "pathology_events": [event.to_dict() for event in self.pathology_events],
+            "metadata": _to_plain(self.metadata),
+        }

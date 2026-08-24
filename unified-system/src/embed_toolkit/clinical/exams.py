@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from embed_toolkit.clinical.findings import Finding
-from embed_toolkit.clinical.procedures import PathologyEvent, Procedure, _to_plain
+from embed_toolkit.clinical.procedures import _to_plain
 from embed_toolkit.core.primitives import Laterality
 
 
@@ -21,22 +21,6 @@ class BreastSide:
         self.laterality = Laterality.coerce(self.laterality)
         if not self.laterality.is_unilateral:
             raise ValueError("BreastSide requires LEFT or RIGHT laterality")
-
-    @property
-    def procedures(self) -> Tuple[Procedure, ...]:
-        return tuple(
-            procedure
-            for finding in self.findings
-            for procedure in finding.procedures
-        )
-
-    @property
-    def pathology_events(self) -> Tuple[PathologyEvent, ...]:
-        return tuple(
-            event
-            for procedure in self.procedures
-            for event in procedure.pathology_events
-        )
 
     def add_finding(self, finding: Finding) -> Finding:
         if self.laterality not in Laterality.coerce(finding.laterality).expand():
@@ -70,22 +54,6 @@ class Exam:
             for side in Laterality.coerce(finding.laterality).expand():
                 sides[side].findings.append(finding)
         return {side: breast_side for side, breast_side in sides.items() if breast_side.findings}
-
-    @property
-    def procedures(self) -> Tuple[Procedure, ...]:
-        return tuple(
-            procedure
-            for finding in self.findings
-            for procedure in finding.procedures
-        )
-
-    @property
-    def pathology_events(self) -> Tuple[PathologyEvent, ...]:
-        return tuple(
-            event
-            for procedure in self.procedures
-            for event in procedure.pathology_events
-        )
 
     def add_finding(self, finding: Finding) -> Finding:
         if finding.accession_number != self.accession_number:

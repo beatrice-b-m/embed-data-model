@@ -102,7 +102,7 @@ def test_missing_finding_identity_never_reaches_procedure_construction() -> None
     assert tables.findings == ()
     assert tables.breast_sides == ()
     assert tables.patients[0].exams == [tables.exams[0]]
-    assert tables.exams[0].procedures == ()
+    assert tables.procedures == ()
     assert [issue.code for issue in tables.build_issues] == [
         "missing_finding_identity"
     ]

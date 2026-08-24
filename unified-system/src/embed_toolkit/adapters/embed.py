@@ -16,10 +16,13 @@ from typing import Any, Iterable, List, Literal, Mapping, Optional, Sequence, Tu
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.patients import Patient
+from embed_toolkit.clinical.associations import AttributionStatus, FindingProcedureLink
 from embed_toolkit.clinical.procedures import (
     PathologyEvent,
     PathologySeverity,
     Procedure,
+    ProcedureIdentity,
+    UnresolvedProcedureOccurrence,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig, default_embed_columns
 from embed_toolkit.core.build_policy import BuildPolicy
@@ -52,6 +55,9 @@ class EmbedClinicalTables:
     exams: Tuple[Exam, ...]
     findings: Tuple[Finding, ...]
     breast_sides: Tuple[BreastSide, ...]
+    procedures: Tuple[Procedure, ...]
+    finding_procedure_links: Tuple[FindingProcedureLink, ...]
+    unresolved_procedure_occurrences: Tuple[UnresolvedProcedureOccurrence, ...]
     unresolved_occurrences: Tuple[SourceOccurrence, ...]
     build_issues: Tuple[BuildIssue, ...]
 
@@ -213,7 +219,9 @@ def build_clinical_tables(
     column_aliases = _column_aliases(columns)
     patients: dict[str, Patient] = {}
     exams: dict[str, Exam] = {}
-    procedure_registry: dict[tuple[str, str, str, Laterality], Procedure] = {}
+    procedure_registry: dict[ProcedureIdentity, Procedure] = {}
+    finding_procedure_links: list[FindingProcedureLink] = []
+    unresolved_procedure_occurrences: list[UnresolvedProcedureOccurrence] = []
     unresolved_occurrences: list[SourceOccurrence] = []
     build_issues: list[BuildIssue] = []
 
@@ -333,17 +341,23 @@ def build_clinical_tables(
             raw_source_fields=dict(row),
         )
         finding = exam.add_finding(finding)
-        procedure = _procedure_from_row(
+        _, link, unresolved_procedure = _procedure_from_row(
             row,
             column_aliases,
             patient_id,
             accession,
             finding.finding_number,
+            locator,
             procedure_registry,
+            policy,
             pathology_validation,
         )
-        if procedure is not None:
-            finding.add_procedure(procedure)
+        if link is not None:
+            finding_procedure_links.append(link)
+        if unresolved_procedure is not None:
+            unresolved_procedure_occurrences.append(unresolved_procedure)
+            unresolved_occurrences.append(unresolved_procedure.occurrence)
+            build_issues.extend(unresolved_procedure.occurrence.issues)
 
     ordered_patients = tuple(patients.values())
     ordered_exams = tuple(exams.values())
@@ -356,6 +370,9 @@ def build_clinical_tables(
         exams=ordered_exams,
         findings=ordered_findings,
         breast_sides=ordered_sides,
+        procedures=tuple(procedure_registry.values()),
+        finding_procedure_links=tuple(finding_procedure_links),
+        unresolved_procedure_occurrences=tuple(unresolved_procedure_occurrences),
         unresolved_occurrences=tuple(unresolved_occurrences),
         build_issues=tuple(build_issues),
     )
@@ -496,35 +513,94 @@ def _procedure_from_row(
     patient_id: str,
     accession: str,
     finding_number: str,
-    registry: dict[tuple[str, str, str, Laterality], Procedure],
+    locator: SourceLocator,
+    registry: dict[ProcedureIdentity, Procedure],
+    policy: BuildPolicy,
     pathology_validation: Literal["strict", "audit"],
-) -> Optional[Procedure]:
+) -> Tuple[
+    Optional[Procedure],
+    Optional[FindingProcedureLink],
+    Optional[UnresolvedProcedureOccurrence],
+]:
     procedure_id = _string_value(_get(row, columns.procedure_id))
     procedure_type = _string_value(_get(row, columns.procedure_type))
     procedure_date = _string_value(_get(row, columns.procedure_date))
-    procedure_laterality = Laterality.coerce(
-        _get(row, columns.procedure_laterality)
-    )
-    if not any((procedure_id, procedure_type, procedure_date)):
-        return None
+    raw_laterality = _string_value(_get(row, columns.procedure_laterality))
+    procedure_laterality = Laterality.coerce(raw_laterality)
+    if not any((procedure_id, procedure_type, procedure_date, raw_laterality)):
+        return None, None, None
 
-    candidate = Procedure(
-        procedure_id=procedure_id,
-        procedure_type=procedure_type,
-        patient_id=patient_id,
-        accession_number=accession,
-        laterality=procedure_laterality,
-        finding_number=finding_number,
-        performed_date=procedure_date,
-        raw_source_fields=dict(row),
+    missing_identity_fields = tuple(
+        field_name
+        for field_name, missing in (
+            ("patient_id", not patient_id.strip()),
+            ("performed_date", procedure_date is None),
+            ("procedure_type", procedure_type is None),
+            ("laterality", procedure_laterality is Laterality.UNKNOWN),
+        )
+        if missing
     )
-    identity = candidate.release_scoped_identity
-    procedure = registry.setdefault(identity, candidate) if identity is not None else candidate
-    procedure.add_finding_reference(accession, finding_number)
+    if missing_identity_fields:
+        issue = BuildIssue(
+            code="incomplete_procedure_identity",
+            message=(
+                "A populated procedure surface requires patient, performed date, "
+                "type, and known biopsy laterality."
+            ),
+            severity=IssueSeverity.ERROR,
+            source=locator,
+            context={
+                "missing_identity_fields": list(missing_identity_fields),
+                "source_procedure_id": procedure_id,
+            },
+        )
+        occurrence = SourceOccurrence(
+            locator=locator,
+            raw_values=dict(row),
+            resolution_state=ResolutionState.UNRESOLVED,
+            issues=(issue,),
+        )
+        policy.review(occurrence)
+        return (
+            None,
+            None,
+            UnresolvedProcedureOccurrence(
+                occurrence=occurrence,
+                missing_identity_fields=missing_identity_fields,
+                patient_id=patient_id,
+                performed_date=procedure_date,
+                procedure_type=procedure_type,
+                laterality=procedure_laterality,
+            ),
+        )
+
+    identity = ProcedureIdentity(
+        patient_id=patient_id,
+        performed_date=procedure_date,
+        procedure_type=procedure_type,
+        laterality=procedure_laterality,
+    )
+    occurrence = SourceOccurrence(
+        locator=locator,
+        raw_values=dict(row),
+        resolution_state=ResolutionState.RESOLVED,
+    )
+    procedure = registry.setdefault(identity, Procedure(identity=identity))
+    procedure.add_source_occurrence(occurrence)
     pathology = _pathology_from_row(row, columns, pathology_validation)
     if pathology is not None:
         procedure.add_pathology_event(pathology)
-    return procedure
+    return (
+        procedure,
+        FindingProcedureLink(
+            accession_number=accession,
+            finding_number=finding_number,
+            procedure=identity,
+            status=AttributionStatus.SOURCE_COLOCATED,
+            source=locator,
+        ),
+        None,
+    )
 
 
 def _pathology_from_row(
