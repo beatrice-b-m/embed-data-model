@@ -5,9 +5,20 @@ import math
 import pytest
 
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark, LandmarkType
 from embed_toolkit.imaging.rois import RegionOfInterest
+
+
+def source() -> SourceLocator:
+    return SourceLocator(
+        scope="imaging-tests",
+        scope_kind=SourceScopeKind.MATERIALIZATION,
+        source_profile="test",
+        source_table="images",
+        row_ordinal=0,
+    )
 
 
 def test_mammogram_image_coerces_identity_and_shape() -> None:
@@ -15,6 +26,7 @@ def test_mammogram_image_coerces_identity_and_shape() -> None:
         image_id="img-1",
         laterality="left",
         view_position="L MLO",
+        sources=[source()],
         modality="dbt",
         height=2048,
         width=1536,
@@ -35,7 +47,12 @@ def test_mammogram_image_coerces_identity_and_shape() -> None:
 
 
 def test_landmarks_are_image_owned_and_preserve_provenance() -> None:
-    image = MammogramImage("img-1", Laterality.RIGHT, ViewPosition.CC)
+    image = MammogramImage(
+        "img-1",
+        Laterality.RIGHT,
+        ViewPosition.CC,
+        [source()],
+    )
     landmark = ImageLandmark(
         y=12.5,
         x=40.0,
@@ -61,6 +78,7 @@ def test_breast_geometry_holds_coordinate_frame_facts_without_matching() -> None
         "img-1",
         Laterality.LEFT,
         ViewPosition.MLO,
+        [source()],
         height=100,
         width=80,
         coordinate_frame_id="aligned-left-mlo",

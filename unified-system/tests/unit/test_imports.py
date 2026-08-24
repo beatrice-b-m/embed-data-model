@@ -199,6 +199,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         workflows = importlib.import_module("embed_toolkit.workflows")
 
     assert adapters.build_clinical_tables
+    assert adapters.EmbedImageTables
     assert adapters.project_finding_image_candidates
     assert adapters.normalize_magview_location
     assert audit.WorkflowResult
@@ -222,6 +223,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert config.EmbedColumnConfig().accession == "acc_anon"
     assert core.MassShape.LOBULATED.value == "lobulated"
     assert imaging.Alignment.reference().is_reference
+    assert imaging.MammogramImage
     assert imaging.RegionOfInterest((0, 0, 1, 1)).area == 1
     assert visualization.build_mammogram_render_plan
     assert workflows.FindingLocalizer

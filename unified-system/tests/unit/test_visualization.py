@@ -7,6 +7,7 @@ import pytest
 from embed_toolkit.audit.evidence import Evidence
 from embed_toolkit.audit.results import LocalizationResult, MatchingResult, ResultStatus
 from embed_toolkit.core.primitives import Laterality, ViewPosition
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark, LandmarkType
 from embed_toolkit.imaging.rois import RegionOfInterest
@@ -18,6 +19,15 @@ def test_mammogram_render_plan_includes_pixels_roi_and_centroid_layers() -> None
         "img-1",
         Laterality.LEFT,
         ViewPosition.CC,
+        [
+            SourceLocator(
+                scope="visualization-tests",
+                scope_kind=SourceScopeKind.MATERIALIZATION,
+                source_profile="test",
+                source_table="images",
+                row_ordinal=0,
+            )
+        ],
         height=3,
         width=4,
     )

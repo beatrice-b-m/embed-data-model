@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
+from embed_toolkit.core.provenance import SourceLocator
 from embed_toolkit.core.primitives import (
     ImageModality,
     Laterality,
@@ -21,6 +22,7 @@ class MammogramImage:
     image_id: str
     laterality: Laterality
     view_position: ViewPosition
+    sources: List[SourceLocator]
     modality: ImageModality = ImageModality.UNKNOWN
     height: Optional[int] = None
     width: Optional[int] = None
@@ -35,6 +37,15 @@ class MammogramImage:
     landmarks: Tuple[ImageLandmark, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.image_id, str) or not self.image_id.strip():
+            raise ValueError("image_id must be a non-empty string")
+        self.sources = list(self.sources)
+        if not self.sources:
+            raise ValueError("sources must contain at least one SourceLocator")
+        if any(not isinstance(source, SourceLocator) for source in self.sources):
+            raise TypeError("sources must contain only SourceLocator values")
+        if len(set(self.sources)) != len(self.sources):
+            raise ValueError("sources must contain unique SourceLocator values")
         self.laterality = Laterality.coerce(self.laterality)
         self.view_position = ViewPosition.coerce(self.view_position)
         self.modality = ImageModality.coerce(self.modality)
@@ -48,6 +59,11 @@ class MammogramImage:
             raise ValueError("Image width must be positive")
         if self.frame_count is not None and self.frame_count <= 0:
             raise ValueError("Frame count must be positive")
+        if (
+            self.frame_count is not None
+            and self.modality is not ImageModality.DBT
+        ):
+            raise ValueError("Frame count is only valid for DBT images")
         self.landmarks = tuple(
             landmark
             if landmark.image_id == self.image_id
@@ -65,6 +81,19 @@ class MammogramImage:
             self.series_instance_uid,
             self.study_instance_uid,
         )
+
+    @property
+    def canonical_source(self) -> SourceLocator:
+        """Return the deterministic source locator governing image scope."""
+
+        return self.sources[0]
+
+    def add_source(self, source: SourceLocator) -> SourceLocator:
+        if not isinstance(source, SourceLocator):
+            raise TypeError("source must be a SourceLocator")
+        if source not in self.sources:
+            self.sources.append(source)
+        return source
 
     @property
     def image_shape(self) -> Optional[Tuple[int, int]]:
@@ -117,6 +146,7 @@ class MammogramImage:
 
         return {
             "image_id": self.image_id,
+            "sources": [source.to_dict() for source in self.sources],
             "patient_id": self.patient_id,
             "accession_number": self.accession_number,
             "laterality": self.laterality.value,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from embed_toolkit.audit.results import ResultStatus
 from embed_toolkit.core.primitives import Laterality, ViewPosition
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.rois import RegionOfInterest
 from embed_toolkit.workflows.patch_extraction import PatchExtractor, extract_patch
@@ -140,6 +141,15 @@ def test_preserves_metadata_and_supports_numpy_like_slicing() -> None:
         image_id="img-meta",
         laterality=Laterality.LEFT,
         view_position=ViewPosition.CC,
+        sources=[
+            SourceLocator(
+                scope="patch-extraction-tests",
+                scope_kind=SourceScopeKind.MATERIALIZATION,
+                source_profile="test",
+                source_table="images",
+                source_key="img-meta",
+            )
+        ],
         height=3,
         width=4,
         coordinate_frame_id="aligned-left-cc",

@@ -8,6 +8,7 @@ from embed_toolkit.adapters.embed import build_clinical_tables, build_image_tabl
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.core.primitives import Laterality, ViewPosition
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 
 
@@ -21,6 +22,15 @@ def image(
         image_id=image_id,
         laterality=laterality,
         view_position=ViewPosition.CC,
+        sources=[
+            SourceLocator(
+                scope="clinical-graph-tests",
+                scope_kind=SourceScopeKind.MATERIALIZATION,
+                source_profile="test",
+                source_table="images",
+                source_key=image_id,
+            )
+        ],
         accession_number=accession,
         patient_id="P-1",
     )

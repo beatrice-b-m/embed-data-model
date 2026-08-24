@@ -196,6 +196,20 @@ class EmbedImageTables:
 
     images: Tuple[MammogramImage, ...]
     rois: Tuple[RegionOfInterest, ...]
+    source_occurrences: Tuple[SourceOccurrence, ...]
+    build_issues: Tuple[BuildIssue, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize images, ROIs, and canonical source evidence once."""
+
+        return {
+            "images": [image.to_dict() for image in self.images],
+            "rois": [roi.to_dict() for roi in self.rois],
+            "source_occurrences": [
+                occurrence.to_dict() for occurrence in self.source_occurrences
+            ],
+            "build_issues": [issue.to_dict() for issue in self.build_issues],
+        }
 
 
 @dataclass(frozen=True)
@@ -352,7 +366,7 @@ class _ClinicalBuildState:
 
 
 _MISSING = object()
-_INVALID_PATIENT_ATTRIBUTE_VALUE = object()
+_INVALID_EXACT_INTEGER = object()
 
 
 def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
@@ -884,8 +898,8 @@ def _patient_attributes_from_row(
         elif _is_explicit_patient_attribute_null(raw_value):
             value = None
         else:
-            value = _normalize_birth_year_source_value(raw_value)
-            if value is _INVALID_PATIENT_ATTRIBUTE_VALUE:
+            value = _normalize_exact_integer_source_value(raw_value)
+            if value is _INVALID_EXACT_INTEGER:
                 issues.append(
                     BuildIssue(
                         code="invalid_patient_attribute_value",
@@ -1064,24 +1078,24 @@ def _is_explicit_patient_attribute_null(value: Any) -> bool:
     }
 
 
-def _normalize_birth_year_source_value(value: Any) -> Any:
+def _normalize_exact_integer_source_value(value: Any) -> Any:
     if isinstance(value, bool):
-        return _INVALID_PATIENT_ATTRIBUTE_VALUE
+        return _INVALID_EXACT_INTEGER
     if isinstance(value, Integral):
         return int(value)
     if isinstance(value, Real):
         numeric = float(value)
         if math.isfinite(numeric) and numeric.is_integer():
             return int(numeric)
-        return _INVALID_PATIENT_ATTRIBUTE_VALUE
+        return _INVALID_EXACT_INTEGER
     if isinstance(value, str):
         try:
             numeric_text = Decimal(value.strip())
         except InvalidOperation:
-            return _INVALID_PATIENT_ATTRIBUTE_VALUE
+            return _INVALID_EXACT_INTEGER
         if numeric_text.is_finite() and numeric_text == numeric_text.to_integral():
             return int(numeric_text)
-    return _INVALID_PATIENT_ATTRIBUTE_VALUE
+    return _INVALID_EXACT_INTEGER
 
 
 def _finding_attribute_issues(
@@ -1533,51 +1547,334 @@ def build_image_tables(
     rows: Iterable[Row],
     *,
     columns: Optional[EmbedColumnConfig] = None,
+    build_policy: Optional[BuildPolicy] = None,
+    source_scope: Optional[str] = None,
+    source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
+    source_profile: str = "internal-v1c",
+    source_table: str = "image_metadata",
 ) -> EmbedImageTables:
-    """Build images and image-local ROIs from image metadata rows."""
+    """Build reconciled images and one canonical ledger entry per input row."""
+
+    policy = build_policy or BuildPolicy()
+    if not isinstance(policy, BuildPolicy):
+        raise TypeError("build_policy must be a BuildPolicy")
+    scope_kind = SourceScopeKind(source_scope_kind)
+    if source_scope is None:
+        if scope_kind is not SourceScopeKind.MATERIALIZATION:
+            raise ValueError("Dataset source scopes must be supplied explicitly")
+        resolved_source_scope = f"in-memory:{uuid.uuid4()}"
+    elif not isinstance(source_scope, str) or not source_scope.strip():
+        raise ValueError("source_scope must be a non-empty string")
+    else:
+        resolved_source_scope = source_scope
+    for name, value in (
+        ("source_profile", source_profile),
+        ("source_table", source_table),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a non-empty string")
 
     column_aliases = _column_aliases(columns)
     images: list[MammogramImage] = []
     rois: list[RegionOfInterest] = []
     image_by_id: dict[str, MammogramImage] = {}
+    source_occurrences: list[SourceOccurrence] = []
+    build_issues: list[BuildIssue] = []
 
-    for row in rows:
-        image_id = _required_string(row, column_aliases.image_id, "image_id")
-        coordinate_frame_id = _string_value(_get(row, column_aliases.coordinate_frame_id))
-        image = image_by_id.get(image_id)
-        if image is None:
-            modality = ImageModality.coerce(_get(row, column_aliases.modality))
-            image = MammogramImage(
-                    image_id=image_id,
-                    laterality=Laterality.coerce(_get(row, column_aliases.image_side)),
-                    view_position=ViewPosition.coerce(
-                        _get(row, column_aliases.view_position)
-                    ),
-                    modality=modality,
-                    height=_optional_int(_get(row, column_aliases.height)),
-                    width=_optional_int(_get(row, column_aliases.width)),
-                    # ImagesInAcquisition is a frame count only for DBT. The
-                    # NumberOfFrames alias remains a compatibility input.
-                    frame_count=_optional_int(_get(row, column_aliases.frame_count))
-                    if modality is ImageModality.DBT
-                    else None,
-                    accession_number=_string_value(_get(row, column_aliases.accession)),
-                    patient_id=_string_value(_get(row, column_aliases.patient_id)),
-                    study_instance_uid=_string_value(
-                        _get(row, column_aliases.study_uid)
-                    ),
-                    series_instance_uid=_string_value(
-                        _get(row, column_aliases.series_uid)
-                    ),
-                    sop_instance_uid=_string_value(_get(row, column_aliases.sop_uid)),
-                    patient_orientation=_patient_orientation(row, column_aliases),
-                    coordinate_frame_id=coordinate_frame_id,
+    for row_ordinal, row in enumerate(rows):
+        locator = SourceLocator(
+            scope=resolved_source_scope,
+            scope_kind=scope_kind,
+            source_profile=source_profile,
+            source_table=source_table,
+            row_ordinal=row_ordinal,
+        )
+        row_issues: list[BuildIssue] = []
+        image_id = _string_value(_get(row, column_aliases.image_id))
+        if image_id is None:
+            issue = BuildIssue(
+                code="missing_image_identity",
+                message="Image identity is required to construct image objects.",
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={
+                    "logical_field": "image_id",
+                    "source_columns": list(column_aliases.image_id),
+                },
+            )
+            policy.handle_issue(issue)
+            row_issues.append(issue)
+        else:
+            observed, metadata_issues = _image_from_row(
+                row,
+                column_aliases,
+                image_id,
+                locator,
+            )
+            for issue in metadata_issues:
+                policy.handle_issue(issue)
+            row_issues.extend(metadata_issues)
+            if observed is not None:
+                retained = image_by_id.get(image_id)
+                if retained is None:
+                    images.append(observed)
+                    image_by_id[image_id] = observed
+                    rois.extend(
+                        _rois_from_row(
+                            row,
+                            column_aliases,
+                            observed,
+                            observed.coordinate_frame_id,
+                        )
+                    )
+                else:
+                    conflict_issues, fills = _reconcile_image_attributes(
+                        retained,
+                        observed,
+                        locator,
+                    )
+                    for issue in conflict_issues:
+                        policy.handle_issue(issue)
+                    row_issues.extend(conflict_issues)
+                    for attribute, value in fills:
+                        setattr(retained, attribute, value)
+                    retained.add_source(locator)
+                    if not conflict_issues:
+                        rois.extend(
+                            _rois_from_row(
+                                row,
+                                column_aliases,
+                                retained,
+                                retained.coordinate_frame_id,
+                            )
+                        )
+        resolution_state = (
+            ResolutionState.UNRESOLVED
+            if any(issue.severity is IssueSeverity.ERROR for issue in row_issues)
+            else ResolutionState.RESOLVED
+        )
+        source_occurrences.append(
+            SourceOccurrence(
+                locator=locator,
+                raw_values=dict(row),
+                resolution_state=resolution_state,
+                issues=tuple(row_issues),
+            )
+        )
+        build_issues.extend(row_issues)
+
+    return EmbedImageTables(
+        images=tuple(images),
+        rois=tuple(rois),
+        source_occurrences=tuple(source_occurrences),
+        build_issues=tuple(build_issues),
+    )
+
+
+def _image_from_row(
+    row: Row,
+    columns: _ColumnAliases,
+    image_id: str,
+    locator: SourceLocator,
+) -> Tuple[Optional[MammogramImage], Tuple[BuildIssue, ...]]:
+    modality = ImageModality.coerce(_get(row, columns.modality))
+    issues = []
+    parsed_integers = {}
+    for attribute, aliases in (
+        ("height", columns.height),
+        ("width", columns.width),
+        ("frame_count", columns.frame_count),
+    ):
+        if attribute == "frame_count" and modality is not ImageModality.DBT:
+            parsed_integers[attribute] = None
+            continue
+        raw_value = _get(row, aliases)
+        parsed_value = _positive_image_integer(raw_value)
+        if parsed_value is _INVALID_EXACT_INTEGER:
+            issues.append(
+                _invalid_image_attribute_issue(
+                    locator,
+                    image_id,
+                    attribute,
+                    raw_value,
+                    "Image dimensions and frame counts must be positive integers.",
                 )
-            images.append(image)
-            image_by_id[image_id] = image
-        rois.extend(_rois_from_row(row, column_aliases, image, coordinate_frame_id))
+            )
+            parsed_integers[attribute] = None
+        else:
+            parsed_integers[attribute] = parsed_value
 
-    return EmbedImageTables(images=tuple(images), rois=tuple(rois))
+    raw_orientation = _get(row, columns.patient_orientation)
+    try:
+        patient_orientation = _patient_orientation(row, columns)
+    except (TypeError, ValueError) as exc:
+        issues.append(
+            _invalid_image_attribute_issue(
+                locator,
+                image_id,
+                "patient_orientation",
+                raw_orientation,
+                str(exc),
+            )
+        )
+        patient_orientation = None
+    if issues:
+        return None, tuple(issues)
+
+    values = {
+        "image_id": image_id,
+        "sources": [locator],
+        "accession_number": _string_value(_get(row, columns.accession)),
+        "patient_id": _string_value(_get(row, columns.patient_id)),
+        "laterality": Laterality.coerce(_get(row, columns.image_side)),
+        "view_position": ViewPosition.coerce(_get(row, columns.view_position)),
+        "modality": modality,
+        "height": parsed_integers["height"],
+        "width": parsed_integers["width"],
+        "frame_count": parsed_integers["frame_count"],
+        "study_instance_uid": _string_value(_get(row, columns.study_uid)),
+        "series_instance_uid": _string_value(_get(row, columns.series_uid)),
+        "sop_instance_uid": _string_value(_get(row, columns.sop_uid)),
+        "patient_orientation": patient_orientation,
+        "coordinate_frame_id": _string_value(
+            _get(row, columns.coordinate_frame_id)
+        ),
+    }
+    try:
+        return MammogramImage(**values), ()
+    except (TypeError, ValueError, OverflowError) as exc:
+        return (
+            None,
+            (
+                _invalid_image_attribute_issue(
+                    locator,
+                    image_id,
+                    "image",
+                    dict(row),
+                    str(exc),
+                ),
+            ),
+        )
+
+
+def _positive_image_integer(value: Any) -> Any:
+    if value is _MISSING or _is_blank(value):
+        return None
+    normalized = _normalize_exact_integer_source_value(value)
+    if (
+        normalized is _INVALID_EXACT_INTEGER
+        or normalized <= 0
+    ):
+        return _INVALID_EXACT_INTEGER
+    return normalized
+
+
+def _invalid_image_attribute_issue(
+    locator: SourceLocator,
+    image_id: str,
+    attribute: str,
+    raw_value: Any,
+    detail: str,
+) -> BuildIssue:
+    return BuildIssue(
+        code="invalid_image_attribute",
+        message=detail,
+        severity=IssueSeverity.ERROR,
+        source=locator,
+        context={
+            "image_id": image_id,
+            "attribute": attribute,
+            "raw_value": raw_value,
+        },
+    )
+
+
+def _reconcile_image_attributes(
+    retained: MammogramImage,
+    observed: MammogramImage,
+    locator: SourceLocator,
+) -> Tuple[Tuple[BuildIssue, ...], Tuple[Tuple[str, Any], ...]]:
+    issues = []
+    fills = []
+    resulting_modality = retained.modality
+    if (
+        resulting_modality is ImageModality.UNKNOWN
+        and observed.modality is not ImageModality.UNKNOWN
+    ):
+        resulting_modality = observed.modality
+    for attribute in (
+        "accession_number",
+        "patient_id",
+        "laterality",
+        "view_position",
+        "modality",
+        "height",
+        "width",
+        "frame_count",
+        "study_instance_uid",
+        "series_instance_uid",
+        "sop_instance_uid",
+        "patient_orientation",
+        "coordinate_frame_id",
+    ):
+        if (
+            attribute == "frame_count"
+            and resulting_modality is not ImageModality.DBT
+        ):
+            continue
+        retained_value = getattr(retained, attribute)
+        observed_value = getattr(observed, attribute)
+        retained_known = _known_image_attribute(attribute, retained_value)
+        observed_known = _known_image_attribute(attribute, observed_value)
+        if not retained_known:
+            if observed_known:
+                fills.append((attribute, observed_value))
+            continue
+        if not observed_known or retained_value == observed_value:
+            continue
+        issues.append(
+            BuildIssue(
+                code="conflicting_image_attribute",
+                message=(
+                    "Repeated rows contain conflicting populated invariant "
+                    f"image {attribute} values."
+                ),
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={
+                    "image_id": retained.image_id,
+                    "attribute": attribute,
+                    "retained": _serialized_image_attribute(retained_value),
+                    "observed": _serialized_image_attribute(observed_value),
+                    "retained_sources": [
+                        source.to_dict() for source in retained.sources
+                    ],
+                },
+            )
+        )
+    return tuple(issues), tuple(fills)
+
+
+def _known_image_attribute(attribute: str, value: Any) -> bool:
+    if value is None:
+        return False
+    if attribute == "laterality":
+        return value is not Laterality.UNKNOWN
+    if attribute == "view_position":
+        return value is not ViewPosition.UNKNOWN
+    if attribute == "modality":
+        return value is not ImageModality.UNKNOWN
+    if attribute == "patient_orientation":
+        return value.exact
+    return True
+
+
+def _serialized_image_attribute(value: Any) -> Any:
+    if isinstance(value, (Laterality, ViewPosition, ImageModality)):
+        return value.value
+    if isinstance(value, PatientOrientation):
+        return list(value.as_tuple())
+    return value
 
 
 def assemble_clinical_image_graph(

@@ -110,6 +110,25 @@ class RegionOfInterest:
 
         return (self.y_min + self.y_max) / 2.0, (self.x_min + self.x_max) / 2.0
 
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-ready image-local ROI representation."""
+
+        return {
+            "coordinates": list(self.coordinates),
+            "roi_id": self.roi_id,
+            "image_id": self.image_id,
+            "frame_indices": list(self.frame_indices),
+            "source": self.source,
+            "confidence": self.confidence,
+            "coordinate_frame_id": self.coordinate_frame_id,
+            "source_coordinates": (
+                list(self.source_coordinates)
+                if self.source_coordinates is not None
+                else None
+            ),
+            "source_coordinate_convention": self.source_coordinate_convention,
+        }
+
     def resize(
         self,
         *,

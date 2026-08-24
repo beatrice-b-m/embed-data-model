@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from embed_toolkit.audit.results import ResultStatus
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.rois import RegionOfInterest
 from embed_toolkit.workflows.roi_transfer import (
@@ -24,6 +25,15 @@ def image(
         image_id=image_id,
         laterality=laterality,
         view_position=view_position,
+        sources=[
+            SourceLocator(
+                scope="roi-transfer-tests",
+                scope_kind=SourceScopeKind.MATERIALIZATION,
+                source_profile="test",
+                source_table="images",
+                source_key=image_id,
+            )
+        ],
         modality=modality,
         height=height,
         width=width,
