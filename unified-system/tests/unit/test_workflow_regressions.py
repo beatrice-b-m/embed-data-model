@@ -80,7 +80,7 @@ def aligned_roi(
     image_id: str = "left-cc",
 ) -> RegionOfInterest:
     source = SourceLocator(
-        scope="legacy-parity-tests",
+        scope="workflow-regression-tests",
         scope_kind=SourceScopeKind.MATERIALIZATION,
         source_profile="test",
         source_table="images",
@@ -102,12 +102,12 @@ def aligned_roi(
             depth_frame_provenance=RoiDepthFrameProvenance.NOT_APPLICABLE_2D,
         ),
         sources=(source,),
-        annotation_source="synthetic-parity",
+        annotation_source="synthetic-regression",
         coordinate_frame_id=f"{image_id}-aligned",
     )
 
 
-def test_legacy_parity_clock_mapping_is_laterality_aware_before_matching() -> None:
+def test_clock_mapping_is_laterality_aware_before_matching() -> None:
     localizer = FindingLocalizer()
 
     left = localizer.localize(
@@ -137,7 +137,7 @@ def test_legacy_parity_clock_mapping_is_laterality_aware_before_matching() -> No
     }
 
 
-def test_legacy_parity_bilateral_candidate_projection_uses_both_sides() -> None:
+def test_bilateral_candidate_projection_uses_both_sides() -> None:
     clinical = build_clinical_tables(
         [
             {"empi_anon": "P1", "acc_anon": "ACC-EXPAND", "numfind": "B", "side": "B"},
@@ -190,27 +190,27 @@ def test_legacy_parity_bilateral_candidate_projection_uses_both_sides() -> None:
     )
 
 
-def test_legacy_parity_localization_preserves_source_evidence() -> None:
-    result = FindingLocalizer(source="magview-parity").localize(
+def test_localization_preserves_source_evidence() -> None:
+    result = FindingLocalizer(source="magview-regression").localize(
         laterality="L",
         subject_id="finding-source-evidence",
         raw_source_fields={"loc_code": "L", "depth_code": "P", "clock": "3"},
     )
 
     assert result.status is ResultStatus.SUCCESS
-    assert result.metadata["source"] == "magview-parity"
-    assert result.metadata["preferred_source"] == "magview-parity"
+    assert result.metadata["source"] == "magview-regression"
+    assert result.metadata["preferred_source"] == "magview-regression"
     assert [
         (item.kind, item.source, item.payload["field"], item.payload["raw_value"])
         for item in result.evidence
     ] == [
-        ("depth", "magview-parity", "depth_code", "P"),
-        ("clock", "magview-parity", "clock_code", "3"),
-        ("location", "magview-parity", "location_code", "L"),
+        ("depth", "magview-regression", "depth_code", "P"),
+        ("clock", "magview-regression", "clock_code", "3"),
+        ("location", "magview-regression", "location_code", "L"),
     ]
 
 
-def test_legacy_parity_roi_localization_preserves_geometry_evidence() -> None:
+def test_roi_localization_preserves_geometry_evidence() -> None:
     base = aligned_roi(
         "roi-source-evidence",
         (75, 85, 85, 95),
@@ -256,7 +256,7 @@ def test_legacy_parity_roi_localization_preserves_geometry_evidence() -> None:
     assert geometry_evidence.payload["coordinate_frame_id"] == "left-cc-aligned"
 
 
-def test_legacy_parity_mlo_roi_geometry_maps_view_observable_axis() -> None:
+def test_mlo_roi_geometry_maps_view_observable_axis() -> None:
     roi = aligned_roi(
         "roi-left-mlo-superior-posterior",
         (25, 5, 35, 15),
@@ -276,7 +276,7 @@ def test_legacy_parity_mlo_roi_geometry_maps_view_observable_axis() -> None:
     }
 
 
-def test_legacy_parity_matching_uses_aligned_roi_geometry_and_reports_unmatched() -> (
+def test_matching_uses_aligned_roi_geometry_and_reports_unmatched() -> (
     None
 ):
     raw_alignment = Alignment(AlignmentDirection.RIGHT, AlignmentDirection.DOWN)

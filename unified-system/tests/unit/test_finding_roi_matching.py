@@ -213,7 +213,7 @@ def test_singleton_policy_associates_all_compatible_rois() -> None:
     )
 
 
-def test_legacy_parity_side_mismatch_cannot_win_over_same_side_candidate() -> None:
+def test_side_mismatch_cannot_win_over_same_side_candidate() -> None:
     finding = localized(
         "finding-left",
         "finding",
@@ -247,7 +247,7 @@ def test_legacy_parity_side_mismatch_cannot_win_over_same_side_candidate() -> No
         )
 
 
-def test_legacy_parity_one_to_one_assignment_reports_unclaimed_rois_globally() -> None:
+def test_one_to_one_assignment_reports_unclaimed_rois_globally() -> None:
     findings = [
         localized("finding-upper", "finding", "R", si="superior", depth="posterior"),
         localized("finding-lower", "finding", "R", si="inferior", depth="anterior"),
@@ -282,7 +282,7 @@ def test_legacy_parity_one_to_one_assignment_reports_unclaimed_rois_globally() -
     assert all("unmatched_rois" in warning_codes(result) for result in results)
 
 
-def test_legacy_parity_scoring_does_not_require_every_anatomical_axis() -> None:
+def test_scoring_does_not_require_every_anatomical_axis() -> None:
     finding = localized(
         "finding-cc-observable",
         "finding",

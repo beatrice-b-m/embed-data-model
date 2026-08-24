@@ -1,8 +1,8 @@
 ---
 type: Policy
 title: Legacy Retirement Policy
-description: Retired legacy policy and intentional parity decisions for the former root-level EMBED toolkit trees.
-tags: [mammography, embed, legacy, parity, retirement]
+description: Retired legacy policy and current invariant ownership for the former root-level EMBED toolkit trees.
+tags: [mammography, embed, legacy, regression, retirement]
 timestamp: 2026-07-04T00:00:00-04:00
 kb_status: draft
 ---
@@ -12,18 +12,19 @@ kb_status: draft
 ## Decision
 
 The root-level `embed_toolkit/` and `quadrant_matching/` trees have been
-removed after acceptance of unified-system parity coverage. They are not runtime
-dependencies of `unified-system/`, and new unified-system code must not import
-from their former module paths.
+removed after acceptance of unified-system invariant coverage. They are not
+runtime dependencies of `unified-system/`, and new unified-system code must not
+import from their former module paths.
 
 The legacy trees were used to derive expected behavior, vocabulary, fixtures,
-and parity tests. They are no longer candidates for active maintenance; fixes
+and regression tests. They are no longer candidates for active maintenance; fixes
 for unified behavior should land under `unified-system/`.
 
-## Parity Ownership
+## Current Invariant Ownership
 
-Current parity coverage is owned by the unified-system modules and tests that
-exercise the replacement behavior:
+Current behavior is owned by the unified-system modules and tests that exercise
+its invariants. These tests do not guarantee compatibility with the retired
+implementations:
 
 - Source values and normalized clinical vocabulary:
   `core/birads.py`, `adapters/magview.py`, `tests/unit/test_birads.py`, and
@@ -39,7 +40,7 @@ exercise the replacement behavior:
 - Finding-to-ROI matching and unmatched object reporting:
   `workflows/finding_roi_matching.py`,
   `tests/unit/test_finding_roi_matching.py`, and
-  `tests/unit/test_legacy_parity.py`.
+  `tests/unit/test_workflow_regressions.py`.
 - ROI transfer, patch extraction, visualization, and audit exports:
   `workflows/roi_transfer.py`, `workflows/patch_extraction.py`,
   `visualization/mammogram.py`, `audit/export.py`, and their focused unit
@@ -47,10 +48,10 @@ exercise the replacement behavior:
 - Import isolation: `tests/unit/test_imports.py` proves the package is imported
   from `unified-system/src` and rejects former legacy import paths.
 
-## Intentional Parity Decisions
+## Intentional Unified-System Decisions
 
 These differences from the legacy code are intentional and should be documented
-in parity tests or review notes when relevant:
+in current invariant or regression tests, or in review notes when relevant:
 
 - Missing `hiti_preproc`: `quadrant_matching/` depended on
   `hiti_preproc.alignment`, which is not present in this repository. The unified
@@ -89,7 +90,7 @@ in parity tests or review notes when relevant:
 - Do not add runtime imports from former root-level `embed_toolkit/` or
   `quadrant_matching/` paths into `unified-system/`.
 - Do not make new tests depend on those packages importing successfully.
-- Keep parity fixtures small and synthetic; copy only the minimal behavior
+- Keep regression fixtures small and synthetic; copy only the minimal behavior
   needed to assert a unified-system invariant.
 - If a legacy behavior is preserved, identify the unified module and test that
   now owns it.
@@ -98,7 +99,8 @@ in parity tests or review notes when relevant:
 
 ## Retirement Gate
 
-The retirement gate has been accepted based on parity coverage for:
+The retirement gate has been accepted based on invariant and regression
+coverage for:
 
 - MagView location, depth, clock-face, laterality, and bilateral expansion.
 - Alignment and coordinate normalization behavior needed by localization and
