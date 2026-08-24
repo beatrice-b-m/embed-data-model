@@ -116,7 +116,7 @@ def test_missing_image_identity_follows_strict_and_audit_policy() -> None:
         ({"Rows": float("inf")}, "height"),
         ({"Columns": "not-an-integer"}, "width"),
         (
-            {"FinalImageType": "DBT", "NumberOfFrames": 1.5},
+            {"FinalImageType": "DBT", "ImagesInAcquisition": 1.5},
             "frame_count",
         ),
         ({"PatientOrientation": "['P']"}, "patient_orientation"),
@@ -160,7 +160,7 @@ def test_duplicate_unknowns_are_filled_without_overwriting_known_values() -> Non
                 FinalImageType="DBT",
                 Rows=100,
                 Columns=80,
-                NumberOfFrames=20,
+                ImagesInAcquisition=20,
                 PatientOrientation="['P', 'L']",
             ),
             row(
@@ -296,7 +296,7 @@ def test_audit_conflicts_apply_safe_fill_and_omit_conflict_row_rois() -> None:
 def test_modality_conflict_cannot_fill_dbt_frame_count_into_ffdm_image() -> None:
     rows = [
         row(FinalImageType="2D", Columns=None),
-        row(FinalImageType="DBT", NumberOfFrames=20, Columns=100),
+        row(FinalImageType="DBT", ImagesInAcquisition=20, Columns=100),
     ]
 
     with pytest.raises(BuildPolicyError) as exc_info:
@@ -405,7 +405,7 @@ def test_image_tables_reject_roi_modality_and_frame_bound_mismatches() -> None:
         [
             row(
                 FinalImageType="DBT",
-                NumberOfFrames=5,
+                ImagesInAcquisition=5,
                 ROI_coords=[1, 2, 3, 4],
                 ROI_frames=[2],
             )

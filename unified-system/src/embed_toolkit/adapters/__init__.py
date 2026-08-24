@@ -7,11 +7,7 @@ from embed_toolkit.adapters.embed import (
     FindingImageCandidateProjection,
     assemble_clinical_image_graph,
     build_clinical_tables,
-    build_exams,
     build_image_tables,
-    build_images,
-    build_patients,
-    build_rois,
     project_finding_image_candidates,
 )
 from embed_toolkit.adapters.magview import (
@@ -43,11 +39,7 @@ __all__ = [
     "UnmatchedImageReason",
     "assemble_clinical_image_graph",
     "build_clinical_tables",
-    "build_exams",
     "build_image_tables",
-    "build_images",
-    "build_patients",
-    "build_rois",
     "project_finding_image_candidates",
     "normalize_magview_location",
 ]

@@ -780,7 +780,6 @@ class _ColumnAliases:
     sop_uid: Tuple[str, ...] = ()
     patient_orientation: Tuple[str, ...] = ()
     coordinate_frame_id: Tuple[str, ...] = ()
-    roi_id: Tuple[str, ...] = ("roi_id", "ROI_ID")
     roi_source: Tuple[str, ...] = ()
     roi_confidence: Tuple[str, ...] = ("roi_confidence", "ROI_confidence")
     roi_coordinates: Tuple[str, ...] = ()
@@ -2559,46 +2558,6 @@ def project_finding_image_candidates(
     return tuple(projections)
 
 
-def build_patients(
-    rows: Iterable[Row],
-    *,
-    columns: Optional[EmbedColumnConfig] = None,
-) -> Tuple[Patient, ...]:
-    """Convenience wrapper returning only patient aggregates."""
-
-    return build_clinical_tables(rows, columns=columns).patients
-
-
-def build_exams(
-    rows: Iterable[Row],
-    *,
-    columns: Optional[EmbedColumnConfig] = None,
-) -> Tuple[Exam, ...]:
-    """Convenience wrapper returning only exam aggregates."""
-
-    return build_clinical_tables(rows, columns=columns).exams
-
-
-def build_images(
-    rows: Iterable[Row],
-    *,
-    columns: Optional[EmbedColumnConfig] = None,
-) -> Tuple[MammogramImage, ...]:
-    """Convenience wrapper returning only image objects."""
-
-    return build_image_tables(rows, columns=columns).images
-
-
-def build_rois(
-    rows: Iterable[Row],
-    *,
-    columns: Optional[EmbedColumnConfig] = None,
-) -> Tuple[RegionOfInterest, ...]:
-    """Convenience wrapper returning only ROI objects."""
-
-    return build_image_tables(rows, columns=columns).rois
-
-
 def _clinical_laterality(value: Any) -> Laterality:
     if value is _MISSING or _is_blank(value):
         return Laterality.BILATERAL
@@ -2878,16 +2837,6 @@ def _rois_from_row(
         if not recover_frames:
             return (), tuple(issues)
 
-    roi_values, roi_id_issue = _roi_source_values(
-        row,
-        columns,
-        len(coordinate_sets),
-        row_locator,
-        image.image_id,
-    )
-    if roi_id_issue is not None:
-        issues.append(roi_id_issue)
-
     raw_confidence = _get(row, columns.roi_confidence)
     confidence = None
     if raw_confidence is not _MISSING and not _is_blank(raw_confidence):
@@ -2912,17 +2861,9 @@ def _rois_from_row(
     annotation_source = _string_value(_get(row, columns.roi_source))
     rois = []
     for index, coordinates in enumerate(coordinate_sets):
-        source_value = roi_values[index]
-        locator = (
-            RoiLocator.from_source(
-                image_locator=image.canonical_source,
-                source_value=source_value,
-            )
-            if source_value is not None
-            else RoiLocator.synthetic(
-                image_locator=image.canonical_source,
-                source_ordinal=index,
-            )
+        locator = RoiLocator.synthetic(
+            image_locator=image.canonical_source,
+            source_ordinal=index,
         )
         frame_indices = frame_sets[index]
         depth_frame_provenance = (
@@ -3029,33 +2970,6 @@ def _roi_build_issue(
         source=source,
         context={"image_id": image_id, **dict(context or {})},
     )
-
-
-def _roi_source_values(
-    row: Row,
-    columns: _ColumnAliases,
-    count: int,
-    source: SourceLocator,
-    image_id: str,
-) -> Tuple[Tuple[Optional[str], ...], Optional[BuildIssue]]:
-    raw_value = _get(row, columns.roi_id)
-    if raw_value is _MISSING or _is_blank(raw_value):
-        return (None,) * count, None
-    values = _sequence_value(raw_value)
-    if not values:
-        return (None,) * count, None
-    if len(values) != count:
-        return (
-            (None,) * count,
-            _roi_build_issue(
-                source,
-                image_id,
-                "misaligned_roi_source_identifiers",
-                "Source ROI identifiers must align exactly with ROI coordinates.",
-                {"coordinate_count": count, "identifier_count": len(values)},
-            ),
-        )
-    return tuple(_string_value(value) for value in values), None
 
 
 def _roi_frame_sets(

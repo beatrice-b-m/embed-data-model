@@ -408,7 +408,6 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
             "Columns": 1536,
             "SOPInstanceUID": "sop-1",
             "PatientOrientation": "['P', 'L']",
-            "roi_id": "ROI-1",
             "y_min": 10,
             "x_min": 20,
             "y_max": 40,
@@ -424,7 +423,7 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
             "FinalImageType": "DBT",
             "Rows": 3000,
             "Columns": 2500,
-            "NumberOfFrames": 72,
+            "ImagesInAcquisition": 72,
             "ROI_coords": [(1, 2, 3, 4), (10, 20, 30, 40)],
             "ROI_frames": [12, 15],
         },
@@ -453,8 +452,8 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
     assert tables.rois[0].source_coordinates == (10, 20, 40, 60)
     assert tables.rois[0].source_coordinate_convention == "inclusive_maxima"
     assert tables.rois[0].annotation_source == "synthetic"
-    assert tables.rois[0].locator.kind is RoiLocatorKind.SOURCE_SUPPLIED
-    assert tables.rois[0].locator.source_value == "ROI-1"
+    assert tables.rois[0].locator.kind is RoiLocatorKind.SYNTHETIC
+    assert tables.rois[0].locator.source_ordinal == 0
     assert tables.rois[0].source_provenance.source_count.basis is (
         RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE
     )
@@ -569,17 +568,16 @@ def test_fatal_roi_errors_omit_row_rois_in_audit(
     assert audited.build_issues[0].code == issue_code
 
 
-def test_source_identifier_alignment_and_confidence_recover_in_audit() -> None:
+def test_multiple_roi_confidence_recovers_with_synthetic_locators_in_audit() -> None:
     row = {
         "image_id": "IMG-RECOVER",
         "FinalImageType": "2D",
         "ROI_coords": [[1, 2, 3, 4], [5, 6, 7, 8]],
-        "roi_id": ["ONLY-ONE"],
         "roi_confidence": 2.0,
     }
     with pytest.raises(BuildPolicyError) as exc_info:
         build_image_tables([row], source_scope="roi-recovery")
-    assert exc_info.value.issue.code == "misaligned_roi_source_identifiers"
+    assert exc_info.value.issue.code == "invalid_roi_confidence"
 
     audited = build_image_tables(
         [row],
@@ -587,10 +585,7 @@ def test_source_identifier_alignment_and_confidence_recover_in_audit() -> None:
         build_policy=BuildPolicy(BuildMode.AUDIT),
     )
 
-    assert [issue.code for issue in audited.build_issues] == [
-        "misaligned_roi_source_identifiers",
-        "invalid_roi_confidence",
-    ]
+    assert [issue.code for issue in audited.build_issues] == ["invalid_roi_confidence"]
     assert [roi.locator.kind for roi in audited.rois] == [
         RoiLocatorKind.SYNTHETIC,
         RoiLocatorKind.SYNTHETIC,
@@ -605,27 +600,6 @@ def test_source_identifier_alignment_and_confidence_recover_in_audit() -> None:
         is RoiSourceCountBasis.ALIGNED_COORDINATE_COLLECTION
         for roi in audited.rois
     )
-
-
-def test_mixed_source_and_synthetic_roi_locators_preserve_scope() -> None:
-    tables = build_image_tables(
-        [
-            {
-                "image_id": "IMG-MIXED",
-                "FinalImageType": "2D",
-                "ROI_coords": [[1, 2, 3, 4], [5, 6, 7, 8]],
-                "roi_id": ["SOURCE-1", None],
-            }
-        ],
-        source_scope="roi-scope",
-    )
-
-    first, second = tables.rois
-    assert first.locator.kind is RoiLocatorKind.SOURCE_SUPPLIED
-    assert second.locator.kind is RoiLocatorKind.SYNTHETIC
-    assert second.locator.source_ordinal == 1
-    assert first.locator.image_locator is tables.images[0].canonical_source
-    assert second.locator.image_locator is tables.images[0].canonical_source
 
 
 def test_invalid_roi_confidence_strict_error_and_audit_recovery() -> None:
@@ -649,12 +623,11 @@ def test_invalid_roi_confidence_strict_error_and_audit_recovery() -> None:
     assert audited.source_occurrences[0].resolution_state is ResolutionState.UNRESOLVED
 
 
-def test_duplicate_roi_locator_deduplicates_equal_and_governs_conflicts() -> None:
+def test_duplicate_synthetic_roi_locator_deduplicates_and_governs_conflicts() -> None:
     equal = {
         "image_id": "IMG-DUP",
         "FinalImageType": "2D",
         "ROI_coords": [1, 2, 3, 4],
-        "roi_id": "SOURCE-1",
     }
     deduplicated = build_image_tables(
         [equal, equal],
@@ -709,7 +682,6 @@ def test_strict_duplicate_roi_failure_does_not_mutate_inputs_or_later_builds() -
         "image_id": "IMG-ATOMIC-ROI",
         "FinalImageType": "2D",
         "ROI_coords": [1, 2, 3, 4],
-        "roi_id": "SOURCE-1",
     }
     conflicting = {**first, "ROI_coords": [10, 20, 30, 40]}
     original_first = {**first, "ROI_coords": list(first["ROI_coords"])}
@@ -734,14 +706,13 @@ def test_strict_duplicate_roi_failure_does_not_mutate_inputs_or_later_builds() -
     assert len(rebuilt.rois) == 1
 
 
-def test_equal_geometry_with_distinct_source_locators_remains_distinct() -> None:
+def test_equal_geometry_with_distinct_synthetic_locators_remains_distinct() -> None:
     tables = build_image_tables(
         [
             {
                 "image_id": "IMG-DISTINCT",
                 "FinalImageType": "2D",
                 "ROI_coords": [[1, 2, 3, 4], [1, 2, 3, 4]],
-                "roi_id": ["ROI-A", "ROI-B"],
             }
         ],
         source_scope="roi-distinct",

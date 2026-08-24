@@ -208,7 +208,6 @@ def profile_source_field_candidates(
         ),
         "image_frames": _candidates(
             columns.image_frames,
-            "NumberOfFrames",
             "frame_count",
         ),
         "image_modality": _candidates(

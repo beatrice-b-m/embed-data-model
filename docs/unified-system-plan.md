@@ -134,8 +134,8 @@ Structural implications:
 - ROI coordinates are image-local boxes in `[y_min, x_min, y_max, x_max]`
   order. DBT ROIs carry zero or more frame indices from `ROI_frames`, whose
   nested collections are aligned by ROI index. `ImagesInAcquisition` is
-  interpreted as frame count only for DBT rows; `NumberOfFrames` is accepted
-  solely as a compatibility alias and non-DBT values have no frame semantics.
+  interpreted as frame count only for DBT rows; non-DBT values have no frame
+  semantics.
 
 ## ACR BI-RADS Validation
 
@@ -430,7 +430,7 @@ Represents a spatial annotation on an image.
 
 Suggested fields:
 
-- `roi_id`
+- `locator`, synthetic and scoped to the source image for built-in ingestion
 - `coords`, in EMBED `[y_min, x_min, y_max, x_max]` order
 - `source_image`
 - `frames`, including DBT frame indices from `ROI_frames` when available
