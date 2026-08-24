@@ -159,9 +159,11 @@ def test_roi_localizer_preserves_dbt_frame_in_metadata_and_evidence() -> None:
     serialized = RoiLocalizer(expected_axes=("ml", "depth")).localize(roi, geometry).to_dict()
 
     assert serialized["metadata"]["frame_index"] == 23
+    assert serialized["metadata"]["frame_indices"] == [23]
     assert serialized["metadata"]["image_id"] == "dbt-img"
     assert serialized["metadata"]["coordinate_frame_id"] == "aligned-dbt"
     assert serialized["evidence"][0]["source"] == "embed-roi-csv"
     assert serialized["evidence"][0]["payload"]["frame_index"] == 23
+    assert serialized["evidence"][0]["payload"]["frame_indices"] == [23]
     assert serialized["evidence"][0]["payload"]["coordinate_frame_id"] == "dbt-frame-23"
     json.dumps(serialized)

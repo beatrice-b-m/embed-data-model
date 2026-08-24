@@ -132,7 +132,10 @@ Structural implications:
 - `numfind` identifies a unique finding within an exam, but the stable finding
   identity should include accession and side as well.
 - ROI coordinates are image-local boxes in `[y_min, x_min, y_max, x_max]`
-  order. DBT ROIs can also carry `ROI_frames`, aligned by ROI index.
+  order. DBT ROIs carry zero or more frame indices from `ROI_frames`, whose
+  nested collections are aligned by ROI index. `ImagesInAcquisition` is
+  interpreted as frame count only for DBT rows; `NumberOfFrames` is accepted
+  solely as a compatibility alias and non-DBT values have no frame semantics.
 
 ## ACR BI-RADS Validation
 

@@ -88,6 +88,7 @@ class PatchExtractor:
         result_metadata = {
             "roi_source": roi.source,
             "roi_confidence": roi.confidence,
+            "roi_frame_indices": list(roi.frame_indices),
             "roi_frame_index": roi.frame_index,
             "coordinate_frame_id": roi.coordinate_frame_id
             or _object_attr(image, "coordinate_frame_id"),

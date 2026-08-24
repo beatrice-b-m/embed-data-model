@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from embed_toolkit.adapters.embed import (
     build_clinical_tables,
     build_image_tables,
@@ -143,9 +145,58 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
     assert tables.rois[0].source == "synthetic"
     assert tables.rois[0].confidence == 0.8
     assert tables.rois[1].coordinates == (1, 2, 4, 5)
+    assert tables.rois[1].frame_indices == (12,)
     assert tables.rois[1].frame_index == 12
     assert tables.rois[2].coordinates == (10, 20, 31, 41)
     assert tables.rois[2].frame_index == 15
+
+
+def test_dbt_roi_frames_preserve_plural_associations_and_validate_count() -> None:
+    row = {
+        "image_id": "DBT-1",
+        "ImageLateralityFinal": "L",
+        "FinalImageType": "DBT",
+        "ImagesInAcquisition": 21,
+        "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
+        "ROI_frames": [[12, 13], [20]],
+    }
+
+    tables = build_image_tables([row])
+
+    assert tables.images[0].frame_count == 21
+    assert [roi.frame_indices for roi in tables.rois] == [(12, 13), (20,)]
+    assert tables.rois[0].frame_index is None
+    assert tables.rois[1].frame_index == 20
+
+    with pytest.raises(ValueError, match="below DBT frame count"):
+        build_image_tables([{**row, "ROI_frames": [[12, 13], [21]]}])
+
+
+def test_roi_frame_collections_validate_alignment_and_ignore_non_dbt_values() -> None:
+    dbt_row = {
+        "image_id": "DBT-1",
+        "FinalImageType": "DBT",
+        "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
+    }
+    with pytest.raises(ValueError, match="align positionally"):
+        build_image_tables([{**dbt_row, "ROI_frames": [[12, 13]]}])
+
+    empty = build_image_tables([{**dbt_row, "ROI_frames": [[], []]}])
+    assert [roi.frame_indices for roi in empty.rois] == [(), ()]
+
+    two_d = build_image_tables(
+        [
+            {
+                "image_id": "2D-1",
+                "FinalImageType": "2D",
+                "ImagesInAcquisition": 99,
+                "ROI_coords": [[1, 2, 3, 4]],
+                "ROI_frames": [[7, 8]],
+            }
+        ]
+    )
+    assert two_d.images[0].frame_count is None
+    assert two_d.rois[0].frame_indices == ()
 
 
 def test_builders_accept_custom_column_configuration() -> None:
@@ -181,6 +232,7 @@ def test_builders_accept_custom_column_configuration() -> None:
                 "accession_key": "ACC-CUSTOM",
                 "image_side": "R",
                 "view_name": "MLO",
+                "FinalImageType": "DBT",
                 "boxes": [[5, 6, 7, 8]],
                 "frames": [4],
             }

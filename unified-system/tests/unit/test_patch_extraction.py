@@ -167,6 +167,7 @@ def test_preserves_metadata_and_supports_numpy_like_slicing() -> None:
     assert result.metadata == {
         "roi_source": "embed",
         "roi_confidence": 0.91,
+        "roi_frame_indices": [7],
         "roi_frame_index": 7,
         "coordinate_frame_id": "aligned-left-cc",
         "reader": "unit-test",

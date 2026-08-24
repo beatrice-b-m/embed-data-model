@@ -22,6 +22,7 @@ class RegionOfInterest:
     coordinates: CoordinateBox
     roi_id: Optional[str] = None
     image_id: Optional[str] = None
+    frame_indices: Tuple[int, ...] = ()
     frame_index: Optional[int] = None
     source: Optional[str] = None
     confidence: Optional[float] = None
@@ -51,11 +52,19 @@ class RegionOfInterest:
         y_min, x_min, y_stop, x_stop = tuple(float(value) for value in self.coordinates)
         if y_stop < y_min or x_stop < x_min:
             raise ValueError("ROI stop coordinates must be greater than min coordinates")
-        if self.frame_index is not None and self.frame_index < 0:
-            raise ValueError("DBT frame index must be non-negative")
+        indices = tuple(int(value) for value in self.frame_indices)
+        if self.frame_index is not None:
+            legacy_index = int(self.frame_index)
+            if indices and indices != (legacy_index,):
+                raise ValueError("frame_index conflicts with canonical frame_indices")
+            indices = (legacy_index,)
+        if any(value < 0 for value in indices):
+            raise ValueError("DBT frame indices must be non-negative")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("ROI confidence must be in [0, 1]")
         object.__setattr__(self, "coordinates", (y_min, x_min, y_stop, x_stop))
+        object.__setattr__(self, "frame_indices", indices)
+        object.__setattr__(self, "frame_index", indices[0] if len(indices) == 1 else None)
         if self.source_coordinates is not None:
             object.__setattr__(
                 self,

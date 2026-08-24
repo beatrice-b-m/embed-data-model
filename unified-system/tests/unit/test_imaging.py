@@ -136,6 +136,16 @@ def test_roi_resize_and_realign_return_new_roi_and_preserve_dbt_frame() -> None:
     assert roi.coordinates == (10, 20, 30, 50)
 
 
+def test_roi_singular_frame_accessor_only_returns_exactly_one_frame() -> None:
+    plural = RegionOfInterest((0, 0, 1, 1), frame_indices=(12, 13))
+    singular = RegionOfInterest((0, 0, 1, 1), frame_index=20)
+
+    assert plural.frame_indices == (12, 13)
+    assert plural.frame_index is None
+    assert singular.frame_indices == (20,)
+    assert singular.frame_index == 20
+
+
 def test_roi_iou_and_containment_ratio() -> None:
     roi = RegionOfInterest((0, 0, 10, 10))
     overlapping = RegionOfInterest((5, 5, 15, 15))
@@ -162,5 +172,7 @@ def test_roi_validation_rejects_invalid_geometry_and_metadata() -> None:
         RegionOfInterest((10, 0, 5, 10))
     with pytest.raises(ValueError):
         RegionOfInterest((0, 0, 1, 1), frame_index=-1)
+    with pytest.raises(ValueError):
+        RegionOfInterest((0, 0, 1, 1), frame_indices=(0, -1))
     with pytest.raises(ValueError):
         RegionOfInterest((0, 0, 1, 1), confidence=1.5)

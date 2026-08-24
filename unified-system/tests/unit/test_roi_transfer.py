@@ -107,6 +107,7 @@ def test_transfer_roi_preserves_dbt_frame_by_default() -> None:
     assert result.status is ResultStatus.SUCCESS
     assert result.transferred_roi["coordinates"] == [8.0, 5.0, 40.0, 15.0]
     assert result.transferred_roi["frame_index"] == 12
+    assert result.transferred_roi["frame_indices"] == [12]
     assert result.warnings[0].code == "approximate_transfer"
     assert result.warnings[0].payload["preserved_frame_index"] == 12
 
@@ -125,6 +126,7 @@ def test_transfer_roi_can_drop_dbt_frame_when_requested() -> None:
 
     assert result.status is ResultStatus.SUCCESS
     assert "frame_index" not in result.transferred_roi
+    assert result.transferred_roi["frame_indices"] == []
     assert result.warnings[0].payload["preserved_frame_index"] is None
 
 

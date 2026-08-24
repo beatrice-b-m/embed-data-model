@@ -153,6 +153,7 @@ def _roi_box_layer(roi: RegionOfInterest) -> dict[str, JsonValue]:
         "roi_id": roi.roi_id,
         "image_id": roi.image_id,
         "frame_index": roi.frame_index,
+        "frame_indices": list(roi.frame_indices),
         "coordinates": list(roi.coordinates),
         "coordinate_order": "yxyx",
         "source": roi.source,

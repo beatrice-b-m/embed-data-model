@@ -172,6 +172,7 @@ def transfer_roi(
             coordinates=transferred.coordinates,
             roi_id=transferred.roi_id,
             image_id=transferred.image_id,
+            frame_indices=(),
             source=transferred.source,
             confidence=transferred.confidence,
             coordinate_frame_id=transferred.coordinate_frame_id,
@@ -187,6 +188,7 @@ def transfer_roi(
                 payload={
                     "source_kind": relationship.source_kind.value,
                     "target_kind": relationship.target_kind.value,
+                    "preserved_frame_indices": list(transferred.frame_indices),
                     "preserved_frame_index": transferred.frame_index,
                 },
             )
@@ -250,6 +252,7 @@ def _roi_payload(roi: RegionOfInterest) -> Dict[str, object]:
     }
     if roi.frame_index is not None:
         payload["frame_index"] = roi.frame_index
+    payload["frame_indices"] = list(roi.frame_indices)
     if roi.source is not None:
         payload["source"] = roi.source
     if roi.confidence is not None:

@@ -226,23 +226,28 @@ def build_image_tables(
     column_aliases = _column_aliases(columns)
     images: list[MammogramImage] = []
     rois: list[RegionOfInterest] = []
-    seen_image_ids: set[str] = set()
+    image_by_id: dict[str, MammogramImage] = {}
 
     for row in rows:
         image_id = _required_string(row, column_aliases.image_id, "image_id")
         coordinate_frame_id = _string_value(_get(row, column_aliases.coordinate_frame_id))
-        if image_id not in seen_image_ids:
-            images.append(
-                MammogramImage(
+        image = image_by_id.get(image_id)
+        if image is None:
+            modality = ImageModality.coerce(_get(row, column_aliases.modality))
+            image = MammogramImage(
                     image_id=image_id,
                     laterality=Laterality.coerce(_get(row, column_aliases.image_side)),
                     view_position=ViewPosition.coerce(
                         _get(row, column_aliases.view_position)
                     ),
-                    modality=ImageModality.coerce(_get(row, column_aliases.modality)),
+                    modality=modality,
                     height=_optional_int(_get(row, column_aliases.height)),
                     width=_optional_int(_get(row, column_aliases.width)),
-                    frame_count=_optional_int(_get(row, column_aliases.frame_count)),
+                    # ImagesInAcquisition is a frame count only for DBT. The
+                    # NumberOfFrames alias remains a compatibility input.
+                    frame_count=_optional_int(_get(row, column_aliases.frame_count))
+                    if modality is ImageModality.DBT
+                    else None,
                     accession_number=_string_value(_get(row, column_aliases.accession)),
                     study_instance_uid=_string_value(
                         _get(row, column_aliases.study_uid)
@@ -254,9 +259,9 @@ def build_image_tables(
                     patient_orientation=_patient_orientation(row, column_aliases),
                     coordinate_frame_id=coordinate_frame_id,
                 )
-            )
-            seen_image_ids.add(image_id)
-        rois.extend(_rois_from_row(row, column_aliases, image_id, coordinate_frame_id))
+            images.append(image)
+            image_by_id[image_id] = image
+        rois.extend(_rois_from_row(row, column_aliases, image, coordinate_frame_id))
 
     return EmbedImageTables(images=tuple(images), rois=tuple(rois))
 
@@ -389,14 +394,16 @@ def _pathology_from_row(row: Row, columns: _ColumnAliases) -> Optional[Pathology
 def _rois_from_row(
     row: Row,
     columns: _ColumnAliases,
-    image_id: str,
+    image: MammogramImage,
     coordinate_frame_id: Optional[str],
 ) -> Tuple[RegionOfInterest, ...]:
     coordinate_sets = _coordinate_sets(row, columns)
     if not coordinate_sets:
         return ()
 
-    frames = _sequence_value(_get(row, columns.roi_frames))
+    frames = _sequence_value(_get(row, columns.roi_frames)) if image.is_dbt else ()
+    if frames and len(frames) != len(coordinate_sets):
+        raise ValueError("Nonempty ROI_frames must align positionally with ROI_coords")
     roi_ids = _sequence_value(_get(row, columns.roi_id))
     source = _string_value(_get(row, columns.roi_source))
     confidence = _optional_float(_get(row, columns.roi_confidence))
@@ -405,16 +412,22 @@ def _rois_from_row(
         rois.append(
             RegionOfInterest.from_embed_coordinates(
                 coordinates=coordinates,
-                roi_id=_indexed_value(roi_ids, index)
+                roi_id=_string_value(_indexed_value(roi_ids, index))
                 or _string_value(_get(row, columns.roi_id))
-                or f"{image_id}:roi:{index + 1}",
-                image_id=image_id,
-                frame_index=_optional_int(_indexed_value(frames, index)),
+                or f"{image.image_id}:roi:{index + 1}",
+                image_id=image.image_id,
+                frame_indices=_frame_indices(_indexed_value(frames, index)),
                 source=source,
                 confidence=confidence,
                 coordinate_frame_id=coordinate_frame_id,
             )
         )
+        if image.frame_count is not None and any(
+            frame >= image.frame_count for frame in rois[-1].frame_indices
+        ):
+            raise ValueError(
+                f"ROI frame index must be below DBT frame count {image.frame_count}"
+            )
     return tuple(rois)
 
 
@@ -444,6 +457,21 @@ def _coordinate_box(values: Sequence[Any]) -> Tuple[float, float, float, float]:
     if len(values) != 4:
         raise ValueError("ROI coordinates must have four values")
     return tuple(float(value) for value in values)  # type: ignore[return-value]
+
+
+def _frame_indices(value: Any) -> Tuple[int, ...]:
+    """Return one ROI's complete DBT frame collection."""
+
+    if value is _MISSING or _is_blank(value):
+        return ()
+    return tuple(_required_frame_index(item) for item in _sequence_value(value))
+
+
+def _required_frame_index(value: Any) -> int:
+    frame = _optional_int(value)
+    if frame is None:
+        raise ValueError("ROI frame indices must be populated integers")
+    return frame
 
 
 def _patient_orientation(
