@@ -46,7 +46,7 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
     assert len(tables.exams) == 1
     assert len(tables.findings) == 1
     finding = tables.findings[0]
-    assert finding.identity == ("ACC-1", Laterality.LEFT, "1")
+    assert finding.identity == ("ACC-1", "1")
     assert finding.finding_type == "mass"
     assert finding.assessment == "4"
     assert [procedure.procedure_id for procedure in finding.procedures] == [
@@ -76,15 +76,46 @@ def test_clinical_builder_expands_bilateral_findings_to_breast_sides() -> None:
         ]
     )
 
-    assert [finding.laterality for finding in tables.findings] == [
-        Laterality.LEFT,
-        Laterality.RIGHT,
-    ]
+    assert len(tables.findings) == 1
+    assert tables.findings[0].laterality is Laterality.BILATERAL
     assert [side.laterality for side in tables.breast_sides] == [
         Laterality.LEFT,
         Laterality.RIGHT,
     ]
-    assert [len(finding.procedures) for finding in tables.findings] == [1, 1]
+    assert [side.findings[0] for side in tables.breast_sides] == [
+        tables.findings[0],
+        tables.findings[0],
+    ]
+    assert len(tables.findings[0].procedures) == 1
+
+
+def test_null_finding_side_is_one_bilateral_finding() -> None:
+    tables = build_clinical_tables(
+        [{"empi_anon": "P1", "acc_anon": "ACC-B", "numfind": "2"}]
+    )
+
+    assert len(tables.findings) == 1
+    assert tables.findings[0].laterality is Laterality.BILATERAL
+    assert set(tables.exams[0].breast_sides) == {Laterality.LEFT, Laterality.RIGHT}
+
+
+def test_repeated_finding_identity_flags_conflicting_side() -> None:
+    tables = build_clinical_tables(
+        [
+            {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": 1, "side": "L"},
+            {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": 1, "side": "R"},
+        ]
+    )
+
+    assert len(tables.findings) == 1
+    assert tables.findings[0].validation_issues == [
+        {
+            "code": "conflicting_finding_attribute",
+            "attribute": "laterality",
+            "retained": "L",
+            "observed": "R",
+        }
+    ]
 
 
 def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> None:
@@ -240,7 +271,7 @@ def test_builders_accept_custom_column_configuration() -> None:
         columns=columns,
     )
 
-    assert clinical.findings[0].identity == ("ACC-CUSTOM", Laterality.RIGHT, "7")
+    assert clinical.findings[0].identity == ("ACC-CUSTOM", "7")
     assert clinical.findings[0].assessment == "3"
     assert image_tables.images[0].image_id == "IMG-CUSTOM"
     assert image_tables.images[0].view_position is ViewPosition.MLO
@@ -287,9 +318,8 @@ def test_side_aware_join_is_explicit_and_respects_accession() -> None:
     }
 
     assert joined_ids == {
-        "ACC-1:L:L": ["ACC1-L"],
-        "ACC-1:R:R": ["ACC1-R"],
-        "ACC-1:L:B": ["ACC1-L"],
-        "ACC-1:R:B": ["ACC1-R"],
-        "ACC-1:UNKNOWN:U": ["ACC1-L", "ACC1-R"],
+        "ACC-1:L": ["ACC1-L"],
+        "ACC-1:R": ["ACC1-R"],
+        "ACC-1:B": ["ACC1-L", "ACC1-R"],
+        "ACC-1:U": ["ACC1-L", "ACC1-R"],
     }

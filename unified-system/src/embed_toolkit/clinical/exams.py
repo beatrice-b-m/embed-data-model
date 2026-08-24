@@ -39,7 +39,7 @@ class BreastSide:
         )
 
     def add_finding(self, finding: Finding) -> Finding:
-        if Laterality.coerce(finding.laterality) is not self.laterality:
+        if self.laterality not in Laterality.coerce(finding.laterality).expand():
             raise ValueError("Finding laterality must match BreastSide laterality")
         self.findings.append(finding)
         return finding
@@ -57,7 +57,7 @@ class Exam:
     metadata: Dict[str, object] = field(default_factory=dict)
 
     @property
-    def finding_index(self) -> Dict[Tuple[str, Laterality, str], Finding]:
+    def finding_index(self) -> Dict[Tuple[str, str], Finding]:
         return {finding.identity: finding for finding in self.findings}
 
     @property
@@ -92,6 +92,7 @@ class Exam:
             raise ValueError("Finding accession_number must match Exam accession_number")
         existing = self.finding_index.get(finding.identity)
         if existing is not None:
+            existing.merge_observation(finding)
             return existing
         self.findings.append(finding)
         return finding

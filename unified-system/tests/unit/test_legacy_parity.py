@@ -141,14 +141,12 @@ def test_legacy_parity_bilateral_and_missing_side_expand_for_image_join() -> Non
     }
 
     assert [finding.laterality for finding in clinical.findings] == [
-        Laterality.LEFT,
-        Laterality.RIGHT,
-        Laterality.UNKNOWN,
+        Laterality.BILATERAL,
+        Laterality.BILATERAL,
     ]
     assert joined_image_ids == {
-        "ACC-EXPAND:L:B": ["left-cc"],
-        "ACC-EXPAND:R:B": ["right-cc"],
-        "ACC-EXPAND:UNKNOWN:U": ["left-cc", "right-cc"],
+        "ACC-EXPAND:B": ["left-cc", "right-cc"],
+        "ACC-EXPAND:U": ["left-cc", "right-cc"],
     }
 
 
@@ -195,7 +193,8 @@ def test_legacy_parity_roi_localization_preserves_geometry_evidence() -> None:
     assert roi_evidence.payload == {
         "roi_id": "roi-source-evidence",
         "image_id": "left-cc",
-        "frame_index": 7,
+            "frame_index": 7,
+            "frame_indices": [7],
         "coordinates": [75, 85, 85, 95],
         "centroid": [80.0, 90.0],
         "coordinate_frame_id": "left-cc-aligned",

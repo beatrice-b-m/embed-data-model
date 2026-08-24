@@ -44,7 +44,7 @@ def test_existing_finding_anatomical_position_is_preferred() -> None:
     result = FindingLocalizer().localize(finding)
 
     assert result.status is ResultStatus.SUCCESS
-    assert result.subject_id == "ACC-1:L:1"
+    assert result.subject_id == "ACC-1:1"
     assert result.anatomical_position["clock_position"] == {"hour": 10}
     assert result.anatomical_position["quadrant"]["ml"] == "medial"
     assert result.metadata["preferred_source"] == "finding.anatomical_position"

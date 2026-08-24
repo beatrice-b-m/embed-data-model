@@ -7,7 +7,7 @@ import pytest
 
 from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
-from embed_toolkit.clinical.findings import Finding
+from embed_toolkit.clinical.findings import Finding, FindingRecordType
 from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.clinical.procedures import PathologyEvent, Procedure
 from embed_toolkit.core.anatomy import (
@@ -19,14 +19,14 @@ from embed_toolkit.core.anatomy import (
 from embed_toolkit.core.primitives import Laterality
 
 
-def test_finding_identity_includes_accession_side_and_number() -> None:
+def test_finding_identity_uses_accession_and_number_with_side_as_attribute() -> None:
     left = Finding("ACC-1", Laterality.LEFT, 1)
     right = Finding("ACC-1", Laterality.RIGHT, 1)
 
-    assert left.identity == ("ACC-1", Laterality.LEFT, "1")
-    assert right.identity == ("ACC-1", Laterality.RIGHT, "1")
-    assert left.finding_id == "ACC-1:L:1"
-    assert left.identity != right.identity
+    assert left.identity == ("ACC-1", "1")
+    assert right.identity == ("ACC-1", "1")
+    assert left.finding_id == "ACC-1:1"
+    assert left.identity == right.identity
 
 
 def test_exam_deduplicates_findings_by_stable_identity() -> None:
@@ -36,6 +36,26 @@ def test_exam_deduplicates_findings_by_stable_identity() -> None:
 
     assert duplicate is first
     assert exam.findings == [first]
+
+
+def test_exam_flags_conflicting_attributes_for_one_finding_identity() -> None:
+    exam = Exam("ACC-1")
+    first = exam.add_finding(Finding("ACC-1", "L", 7, finding_type="mass"))
+    duplicate = exam.add_finding(Finding("ACC-1", "R", 7, finding_type="calc"))
+
+    assert duplicate is first
+    assert [issue["attribute"] for issue in first.validation_issues] == [
+        "laterality",
+        "finding_type",
+    ]
+    assert first.metadata["source_row_count"] == 2
+
+
+def test_negative_nine_remains_a_governed_no_finding_sentinel() -> None:
+    finding = Finding("ACC-1", Laterality.BILATERAL, -9)
+
+    assert finding.record_type is FindingRecordType.NO_FINDING_SENTINEL
+    assert finding.to_dict()["record_type"] == "no_finding_sentinel"
 
 
 def test_breast_side_aggregates_findings_procedures_and_pathology() -> None:
@@ -75,7 +95,7 @@ def test_exam_aggregates_side_views_procedures_and_pathology() -> None:
     left = Finding("ACC-5", Laterality.LEFT, 1)
     left_procedure = left.add_procedure(Procedure(procedure_id="LP"))
     left_pathology = left_procedure.add_pathology_event(PathologyEvent(diagnosis="dcis"))
-    right = Finding("ACC-5", Laterality.RIGHT, 1)
+    right = Finding("ACC-5", Laterality.RIGHT, 2)
     right_procedure = right.add_procedure(Procedure(procedure_id="RP"))
 
     exam = Exam("ACC-5")

@@ -182,25 +182,25 @@ def build_clinical_tables(
         else:
             patient.add_exam(exam)
 
-        for side in _clinical_sides(_get(row, column_aliases.clinical_side)):
-            finding = Finding(
-                accession_number=accession,
-                laterality=side,
-                finding_number=_finding_number(row, column_aliases),
-                finding_type=_string_value(_get(row, column_aliases.finding_type)),
-                assessment=_string_value(_get(row, column_aliases.assessment)),
-                raw_source_fields=dict(row),
-            )
-            finding = exam.add_finding(finding)
-            procedure = _procedure_from_row(
-                row,
-                column_aliases,
-                accession,
-                side,
-                finding.finding_number,
-            )
-            if procedure is not None:
-                finding.add_procedure(procedure)
+        side = _clinical_laterality(_get(row, column_aliases.clinical_side))
+        finding = Finding(
+            accession_number=accession,
+            laterality=side,
+            finding_number=_finding_number(row, column_aliases),
+            finding_type=_string_value(_get(row, column_aliases.finding_type)),
+            assessment=_string_value(_get(row, column_aliases.assessment)),
+            raw_source_fields=dict(row),
+        )
+        finding = exam.add_finding(finding)
+        procedure = _procedure_from_row(
+            row,
+            column_aliases,
+            accession,
+            side,
+            finding.finding_number,
+        )
+        if procedure is not None:
+            finding.add_procedure(procedure)
 
     ordered_patients = tuple(patients.values())
     ordered_exams = tuple(exams.values())
@@ -330,11 +330,11 @@ def build_rois(
     return build_image_tables(rows, columns=columns).rois
 
 
-def _clinical_sides(value: Any) -> Tuple[Laterality, ...]:
+def _clinical_laterality(value: Any) -> Laterality:
+    if value is _MISSING or _is_blank(value):
+        return Laterality.BILATERAL
     side = Laterality.coerce(value)
-    if side is Laterality.BILATERAL:
-        return side.expand()
-    return (side,)
+    return side
 
 
 def _join_sides(value: Any) -> Tuple[Laterality, ...]:
