@@ -1,5 +1,79 @@
 # Clinical object model evaluation
 
+> **Current resolution status (2026-08-24): Resolved.** The evaluation below is
+> retained as the historical baseline that motivated the implementation. This
+> addendum and the
+> [resolution plan](clinical-object-model-resolution-plan.md) describe the
+> governing current state.
+
+## Resolution addendum: current assessment
+
+All implementation defects enumerated in the historical evaluation have been
+resolved. The current model establishes the following behavior:
+
+- **Missing clinical identifiers:** blank patient, accession, and finding
+  identifiers never become shared sentinels. Strict builds reject unsafe
+  identity; audit builds retain distinct `SourceOccurrence` evidence without
+  manufacturing clinical objects.
+- **Independent pathology:** `PathologyObservation` and
+  `PathologyDiagnosis` are distinct grains. Pathology survives without a
+  resolved procedure and uses explicit, provenance-bearing attribution links.
+- **Imaging interpretation:** `ImagingInterpretation` is a distinct
+  finding-owned grain. Assessment and recommendation retain independent
+  availability state and source provenance instead of collapsing into a bare
+  finding attribute.
+- **Incomplete procedures:** incomplete procedure surfaces remain unresolved
+  source evidence and cannot inflate resolved procedure multiplicity. Complete
+  procedures use governed identity and explicit finding links.
+- **Exam-side ownership:** each `BreastSide` is a persistent,
+  accession-scoped child of an exam. Findings and images attach independently;
+  bilateral findings project to both unilateral sides.
+- **Clinical/image hierarchy:** assembly owns exam-to-image and side-to-image
+  containment, validates cross-table patient evidence, and exposes
+  finding-to-image results only as candidate projections.
+- **Pathology meaning and time:** descriptor occurrences, diagnosis state,
+  procedure occurrence date, and pathology report documentation date are
+  separate. Temporal endpoints are not fallback-coalesced.
+- **Field coverage:** every configured repository field has an explicit state
+  and physical-source boundary in a `ProfileContract`; repository coverage
+  makes no claim of external-catalog completeness.
+- **Finding anatomy:** configured location, depth, and distance values are
+  normalized into finding anatomy while raw source evidence is retained;
+  unknown or conflicting values remain reviewable through structured warnings.
+- **Patient/exam reconciliation:** exam invariants use conflict-aware,
+  source-attributed reconciliation. Patient observations retain changing
+  values, and selection requires an explicit dated policy rather than first-row
+  retention.
+- **ROI identity:** built-in V1c ingestion creates synthetic `RoiLocator`
+  values scoped to an image plus an explicit dataset or materialization source
+  scope. These are serialization locators, not durable source identities;
+  plural DBT frame evidence remains preserved.
+
+Breadth that the configured sources cannot establish is intentionally gated by
+the full `ProfileContract`, rather than represented speculatively. For the
+clinical `internal-v2` contract, imaging episode and risk-assessment semantics
+are unresolved, radiology reports are unavailable, pathology specimens are
+unsupported, and external-catalog completeness remains unresolved. Custom
+profiles must supply their own exact contract.
+
+The only runtime built-ins are exactly `internal-v2` for clinical ingestion and
+`internal-v1c` for image ingestion. `embed_context_internal` is not an alias.
+
+Current verification on 2026-08-24:
+
+- 143 focused resolution tests passed across identity/source ledgers,
+  procedures, pathology, graph ownership and assembly, reconciliation, field
+  coverage, ROI locators, and profile contracts.
+- The complete suite passed: 456 tests.
+
+---
+
+## Historical baseline (preserved evaluation)
+
+The remainder of this document records the pre-resolution assessment. Its
+external catalog counts and 203-test result are historical evidence, not claims
+about the current repository.
+
 Date: 2026-08-24  
 Reference profile: `embed_context_internal` / `internal-v2`
 

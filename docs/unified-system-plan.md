@@ -7,6 +7,13 @@ timestamp: 2026-07-03T00:00:00-04:00
 kb_status: draft
 ---
 
+> **Historical architecture plan — superseded.** This document is retained for
+> design history. The governing current contract is
+> [the clinical object model resolution plan](clinical-object-model-resolution-plan.md);
+> current implementation status and verification are recorded in the resolution
+> addendum at the top of
+> [the clinical object model evaluation](clinical-object-model-evaluation.md).
+
 # Unified EMBED Mammography Object System Plan
 
 ## Goal

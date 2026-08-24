@@ -1,17 +1,19 @@
 # Clinical object model resolution plan
 
 Date: 2026-08-24
-Status: approved implementation contract
+Status: completed implementation contract
 
 ## Objective
 
 Resolve the correctness and coverage findings in
-`clinical-object-model-evaluation.md` with a clean API break. The repository is
-private and has no external consumers, so the final implementation must not
-retain deprecated aliases, compatibility properties, legacy readers, or dual
-serialization formats.
+[the evaluation](clinical-object-model-evaluation.md) with a clean API break.
+The repository is private and has no external consumers, so the final
+implementation must not retain deprecated aliases, compatibility properties,
+legacy readers, or dual serialization formats.
 
-The verified baseline is 203 passing tests on 2026-08-24.
+The historical pre-resolution baseline was 203 passing tests on 2026-08-24.
+Completion is verified by the current assessment addendum in
+[the evaluation](clinical-object-model-evaluation.md).
 
 ## Governing invariants
 
@@ -100,11 +102,12 @@ groups require addressable scoped locators and an explicit grouping basis.
 
 The clinical build result contains resolved patients, exams, sides, findings,
 interpretations, procedures, pathology observations, pathology diagnoses,
-explicit association links, unresolved source occurrences, build issues, and
-profile capabilities.
+explicit association links, all source occurrences with an explicit resolution
+state, build issues, and the complete governing `ProfileContract`.
 
-The image build result contains resolved images, image-local ROIs, unresolved
-source occurrences, build issues, and profile capabilities.
+The image build result contains resolved images, image-local ROIs, all source
+occurrences with an explicit resolution state, build issues, and the complete
+governing `ProfileContract`.
 
 An explicit assembly result connects clinical and image results. It owns
 exam-to-image and side-to-image containment, reports unmatched objects and
@@ -117,16 +120,21 @@ graph.
 
 ## Execution phases
 
-1. Implement the source/provenance and build-policy foundation.
-2. In parallel, prepare the clinical domain contracts, ROI locator primitives,
-   and capability/coverage framework without editing the central EMBED adapter.
-3. Integrate the clinical adapter sequentially: identity, procedures,
-   pathology, graph ownership, candidate image projection, interpretations and
-   fields, then reconciliation.
-4. Integrate ROI construction in the adapter.
-5. Migrate workflow, audit/export, and visualization ROI consumers in parallel.
-6. Complete capability declarations and the exhaustive field manifest.
-7. Remove all obsolete API, update documentation, and run final verification.
+1. **Complete:** Implement the source/provenance and build-policy foundation.
+2. **Complete:** In parallel, prepare the clinical domain contracts, ROI
+   locator primitives, and capability/coverage framework without editing the
+   central EMBED adapter.
+3. **Complete:** Integrate the clinical adapter sequentially: identity,
+   procedures, pathology, graph ownership, candidate image projection,
+   interpretations and fields, then reconciliation.
+4. **Complete:** Integrate ROI construction in the adapter.
+5. **Complete:** Migrate workflow, audit/export, and visualization ROI
+   consumers in parallel.
+6. **Complete:** Complete the `ProfileContract` declarations, including exact
+   profile identity, full concept capabilities, field inventory, and field
+   coverage.
+7. **Complete:** Remove all obsolete API, update documentation, and run final
+   verification.
 
 ## Coordination and commit protocol
 
@@ -142,10 +150,12 @@ and the staged diff. After every commit, `git log --oneline -3` confirms the
 task was recorded.
 
 The central adapter, its tests, package export files, shared import tests, and
-legacy-parity cleanup always have a single owner. Full-suite tests run at every
-phase boundary.
+workflow-regression ownership always have a single owner. Full-suite tests run
+at every phase boundary.
 
 ## Final removal gate
+
+**Gate status: Complete.**
 
 The finished source and active tests must not expose or depend on:
 
