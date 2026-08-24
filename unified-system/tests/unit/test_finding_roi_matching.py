@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from embed_toolkit.audit.results import LocalizationResult, ResultStatus
+import pytest
+
+from embed_toolkit.audit.results import AttributionState, LocalizationResult, ResultStatus
 from embed_toolkit.workflows.finding_roi_matching import FindingRoiMatcher
 
 
@@ -37,7 +39,11 @@ def warning_codes(result: object) -> set[str]:
 
 
 def candidate_for(result: object, roi_id: str) -> object:
-    return next(candidate for candidate in result.candidates if candidate.roi_id == roi_id)
+    return next(
+        candidate
+        for candidate in result.candidates
+        if roi_id in candidate.payload.get("roi_ids", [])
+    )
 
 
 def test_same_side_matching_scores_axes_and_returns_structured_result() -> None:
@@ -58,15 +64,19 @@ def test_same_side_matching_scores_axes_and_returns_structured_result() -> None:
         depth="posterior",
     )
 
-    result = FindingRoiMatcher().match([finding], [roi])[0]
+    result = FindingRoiMatcher().match(
+        [finding], [roi], accession_number="ACC-1", breast_side="L"
+    )[0]
     serialized = result.to_dict()
 
     assert result.status is ResultStatus.SUCCESS
     assert result.finding_id == "finding-1"
     assert result.matched_roi_id == "roi-1"
+    assert result.matched_roi_ids == ["roi-1"]
+    assert result.attribution_state is AttributionState.INFERRED
     assert serialized["candidates"][0]["score"] == 1.0
     assert serialized["candidates"][0]["payload"]["scored_axes"] == ["ml", "si", "depth"]
-    assert serialized["evidence"][0]["kind"] == "one_to_one_assignment"
+    assert serialized["evidence"][0]["kind"] == "inferred_roi_group_attribution"
     json.dumps(serialized)
 
 
@@ -74,16 +84,10 @@ def test_exact_side_mismatch_is_not_assignable_but_remains_inspectable() -> None
     finding = localized("finding-left", "finding", "L", ml="lateral")
     roi = localized("roi-right", "roi", "R", ml="lateral")
 
-    result = FindingRoiMatcher().match([finding], [roi])[0]
-    candidate = result.candidates[0]
-
-    assert result.status is ResultStatus.FAILED
-    assert result.matched_roi_id is None
-    assert result.unmatched_roi_ids == ["roi-right"]
-    assert candidate.score == 0.0
-    assert candidate.payload["possible"] is False
-    assert candidate.payload["skipped_reason"] == "side_mismatch"
-    assert "unmatched_finding" in warning_codes(result)
+    with pytest.raises(ValueError, match="breast-side scope"):
+        FindingRoiMatcher().match(
+            [finding], [roi], accession_number="ACC-1", breast_side="L"
+        )
 
 
 def test_partial_axis_scoring_uses_only_axes_available_on_both_inputs() -> None:
@@ -105,11 +109,13 @@ def test_partial_axis_scoring_uses_only_axes_available_on_both_inputs() -> None:
         depth="posterior",
     )
 
-    result = FindingRoiMatcher().match([finding], [roi])[0]
+    result = FindingRoiMatcher().match(
+        [finding], [roi], accession_number="ACC-1", breast_side="R"
+    )[0]
     candidate = result.candidates[0]
 
     assert result.matched_roi_id == "roi-partial"
-    assert result.status is ResultStatus.PARTIAL
+    assert result.status is ResultStatus.SUCCESS
     assert candidate.score == 1.0
     assert candidate.payload["scored_axes"] == ["ml"]
     assert candidate.payload["axis_scores"] == [
@@ -132,14 +138,17 @@ def test_one_to_one_assignment_keeps_best_pair_and_reports_unmatched_finding() -
         localized("roi-1", "roi", "L", ml="lateral", si="superior"),
     ]
 
-    results = FindingRoiMatcher().match(findings, rois)
+    results = FindingRoiMatcher().match(
+        findings, rois, accession_number="ACC-1", breast_side="L"
+    )
 
     assert [result.finding_id for result in results] == ["finding-a", "finding-b"]
     assert results[0].matched_roi_id == "roi-1"
     assert results[0].status is ResultStatus.SUCCESS
     assert results[1].matched_roi_id is None
-    assert results[1].status is ResultStatus.FAILED
-    assert "unmatched_finding" in warning_codes(results[1])
+    assert results[1].status is ResultStatus.SUCCESS
+    assert results[1].attribution_state is AttributionState.ABSTAINED
+    assert "attribution_abstained" in warning_codes(results[1])
 
 
 def test_unmatched_rois_are_reported_after_assignment() -> None:
@@ -149,25 +158,33 @@ def test_unmatched_rois_are_reported_after_assignment() -> None:
         localized("roi-b", "roi", "R", depth="posterior"),
     ]
 
-    result = FindingRoiMatcher().match([finding], rois)[0]
+    result = FindingRoiMatcher().match(
+        [finding], rois, accession_number="ACC-1", breast_side="R"
+    )[0]
 
     assert result.matched_roi_id == "roi-a"
     assert result.unmatched_roi_ids == ["roi-b"]
-    assert result.status is ResultStatus.PARTIAL
+    assert result.status is ResultStatus.SUCCESS
     assert "unmatched_rois" in warning_codes(result)
 
 
-def test_deterministic_tie_breaking_prefers_lower_roi_id() -> None:
+def test_singleton_policy_associates_all_compatible_rois() -> None:
     finding = localized("finding-1", "finding", "L", ml="central")
     rois = [
         localized("roi-b", "roi", "L", ml="central"),
         localized("roi-a", "roi", "L", ml="central"),
     ]
 
-    result = FindingRoiMatcher().match([finding], rois)[0]
+    result = FindingRoiMatcher().match(
+        [finding], rois, accession_number="ACC-1", breast_side="L"
+    )[0]
 
-    assert result.matched_roi_id == "roi-a"
-    assert [candidate.roi_id for candidate in result.candidates] == ["roi-a", "roi-b"]
+    assert result.matched_roi_id is None
+    assert result.matched_roi_ids == ["roi-a", "roi-b"]
+    assert [candidate.roi_id for candidate in result.candidates] == [
+        "group:roi-a",
+        "group:roi-b",
+    ]
 
 
 def test_legacy_parity_side_mismatch_cannot_win_over_same_side_candidate() -> None:
@@ -198,17 +215,10 @@ def test_legacy_parity_side_mismatch_cannot_win_over_same_side_candidate() -> No
         ),
     ]
 
-    result = FindingRoiMatcher().match([finding], rois)[0]
-    side_mismatch = candidate_for(result, "roi-right-perfect-location")
-    same_side = candidate_for(result, "roi-left-partial-location")
-
-    assert result.matched_roi_id == "roi-left-partial-location"
-    assert result.unmatched_roi_ids == ["roi-right-perfect-location"]
-    assert same_side.payload["possible"] is True
-    assert same_side.score == 2 / 3
-    assert side_mismatch.score == 0.0
-    assert side_mismatch.payload["possible"] is False
-    assert side_mismatch.payload["skipped_reason"] == "side_mismatch"
+    with pytest.raises(ValueError, match="breast-side scope"):
+        FindingRoiMatcher().match(
+            [finding], rois, accession_number="ACC-1", breast_side="L"
+        )
 
 
 def test_legacy_parity_one_to_one_assignment_reports_unclaimed_rois_globally() -> None:
@@ -222,7 +232,9 @@ def test_legacy_parity_one_to_one_assignment_reports_unclaimed_rois_globally() -
         localized("roi-extra", "roi", "R", si="central", depth="middle"),
     ]
 
-    results = FindingRoiMatcher().match(findings, rois)
+    results = FindingRoiMatcher().match(
+        findings, rois, accession_number="ACC-1", breast_side="R"
+    )
 
     assert [result.finding_id for result in results] == [
         "finding-lower",
@@ -233,7 +245,7 @@ def test_legacy_parity_one_to_one_assignment_reports_unclaimed_rois_globally() -
         ["roi-extra"],
         ["roi-extra"],
     ]
-    assert all(result.status is ResultStatus.PARTIAL for result in results)
+    assert all(result.status is ResultStatus.SUCCESS for result in results)
     assert all("unmatched_rois" in warning_codes(result) for result in results)
 
 
@@ -265,7 +277,9 @@ def test_legacy_parity_scoring_does_not_require_every_anatomical_axis() -> None:
         ),
     ]
 
-    result = FindingRoiMatcher().match([finding], rois)[0]
+    result = FindingRoiMatcher().match(
+        [finding], rois, accession_number="ACC-1", breast_side="L"
+    )[0]
     scored = candidate_for(result, "roi-cc-observable")
     unscored = candidate_for(result, "roi-no-overlap")
 

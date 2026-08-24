@@ -24,6 +24,15 @@ class ResultStatus(str, Enum):
     SKIPPED = "skipped"
 
 
+class AttributionState(str, Enum):
+    """Epistemic state of a finding-to-ROI attribution."""
+
+    INFERRED = "inferred"
+    AMBIGUOUS = "ambiguous"
+    ABSTAINED = "abstained"
+    VALIDATED = "validated"
+
+
 @dataclass(frozen=True)
 class ResultAuditMixin:
     """Shared serialization of status, evidence, warnings, and metadata."""
@@ -102,12 +111,38 @@ class MatchCandidate:
 
 @dataclass(frozen=True)
 class MatchingResult(ResultAuditMixin):
-    """A finding-to-ROI matching result that keeps alternates inspectable."""
+    """An inferred finding-to-ROI attribution with inspectable alternates."""
 
     finding_id: str = ""
     matched_roi_id: Optional[str] = None
+    matched_roi_ids: List[str] = field(default_factory=list)
+    matched_roi_group_ids: List[str] = field(default_factory=list)
     candidates: List[MatchCandidate] = field(default_factory=list)
     unmatched_roi_ids: List[str] = field(default_factory=list)
+    attribution_basis: str = "inferred"
+    attribution_state: AttributionState = AttributionState.ABSTAINED
+    score: Optional[float] = None
+    score_margin: Optional[float] = None
+    observed_descriptors: JsonMapping = field(default_factory=dict)
+    scored_descriptors: List[str] = field(default_factory=list)
+    algorithm_version: str = "finding-roi-inference-v2"
+    configuration_version: str = "default-v1"
+
+    def __post_init__(self) -> None:
+        matched = list(self.matched_roi_ids)
+        if self.matched_roi_id is not None and not matched:
+            matched = [self.matched_roi_id]
+        object.__setattr__(self, "matched_roi_ids", matched)
+        object.__setattr__(
+            self,
+            "matched_roi_id",
+            matched[0] if len(matched) == 1 else None,
+        )
+        object.__setattr__(
+            self,
+            "attribution_state",
+            AttributionState(self.attribution_state),
+        )
 
     def to_dict(self) -> Dict[str, JsonValue]:
         data = self.audit_dict()
@@ -115,8 +150,18 @@ class MatchingResult(ResultAuditMixin):
             {
                 "finding_id": self.finding_id,
                 "matched_roi_id": self.matched_roi_id,
+                "matched_roi_ids": list(self.matched_roi_ids),
+                "matched_roi_group_ids": list(self.matched_roi_group_ids),
                 "candidates": [candidate.to_dict() for candidate in self.candidates],
                 "unmatched_roi_ids": list(self.unmatched_roi_ids),
+                "attribution_basis": self.attribution_basis,
+                "attribution_state": self.attribution_state.value,
+                "score": self.score,
+                "score_margin": self.score_margin,
+                "observed_descriptors": serialize_mapping(self.observed_descriptors),
+                "scored_descriptors": list(self.scored_descriptors),
+                "algorithm_version": self.algorithm_version,
+                "configuration_version": self.configuration_version,
             }
         )
         return data

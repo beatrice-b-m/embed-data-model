@@ -22,7 +22,11 @@ def warning_codes(result: object) -> set[str]:
 
 
 def candidate_for(result: object, roi_id: str) -> object:
-    return next(candidate for candidate in result.candidates if candidate.roi_id == roi_id)
+    return next(
+        candidate
+        for candidate in result.candidates
+        if roi_id in candidate.payload.get("roi_ids", [])
+    )
 
 
 def cc_geometry(
@@ -242,14 +246,19 @@ def test_legacy_parity_matching_uses_aligned_roi_geometry_and_reports_unmatched(
         RoiLocalizer(expected_axes=("ml", "depth")).localize(unmatched_roi, geometry),
     ]
 
-    result = FindingRoiMatcher(axes=("ml", "depth")).match([finding], roi_results)[0]
+    result = FindingRoiMatcher(axes=("ml", "depth")).match(
+        [finding],
+        roi_results,
+        accession_number="ACC-PARITY",
+        breast_side="L",
+    )[0]
     matched_candidate = candidate_for(result, "roi-matched")
     unmatched_candidate = candidate_for(result, "roi-unmatched")
 
     assert aligned_box == (95.0, 25.0, 105.0, 35.0)
     assert result.matched_roi_id == "roi-matched"
     assert result.unmatched_roi_ids == ["roi-unmatched"]
-    assert result.status is ResultStatus.PARTIAL
+    assert result.status is ResultStatus.SUCCESS
     assert "unmatched_rois" in warning_codes(result)
     assert matched_candidate.score == 1.0
     assert matched_candidate.payload["scored_axes"] == ["ml", "depth"]
