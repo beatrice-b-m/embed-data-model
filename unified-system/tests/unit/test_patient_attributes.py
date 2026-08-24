@@ -17,12 +17,14 @@ from embed_toolkit.clinical.attributes import (
 )
 from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.config.columns import EmbedColumnConfig
+from embed_toolkit.config.profile_contracts import INTERNAL_V2_CONTRACT
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.provenance import (
     ResolutionState,
     SourceLocator,
     SourceScopeKind,
 )
+from profile_contract_support import contract_for_columns
 
 
 def source(row_ordinal: int) -> SourceLocator:
@@ -117,6 +119,12 @@ def test_builder_distinguishes_absent_and_null_and_uses_alias_config() -> None:
         ],
         columns=columns,
         source_scope="patient-attribute-tests",
+        source_profile="custom-patient-profile",
+        profile_contract=contract_for_columns(
+            INTERNAL_V2_CONTRACT,
+            "custom-patient-profile",
+            columns,
+        ),
     )
 
     observations = tables.patient_attribute_observations

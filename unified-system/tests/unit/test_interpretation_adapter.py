@@ -32,7 +32,7 @@ def source(row_ordinal: int) -> SourceLocator:
     return SourceLocator(
         scope="clinical-materialization",
         scope_kind=SourceScopeKind.MATERIALIZATION,
-        source_profile="embed_context_internal",
+        source_profile="internal-v2",
         source_table="magview",
         row_ordinal=row_ordinal,
     )

@@ -6,6 +6,7 @@ from dataclasses import replace
 import pytest
 
 from embed_toolkit.adapters.embed import build_image_tables
+from embed_toolkit.config.profile_contracts import INTERNAL_V1C_CONTRACT
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.provenance import ResolutionState, SourceScopeKind
@@ -40,12 +41,25 @@ def test_image_builder_scope_validation_and_ephemeral_default() -> None:
     assert locator.source_profile == "internal-v1c"
     assert locator.source_table == "image_metadata"
 
+    custom_contract = replace(
+        INTERNAL_V1C_CONTRACT,
+        source_profile="custom-profile",
+        capabilities=replace(
+            INTERNAL_V1C_CONTRACT.capabilities,
+            source_profile="custom-profile",
+        ),
+        field_coverage=replace(
+            INTERNAL_V1C_CONTRACT.field_coverage,
+            source_profile="custom-profile",
+        ),
+    )
     scoped = build_image_tables(
         [row()],
         source_scope="image-release-1",
         source_scope_kind=SourceScopeKind.DATASET,
         source_profile="custom-profile",
         source_table="custom-images",
+        profile_contract=custom_contract,
     )
     scoped_locator = scoped.source_occurrences[0].locator
     assert scoped_locator.scope == "image-release-1"

@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import math
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from datetime import date, datetime
@@ -62,6 +63,15 @@ from embed_toolkit.clinical.procedures import (
     _to_plain,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig, default_embed_columns
+from embed_toolkit.config.profile_contracts import (
+    INTERNAL_V1C_PROFILE,
+    INTERNAL_V2_PROFILE,
+    ProfileContract,
+    ProfileKind,
+    profile_source_field_candidates,
+    profile_contract_for,
+    validate_contract_source_fields,
+)
 from embed_toolkit.core.build_policy import BuildPolicy
 from embed_toolkit.core.anatomy import (
     AnatomicalPosition,
@@ -156,6 +166,71 @@ def _same_objects(left: Iterable[Any], right: Iterable[Any]) -> bool:
     )
 
 
+def _require_profile_sources(
+    sources: Iterable[SourceLocator],
+    expected_profile: str,
+    label: str,
+) -> None:
+    for source in sources:
+        if not isinstance(source, SourceLocator):
+            raise TypeError(f"{label} must contain only SourceLocator evidence")
+        if source.source_profile != expected_profile:
+            raise ValueError(
+                f"{label} source profile {source.source_profile!r} must match "
+                f"{expected_profile!r}"
+            )
+
+
+def _finding_sources(findings: Iterable[Finding]) -> Iterable[SourceLocator]:
+    for finding in findings:
+        if finding.interpretation is not None:
+            yield from finding.interpretation.sources
+        yield from (item.source for item in finding.normalization_evidence)
+        yield from (item.source for item in finding.normalization_warnings)
+
+
+def _exam_clinical_sources(exams: Iterable[Exam]) -> Iterable[SourceLocator]:
+    for exam in exams:
+        yield from (item.source for item in exam.attribute_observations)
+        yield from _finding_sources(exam.findings)
+        for side in exam.breast_sides.values():
+            yield from _finding_sources(side.findings)
+
+
+def _exam_images(exams: Iterable[Exam]) -> Iterable[MammogramImage]:
+    for exam in exams:
+        yield from exam.images
+        for side in exam.breast_sides.values():
+            yield from side.images
+
+
+def _clone_clinical_exams(exams: Iterable[Exam]) -> Tuple[Exam, ...]:
+    """Rebuild an independent graph hierarchy with coherent clinical references."""
+
+    cloned = []
+    for exam in exams:
+        findings = deepcopy(exam.findings)
+        cloned_exam = Exam(
+            accession_number=exam.accession_number,
+            patient_id=exam.patient_id,
+            exam_date=exam.exam_date,
+            description=exam.description,
+            attribute_observations=deepcopy(exam.attribute_observations),
+            findings=findings,
+            metadata=deepcopy(exam.metadata),
+        )
+        for laterality in exam.breast_sides:
+            cloned_exam.ensure_side(laterality)
+        cloned.append(cloned_exam)
+    return tuple(cloned)
+
+
+def _image_sources(images: Iterable[MammogramImage]) -> Iterable[SourceLocator]:
+    for image in images:
+        yield from image.sources
+        yield from image.attribute_sources.values()
+
+
 @dataclass(frozen=True)
 class EmbedClinicalTables:
     """Clinical objects built from MagView-derived rows."""
@@ -175,6 +250,56 @@ class EmbedClinicalTables:
     pathology_attribution_links: Tuple[PathologyAttributionLink, ...]
     source_occurrences: Tuple[SourceOccurrence, ...]
     build_issues: Tuple[BuildIssue, ...]
+    profile_contract: ProfileContract
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.profile_contract, ProfileContract):
+            raise TypeError("profile_contract must be a ProfileContract")
+        if self.profile_contract.kind is not ProfileKind.CLINICAL:
+            raise ValueError("Clinical tables require a clinical profile contract")
+        nested_exams = tuple(
+            exam for patient in self.patients for exam in patient.exams
+        )
+        if tuple(_exam_images((*self.exams, *nested_exams))) or any(
+            side.images for side in self.breast_sides
+        ):
+            raise ValueError(
+                "Clinical tables cannot own image evidence without an image contract"
+            )
+        sources: list[SourceLocator] = []
+        sources.extend(item.source for item in self.patient_attribute_observations)
+        for patient in self.patients:
+            sources.extend(item.source for item in patient.attribute_observations)
+        sources.extend(item.source for item in self.exam_attribute_observations)
+        sources.extend(_exam_clinical_sources((*self.exams, *nested_exams)))
+        sources.extend(_finding_sources(self.findings))
+        for side in self.breast_sides:
+            sources.extend(_finding_sources(side.findings))
+        sources.extend(
+            source
+            for interpretation in self.interpretations
+            for source in interpretation.sources
+        )
+        sources.extend(
+            source for procedure in self.procedures for source in procedure.sources
+        )
+        sources.extend(link.source for link in self.finding_procedure_links)
+        sources.extend(item.source for item in self.unresolved_procedure_occurrences)
+        sources.extend(item.source for item in self.pathology_observations)
+        for diagnosis in self.pathology_diagnoses:
+            sources.append(diagnosis.source)
+            sources.extend(issue.source for issue in diagnosis.validation_issues)
+        for link in self.pathology_attribution_links:
+            sources.extend((link.source, link.pathology.source))
+        for occurrence in self.source_occurrences:
+            sources.append(occurrence.locator)
+            sources.extend(issue.source for issue in occurrence.issues)
+        sources.extend(issue.source for issue in self.build_issues)
+        _require_profile_sources(
+            sources,
+            self.profile_contract.source_profile,
+            "Clinical tables",
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the clinical graph once, with governed identity references."""
@@ -258,6 +383,7 @@ class EmbedClinicalTables:
                 occurrence.to_dict() for occurrence in self.source_occurrences
             ],
             "build_issues": [issue.to_dict() for issue in self.build_issues],
+            "profile_contract": self.profile_contract.to_dict(),
         }
 
 
@@ -269,6 +395,7 @@ class EmbedImageTables:
     rois: Tuple[RegionOfInterest, ...]
     source_occurrences: Tuple[SourceOccurrence, ...]
     build_issues: Tuple[BuildIssue, ...]
+    profile_contract: ProfileContract
 
     def __post_init__(self) -> None:
         for attribute in ("images", "rois", "source_occurrences", "build_issues"):
@@ -281,6 +408,23 @@ class EmbedImageTables:
             "source_occurrences",
         )
         _require_instances(self.build_issues, BuildIssue, "build_issues")
+        if not isinstance(self.profile_contract, ProfileContract):
+            raise TypeError("profile_contract must be a ProfileContract")
+        if self.profile_contract.kind is not ProfileKind.IMAGE:
+            raise ValueError("Image tables require an image profile contract")
+        sources = list(_image_sources(self.images))
+        for roi in self.rois:
+            sources.extend(roi.sources)
+            sources.append(roi.locator.image_locator)
+        for occurrence in self.source_occurrences:
+            sources.append(occurrence.locator)
+            sources.extend(issue.source for issue in occurrence.issues)
+        sources.extend(issue.source for issue in self.build_issues)
+        _require_profile_sources(
+            sources,
+            self.profile_contract.source_profile,
+            "Image tables",
+        )
         if len({roi.locator for roi in self.rois}) != len(self.rois):
             raise ValueError("EmbedImageTables ROI locators must be unique")
         images_by_id = _unique_by_key(
@@ -314,6 +458,7 @@ class EmbedImageTables:
                 occurrence.to_dict() for occurrence in self.source_occurrences
             ],
             "build_issues": [issue.to_dict() for issue in self.build_issues],
+            "profile_contract": self.profile_contract.to_dict(),
         }
 
 
@@ -327,6 +472,8 @@ class EmbedClinicalImageGraph:
     unmatched_images: Tuple[UnmatchedImage, ...]
     unmatched_exams: Tuple[Exam, ...]
     build_issues: Tuple[BuildIssue, ...]
+    clinical_profile_contract: ProfileContract
+    image_profile_contract: ProfileContract
 
     def __post_init__(self) -> None:
         for attribute in (
@@ -348,6 +495,35 @@ class EmbedClinicalImageGraph:
         _require_instances(self.unmatched_images, UnmatchedImage, "unmatched_images")
         _require_instances(self.unmatched_exams, Exam, "unmatched_exams")
         _require_instances(self.build_issues, BuildIssue, "build_issues")
+        if not isinstance(self.clinical_profile_contract, ProfileContract):
+            raise TypeError("clinical_profile_contract must be a ProfileContract")
+        if not isinstance(self.image_profile_contract, ProfileContract):
+            raise TypeError("image_profile_contract must be a ProfileContract")
+        if self.clinical_profile_contract.kind is not ProfileKind.CLINICAL:
+            raise ValueError("Graph clinical contract must have clinical kind")
+        if self.image_profile_contract.kind is not ProfileKind.IMAGE:
+            raise ValueError("Graph image contract must have image kind")
+        graph_exams = (*self.exams, *self.unmatched_exams)
+        clinical_sources = list(_exam_clinical_sources(graph_exams))
+        _require_profile_sources(
+            clinical_sources,
+            self.clinical_profile_contract.source_profile,
+            "Graph clinical evidence",
+        )
+        image_sources = list(_image_sources(self.images))
+        image_sources.extend(_image_sources(_exam_images(graph_exams)))
+        for link in self.containment_links:
+            image_sources.extend(link.sources)
+            image_sources.extend(_image_sources((link.image,)))
+        for unmatched in self.unmatched_images:
+            image_sources.extend(unmatched.sources)
+            image_sources.extend(_image_sources((unmatched.image,)))
+        image_sources.extend(issue.source for issue in self.build_issues)
+        _require_profile_sources(
+            image_sources,
+            self.image_profile_contract.source_profile,
+            "Graph image and reconciliation evidence",
+        )
 
         exam_by_accession = _unique_by_key(
             self.exams,
@@ -506,6 +682,8 @@ class EmbedClinicalImageGraph:
                 exam.accession_number for exam in self.unmatched_exams
             ],
             "build_issues": [issue.to_dict() for issue in self.build_issues],
+            "clinical_profile_contract": self.clinical_profile_contract.to_dict(),
+            "image_profile_contract": self.image_profile_contract.to_dict(),
         }
 
 
@@ -644,72 +822,42 @@ _INVALID_EXACT_INTEGER = object()
 
 def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
     columns = config or default_embed_columns()
+    clinical = profile_source_field_candidates(columns, ProfileKind.CLINICAL)
+    image = profile_source_field_candidates(columns, ProfileKind.IMAGE)
     return _ColumnAliases(
-        patient_id=_aliases(columns.patient_id, "patient_id", "PatientID"),
-        birth_year=_aliases(columns.birth_year, "birth_year", "PatientBirthYear"),
-        sex=_aliases(columns.sex, "sex", "PatientSex"),
-        accession=_aliases(columns.accession, "accession_number", "AccessionNumber"),
-        exam_date=_aliases(columns.study_date, "exam_date", "StudyDate"),
-        exam_description=_aliases(
-            columns.exam_description,
-            "exam_description",
-            "StudyDescription",
-        ),
-        finding_number=_aliases(columns.finding_number, "finding_number"),
-        clinical_side=_aliases(columns.finding_laterality, "laterality"),
-        finding_location=_aliases(
-            columns.finding_location,
-            "finding_location",
-            "location",
-            "loc",
-        ),
-        finding_depth=_aliases(
-            columns.finding_depth,
-            "finding_depth",
-            "depth",
-        ),
-        finding_distance=_aliases(
-            columns.finding_distance,
-            "finding_distance",
-            "distance",
-        ),
-        assessment=_aliases(columns.finding_assessment, "assessment", "birads"),
-        recommendation=_aliases(
-            columns.finding_recommendation,
-            "recommendation",
-        ),
-        procedure_type=_aliases(columns.procedure_type, "procedure_type", "proc_type"),
-        procedure_date=_aliases(columns.procedure_date, "procedure_date", "proc_date"),
-        procedure_laterality=_aliases(
-            columns.procedure_laterality,
-            "bside",
-            "procedure_laterality",
-        ),
-        pathology_severity=_aliases(
-            columns.pathology_severity,
-        ),
-        pathology_report_date=_aliases(
-            columns.pathology_report_date,
-            "pathology_report_date",
-        ),
+        patient_id=clinical["patient_id"],
+        birth_year=clinical["birth_year"],
+        sex=clinical["sex"],
+        accession=clinical["accession"],
+        exam_date=clinical["study_date"],
+        exam_description=clinical["exam_description"],
+        finding_number=clinical["finding_number"],
+        clinical_side=clinical["finding_laterality"],
+        finding_location=clinical["finding_location"],
+        finding_depth=clinical["finding_depth"],
+        finding_distance=clinical["finding_distance"],
+        assessment=clinical["finding_assessment"],
+        recommendation=clinical["finding_recommendation"],
+        procedure_type=clinical["procedure_type"],
+        procedure_date=clinical["procedure_date"],
+        procedure_laterality=clinical["procedure_laterality"],
+        pathology_severity=clinical["pathology_severity"],
+        pathology_report_date=clinical["pathology_report_date"],
         pathology_descriptor_prefix=columns.pathology_diagnosis_prefix,
-        image_id=_aliases(columns.image_id, "image_id", "ImageID", columns.image_path),
-        image_side=_aliases(columns.image_laterality, "image_laterality"),
-        view_position=_aliases(columns.image_view, "view_position"),
-        modality=_aliases(columns.image_modality, "ImageType", "modality"),
-        height=_aliases(columns.image_height, "height", "image_height"),
-        width=_aliases(columns.image_width, "width", "image_width"),
-        frame_count=_aliases(columns.image_frames, "NumberOfFrames", "frame_count"),
-        series_uid=_aliases(columns.series_id, "SeriesInstanceUID", "series_instance_uid"),
-        sop_uid=_aliases(columns.sop_instance_uid, "SOPInstanceUID", "sop_instance_uid"),
-        patient_orientation=_aliases(columns.image_orientation, "patient_orientation"),
-        coordinate_frame_id=_aliases(
-            columns.acquisition_group_id,
-            "coordinate_frame_id",
-        ),
-        roi_source=_aliases(columns.roi_source, "roi_source", "ROI_source"),
+        image_id=image["image_id"],
+        image_side=image["image_laterality"],
+        view_position=image["image_view"],
+        modality=image["image_modality"],
+        height=image["image_height"],
+        width=image["image_width"],
+        frame_count=image["image_frames"],
+        series_uid=image["series_id"],
+        sop_uid=image["sop_instance_uid"],
+        patient_orientation=image["image_orientation"],
+        coordinate_frame_id=image["acquisition_group_id"],
+        roi_source=image["roi_source"],
         roi_coordinates=_aliases(columns.roi_coords, "roi_coordinates"),
-        roi_frames=_aliases(columns.roi_frames, "ROI_frames", "roi_frames"),
+        roi_frames=image["roi_frames"],
     )
 
 
@@ -728,8 +876,9 @@ def build_clinical_tables(
     build_policy: Optional[BuildPolicy] = None,
     source_scope: Optional[str] = None,
     source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
-    source_profile: str = "embed_context_internal",
+    source_profile: str = INTERNAL_V2_PROFILE,
     source_table: str = "magview",
+    profile_contract: Optional[ProfileContract] = None,
 ) -> EmbedClinicalTables:
     """Build clinical objects under an explicit source-evidence policy.
 
@@ -757,8 +906,14 @@ def build_clinical_tables(
     ):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} must be a non-empty string")
-
-    column_aliases = _column_aliases(columns)
+    resolved_profile_contract = profile_contract_for(
+        source_profile,
+        profile_contract,
+        expected_kind=ProfileKind.CLINICAL,
+    )
+    resolved_columns = columns or default_embed_columns()
+    validate_contract_source_fields(resolved_profile_contract, resolved_columns)
+    column_aliases = _column_aliases(resolved_columns)
     patients: dict[str, Patient] = {}
     patient_attribute_observations: list[PatientAttributeObservation] = []
     exams: dict[str, Exam] = {}
@@ -841,6 +996,7 @@ def build_clinical_tables(
         pathology_attribution_links=tuple(pathology_attribution_links),
         source_occurrences=tuple(source_occurrences),
         build_issues=tuple(build_issues),
+        profile_contract=resolved_profile_contract,
     )
 
 
@@ -1823,8 +1979,9 @@ def build_image_tables(
     build_policy: Optional[BuildPolicy] = None,
     source_scope: Optional[str] = None,
     source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
-    source_profile: str = "internal-v1c",
+    source_profile: str = INTERNAL_V1C_PROFILE,
     source_table: str = "image_metadata",
+    profile_contract: Optional[ProfileContract] = None,
 ) -> EmbedImageTables:
     """Build reconciled images and one canonical ledger entry per input row."""
 
@@ -1846,8 +2003,14 @@ def build_image_tables(
     ):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} must be a non-empty string")
-
-    column_aliases = _column_aliases(columns)
+    resolved_profile_contract = profile_contract_for(
+        source_profile,
+        profile_contract,
+        expected_kind=ProfileKind.IMAGE,
+    )
+    resolved_columns = columns or default_embed_columns()
+    validate_contract_source_fields(resolved_profile_contract, resolved_columns)
+    column_aliases = _column_aliases(resolved_columns)
     images: list[MammogramImage] = []
     rois: list[RegionOfInterest] = []
     roi_index_by_locator: dict[RoiLocator, int] = {}
@@ -1969,6 +2132,7 @@ def build_image_tables(
         rois=tuple(rois),
         source_occurrences=tuple(source_occurrences),
         build_issues=tuple(build_issues),
+        profile_contract=resolved_profile_contract,
     )
 
 
@@ -2200,7 +2364,8 @@ def assemble_clinical_image_graph(
     if not isinstance(policy, BuildPolicy):
         raise TypeError("build_policy must be a BuildPolicy")
 
-    exam_by_accession = {exam.accession_number: exam for exam in clinical.exams}
+    graph_exams = _clone_clinical_exams(clinical.exams)
+    exam_by_accession = {exam.accession_number: exam for exam in graph_exams}
     attachments = []
     containment_links = []
     unmatched_images = []
@@ -2322,25 +2487,23 @@ def assemble_clinical_image_graph(
         containment_links.append(link)
         matched_accessions.add(exam.accession_number)
 
-    for exam in clinical.exams:
-        exam.images.clear()
-        for side in exam.breast_sides.values():
-            side.images.clear()
     for exam, image in attachments:
         exam.add_image(image)
 
     unmatched_exams = tuple(
         exam
-        for exam in clinical.exams
+        for exam in graph_exams
         if exam.accession_number not in matched_accessions
     )
     return EmbedClinicalImageGraph(
-        exams=clinical.exams,
+        exams=graph_exams,
         images=image_tables.images,
         containment_links=tuple(containment_links),
         unmatched_images=tuple(unmatched_images),
         unmatched_exams=unmatched_exams,
         build_issues=tuple(issues),
+        clinical_profile_contract=clinical.profile_contract,
+        image_profile_contract=image_tables.profile_contract,
     )
 
 

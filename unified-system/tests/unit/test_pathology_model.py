@@ -6,7 +6,9 @@ from embed_toolkit.adapters.embed import build_clinical_tables
 from embed_toolkit.clinical.associations import ClinicalObjectKind
 from embed_toolkit.clinical.pathology import PathologySeverity
 from embed_toolkit.config.columns import EmbedColumnConfig
+from embed_toolkit.config.profile_contracts import INTERNAL_V2_CONTRACT
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
+from profile_contract_support import contract_for_columns
 
 
 def clinical_row() -> dict:
@@ -278,6 +280,12 @@ def test_custom_pathology_report_date_column_is_bound_by_meaning() -> None:
         ],
         columns=columns,
         source_scope="materialization-1",
+        source_profile="custom-pathology-profile",
+        profile_contract=contract_for_columns(
+            INTERNAL_V2_CONTRACT,
+            "custom-pathology-profile",
+            columns,
+        ),
     )
 
     assert tables.pathology_diagnoses[0].report_documented_date == "2020-03-04"

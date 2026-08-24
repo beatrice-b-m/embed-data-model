@@ -9,6 +9,10 @@ from embed_toolkit.adapters.embed import (
     project_finding_image_candidates,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig
+from embed_toolkit.config.profile_contracts import (
+    INTERNAL_V1C_CONTRACT,
+    INTERNAL_V2_CONTRACT,
+)
 from embed_toolkit.clinical.associations import AttributionStatus
 from embed_toolkit.clinical.pathology import PathologySeverity
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
@@ -19,6 +23,7 @@ from embed_toolkit.imaging.roi_provenance import (
     RoiLocatorKind,
     RoiSourceCountBasis,
 )
+from profile_contract_support import contract_for_columns
 
 
 def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
@@ -339,6 +344,7 @@ def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
 
 def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> None:
     columns = EmbedColumnConfig(pathology_diagnosis_prefix="dx")
+    contract = contract_for_columns(INTERNAL_V2_CONTRACT, "custom-v2", columns)
     tables = build_clinical_tables(
         [
             {
@@ -357,6 +363,8 @@ def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> 
             }
         ],
         columns=columns,
+        source_profile="custom-v2",
+        profile_contract=contract,
     )
 
     assert tuple(item.descriptor for item in tables.pathology_observations) == (
@@ -759,6 +767,16 @@ def test_builders_accept_custom_column_configuration() -> None:
         roi_frames="frames",
     )
 
+    clinical_contract = contract_for_columns(
+        INTERNAL_V2_CONTRACT,
+        "custom-clinical",
+        columns,
+    )
+    image_contract = contract_for_columns(
+        INTERNAL_V1C_CONTRACT,
+        "custom-image",
+        columns,
+    )
     clinical = build_clinical_tables(
         [
             {
@@ -771,6 +789,8 @@ def test_builders_accept_custom_column_configuration() -> None:
             }
         ],
         columns=columns,
+        source_profile="custom-clinical",
+        profile_contract=clinical_contract,
     )
     image_tables = build_image_tables(
         [
@@ -785,6 +805,8 @@ def test_builders_accept_custom_column_configuration() -> None:
             }
         ],
         columns=columns,
+        source_profile="custom-image",
+        profile_contract=image_contract,
     )
 
     assert clinical.findings[0].identity == ("ACC-CUSTOM", "7")

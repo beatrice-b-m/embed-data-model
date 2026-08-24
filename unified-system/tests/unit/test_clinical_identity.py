@@ -39,7 +39,7 @@ def test_strict_policy_rejects_blank_clinical_identity(
     assert exc_info.value.issue.source.to_dict() == {
         "scope": "clinical-release-1",
         "scope_kind": "dataset",
-        "source_profile": "embed_context_internal",
+        "source_profile": "internal-v2",
         "source_table": "magview",
         "row_ordinal": 0,
         "source_key": None,

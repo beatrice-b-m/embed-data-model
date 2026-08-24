@@ -7,6 +7,7 @@ import pytest
 
 from embed_toolkit.adapters.embed import build_clinical_tables
 from embed_toolkit.config.columns import EmbedColumnConfig
+from embed_toolkit.config.profile_contracts import INTERNAL_V2_CONTRACT
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.core.anatomy import (
     AnatomicalLocationCategory,
@@ -17,6 +18,7 @@ from embed_toolkit.core.anatomy import (
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.workflows.finding_localization import FindingLocalizer
+from profile_contract_support import contract_for_columns
 
 
 def row(**values: object) -> dict[str, object]:
@@ -96,6 +98,12 @@ def test_aliases_and_custom_columns_preserve_actual_matched_names() -> None:
         [row(custom_loc="Z", custom_depth="P", custom_distance="3")],
         columns=custom_columns,
         source_scope="clinical-materialization",
+        source_profile="custom-finding-profile",
+        profile_contract=contract_for_columns(
+            INTERNAL_V2_CONTRACT,
+            "custom-finding-profile",
+            custom_columns,
+        ),
     ).findings[0]
 
     assert aliased.source_location_codes == {"loc": "W"}

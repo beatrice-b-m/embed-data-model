@@ -20,8 +20,12 @@ from embed_toolkit.adapters.embed import (
     build_clinical_tables,
     build_image_tables,
 )
-from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.clinical.associations import AttributionStatus
+from embed_toolkit.config.profile_contracts import (
+    INTERNAL_V1C_CONTRACT,
+    INTERNAL_V2_CONTRACT,
+)
+from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import Laterality
 
 
@@ -109,7 +113,8 @@ def test_missing_and_unknown_accessions_remain_explicitly_unmatched() -> None:
     assert graph.build_issues[0].source is images.images[0].source_for(
         "accession_number"
     )
-    assert graph.unmatched_exams == clinical.exams
+    assert graph.unmatched_exams == graph.exams
+    assert [exam.accession_number for exam in graph.unmatched_exams] == ["ACC-1"]
     assert clinical.exams[0].images == []
 
 
@@ -120,7 +125,11 @@ def test_exams_without_matching_images_are_preserved_as_unmatched() -> None:
     graph = assemble_clinical_image_graph(clinical, images)
 
     assert [exam.accession_number for exam in graph.unmatched_exams] == ["ACC-2"]
-    assert graph.exams == clinical.exams
+    assert [exam.accession_number for exam in graph.exams] == ["ACC-1", "ACC-2"]
+    assert all(
+        graph_exam is not clinical_exam
+        for graph_exam, clinical_exam in zip(graph.exams, clinical.exams)
+    )
 
 
 def test_patient_mismatch_is_atomic_under_strict_policy() -> None:
@@ -163,7 +172,8 @@ def test_patient_mismatch_audit_is_issue_and_unmatched_image() -> None:
     assert graph.unmatched_images[0].reason is (
         UnmatchedImageReason.PATIENT_IDENTITY_CONFLICT
     )
-    assert graph.unmatched_exams == clinical.exams
+    assert graph.unmatched_exams == graph.exams
+    assert [exam.accession_number for exam in graph.unmatched_exams] == ["ACC-1"]
     assert clinical.exams[0].images == []
     assert [issue.code for issue in graph.build_issues] == [
         "conflicting_clinical_image_patient_identity"
@@ -179,10 +189,39 @@ def test_repeated_assembly_is_idempotent_and_does_not_duplicate_membership() -> 
     first = assemble_clinical_image_graph(clinical, images)
     second = assemble_clinical_image_graph(clinical, images)
 
-    exam = clinical.exams[0]
-    assert first.exams[0] is second.exams[0]
-    assert exam.images == [images.images[0]]
-    assert exam.breast_sides[Laterality.LEFT].images == [images.images[0]]
+    assert first.exams[0] is not second.exams[0]
+    assert first.exams[0].images == [images.images[0]]
+    assert second.exams[0].images == [images.images[0]]
+    assert first.exams[0].breast_sides[Laterality.LEFT].images == [
+        images.images[0]
+    ]
+    assert clinical.exams[0].images == []
+
+
+def test_assembly_preserves_input_serialization_and_reconstructibility() -> None:
+    clinical = clinical_tables("ACC-1")
+    images = build_image_tables([image_row("left-cc", "ACC-1")])
+    clinical_before = json.dumps(clinical.to_dict(), sort_keys=True)
+    images_before = json.dumps(images.to_dict(), sort_keys=True)
+
+    graph = assemble_clinical_image_graph(clinical, images)
+
+    assert json.dumps(clinical.to_dict(), sort_keys=True) == clinical_before
+    assert json.dumps(images.to_dict(), sort_keys=True) == images_before
+    assert json.dumps(replace(clinical).to_dict(), sort_keys=True) == clinical_before
+    assert json.dumps(replace(images).to_dict(), sort_keys=True) == images_before
+    assert graph.exams[0] is not clinical.exams[0]
+    assert graph.exams[0].breast_sides[Laterality.LEFT] is not (
+        clinical.exams[0].breast_sides[Laterality.LEFT]
+    )
+    assert graph.exams[0].findings[0] is not clinical.exams[0].findings[0]
+    assert graph.exams[0].findings[0].identity == clinical.exams[0].findings[0].identity
+    assert (
+        graph.exams[0].breast_sides[Laterality.LEFT].findings[0]
+        is graph.exams[0].findings[0]
+    )
+    assert clinical.exams[0].images == []
+    assert graph.exams[0].images == [images.images[0]]
 
 
 def test_graph_serialization_owns_images_once_and_membership_uses_references() -> None:
@@ -358,6 +397,8 @@ def test_candidate_projection_ignores_graph_images_outside_exam_hierarchy() -> N
         ),
         unmatched_exams=clinical.exams,
         build_issues=(),
+        clinical_profile_contract=INTERNAL_V2_CONTRACT,
+        image_profile_contract=INTERNAL_V1C_CONTRACT,
     )
 
     projection = project_finding_image_candidates(graph)[0]
@@ -411,7 +452,8 @@ def test_missing_patient_identity_attaches_as_unverified_with_original_source() 
 
     graph = assemble_clinical_image_graph(clinical, images)
 
-    assert clinical.exams[0].images == [images.images[0]]
+    assert graph.exams[0].images == [images.images[0]]
+    assert clinical.exams[0].images == []
     assert graph.containment_links[0].patient_identity_status is (
         PatientIdentityCheckStatus.UNVERIFIED
     )
@@ -452,10 +494,11 @@ def test_non_unilateral_image_attaches_only_to_exam_with_warning(
 
     graph = assemble_clinical_image_graph(clinical, images)
 
-    assert clinical.exams[0].images == [images.images[0]]
+    assert graph.exams[0].images == [images.images[0]]
+    assert clinical.exams[0].images == []
     assert all(
         images.images[0] not in side.images
-        for side in clinical.exams[0].breast_sides.values()
+        for side in graph.exams[0].breast_sides.values()
     )
     assert graph.containment_links[0].image is images.images[0]
     assert [issue.code for issue in graph.build_issues] == [
@@ -507,17 +550,17 @@ def test_reconciliation_contracts_reject_mismatched_or_duplicate_evidence() -> N
         )
 
 
-def test_second_assembly_replaces_changed_and_empty_image_membership() -> None:
+def test_each_assembly_owns_changed_and_empty_image_membership() -> None:
     clinical = clinical_tables("ACC-1")
     first_images = build_image_tables([image_row("first", "ACC-1")])
     second_images = build_image_tables(
         [image_row("second", "ACC-1", laterality="R")]
     )
 
-    assemble_clinical_image_graph(clinical, first_images)
+    first = assemble_clinical_image_graph(clinical, first_images)
     second = assemble_clinical_image_graph(clinical, second_images)
 
-    exam = clinical.exams[0]
+    exam = second.exams[0]
     assert exam.images == [second_images.images[0]]
     assert exam.breast_sides[Laterality.LEFT].images == []
     assert exam.breast_sides[Laterality.RIGHT].images == [second_images.images[0]]
@@ -525,16 +568,17 @@ def test_second_assembly_replaces_changed_and_empty_image_membership() -> None:
 
     empty = assemble_clinical_image_graph(clinical, build_image_tables([]))
 
-    assert exam.images == []
-    assert all(side.images == [] for side in exam.breast_sides.values())
+    assert first.exams[0].images == [first_images.images[0]]
+    assert clinical.exams[0].images == []
+    assert all(side.images == [] for side in clinical.exams[0].breast_sides.values())
     assert empty.containment_links == ()
-    assert empty.unmatched_exams == (exam,)
+    assert empty.unmatched_exams == empty.exams
 
 
 def test_strict_reassembly_failure_preserves_prior_hierarchy_atomically() -> None:
     clinical = clinical_tables("ACC-1")
     prior = build_image_tables([image_row("prior", "ACC-1")])
-    assemble_clinical_image_graph(clinical, prior)
+    prior_graph = assemble_clinical_image_graph(clinical, prior)
     failing = build_image_tables(
         [image_row("mismatch", "ACC-1", patient_id="P-2")]
     )
@@ -542,9 +586,10 @@ def test_strict_reassembly_failure_preserves_prior_hierarchy_atomically() -> Non
     with pytest.raises(BuildPolicyError):
         assemble_clinical_image_graph(clinical, failing)
 
-    exam = clinical.exams[0]
+    exam = prior_graph.exams[0]
     assert exam.images == [prior.images[0]]
     assert exam.breast_sides[Laterality.LEFT].images == [prior.images[0]]
+    assert clinical.exams[0].images == []
 
 
 def test_later_duplicate_fills_drive_graph_decisions_and_issue_sources() -> None:
@@ -610,6 +655,8 @@ def test_graph_rejects_duplicate_unclassified_and_multiply_classified_images() -
             unmatched_images=(),
             unmatched_exams=(),
             build_issues=(),
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
     with pytest.raises(ValueError, match="classified exactly once"):
         EmbedClinicalImageGraph(
@@ -619,6 +666,8 @@ def test_graph_rejects_duplicate_unclassified_and_multiply_classified_images() -
             unmatched_images=(),
             unmatched_exams=(),
             build_issues=(),
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
     with pytest.raises(ValueError, match="classifications must be disjoint"):
         EmbedClinicalImageGraph(
@@ -634,6 +683,8 @@ def test_graph_rejects_duplicate_unclassified_and_multiply_classified_images() -
             ),
             unmatched_exams=(),
             build_issues=(),
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
 
 
@@ -658,6 +709,8 @@ def test_graph_rejects_wrong_image_object_accession_and_stale_hierarchy() -> Non
             unmatched_images=(),
             unmatched_exams=(),
             build_issues=(),
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
 
     inconsistent_status = ExamImageContainmentLink(
@@ -674,6 +727,8 @@ def test_graph_rejects_wrong_image_object_accession_and_stale_hierarchy() -> Non
             unmatched_images=(),
             unmatched_exams=(),
             build_issues=(),
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
 
     wrong_accession = replace(image, accession_number="ACC-2")
@@ -691,10 +746,12 @@ def test_graph_rejects_wrong_image_object_accession_and_stale_hierarchy() -> Non
             unmatched_images=(),
             unmatched_exams=(),
             build_issues=(),
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
 
-    clinical.exams[0].images.clear()
-    clinical.exams[0].breast_sides[Laterality.LEFT].images.clear()
+    graph.exams[0].images.clear()
+    graph.exams[0].breast_sides[Laterality.LEFT].images.clear()
     with pytest.raises(ValueError, match="exam image hierarchy"):
         EmbedClinicalImageGraph(
             exams=graph.exams,
@@ -703,6 +760,8 @@ def test_graph_rejects_wrong_image_object_accession_and_stale_hierarchy() -> Non
             unmatched_images=(),
             unmatched_exams=(),
             build_issues=(),
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
 
 
@@ -718,6 +777,8 @@ def test_graph_normalizes_tuples_and_rejects_untyped_ledgers() -> None:
         unmatched_images=[],  # type: ignore[arg-type]
         unmatched_exams=[],  # type: ignore[arg-type]
         build_issues=[],  # type: ignore[arg-type]
+        clinical_profile_contract=graph.clinical_profile_contract,
+        image_profile_contract=graph.image_profile_contract,
     )
     assert isinstance(normalized.exams, tuple)
     assert isinstance(normalized.containment_links, tuple)
@@ -730,6 +791,8 @@ def test_graph_normalizes_tuples_and_rejects_untyped_ledgers() -> None:
             unmatched_images=(),
             unmatched_exams=(),
             build_issues=(object(),),  # type: ignore[arg-type]
+            clinical_profile_contract=graph.clinical_profile_contract,
+            image_profile_contract=graph.image_profile_contract,
         )
 
 
@@ -751,6 +814,8 @@ def test_graph_rejects_semantically_impossible_unmatched_reasons() -> None:
             ),
             unmatched_exams=clinical.exams,
             build_issues=(),
+            clinical_profile_contract=clinical.profile_contract,
+            image_profile_contract=INTERNAL_V1C_CONTRACT,
         )
 
     missing = build_image_tables([image_row("missing", None)]).images[0]
@@ -768,6 +833,8 @@ def test_graph_rejects_semantically_impossible_unmatched_reasons() -> None:
             ),
             unmatched_exams=clinical.exams,
             build_issues=(),
+            clinical_profile_contract=clinical.profile_contract,
+            image_profile_contract=INTERNAL_V1C_CONTRACT,
         )
 
     same_patient = build_image_tables([image_row("same", "ACC-1")]).images[0]
@@ -785,6 +852,8 @@ def test_graph_rejects_semantically_impossible_unmatched_reasons() -> None:
             ),
             unmatched_exams=clinical.exams,
             build_issues=(),
+            clinical_profile_contract=clinical.profile_contract,
+            image_profile_contract=INTERNAL_V1C_CONTRACT,
         )
 
 

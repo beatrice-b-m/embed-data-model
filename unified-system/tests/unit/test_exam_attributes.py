@@ -12,12 +12,14 @@ from embed_toolkit.clinical.attributes import (
 )
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.config.columns import EmbedColumnConfig
+from embed_toolkit.config.profile_contracts import INTERNAL_V2_CONTRACT
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.provenance import (
     ResolutionState,
     SourceLocator,
     SourceScopeKind,
 )
+from profile_contract_support import contract_for_columns
 
 
 def source(row_ordinal: int) -> SourceLocator:
@@ -115,10 +117,17 @@ def test_first_null_then_populated_fills_both_invariants() -> None:
 
 
 def test_absent_attribute_creates_no_observation_but_explicit_null_does() -> None:
+    columns = EmbedColumnConfig(exam_description="source_description")
     tables = build_clinical_tables(
         [row("1"), row("2", source_description=None)],
-        columns=EmbedColumnConfig(exam_description="source_description"),
+        columns=columns,
         source_scope="exam-attribute-tests",
+        source_profile="custom-exam-profile",
+        profile_contract=contract_for_columns(
+            INTERNAL_V2_CONTRACT,
+            "custom-exam-profile",
+            columns,
+        ),
     )
 
     assert len(tables.exam_attribute_observations) == 1
