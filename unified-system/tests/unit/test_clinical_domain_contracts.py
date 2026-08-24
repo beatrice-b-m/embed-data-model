@@ -280,7 +280,7 @@ def test_interpretation_tracks_field_availability_independently() -> None:
     interpretation = ImagingInterpretation(
         accession_number="ACC-1",
         finding_number="2",
-        source=source(),
+        sources=(source(),),
         assessment="4",
         assessment_availability=AvailabilityState.BOUND,
         recommendation_availability=AvailabilityState.UNAVAILABLE,
@@ -291,13 +291,28 @@ def test_interpretation_tracks_field_availability_independently() -> None:
     assert serialized["assessment_availability"] == "bound"
     assert serialized["recommendation"] is None
     assert serialized["recommendation_availability"] == "unavailable"
+    assert serialized["sources"] == [source().to_dict()]
     assert json.loads(json.dumps(serialized)) == serialized
 
     with pytest.raises(ValueError, match="unless availability is bound"):
         ImagingInterpretation(
             accession_number="ACC-1",
             finding_number="2",
-            source=source(),
+            sources=(source(),),
             recommendation="biopsy",
             recommendation_availability=AvailabilityState.RAW_ONLY,
+        )
+
+    with pytest.raises(ValueError, match="at least one SourceLocator"):
+        ImagingInterpretation(
+            accession_number="ACC-1",
+            finding_number="2",
+            sources=(),
+        )
+
+    with pytest.raises(ValueError, match="unique SourceLocator"):
+        ImagingInterpretation(
+            accession_number="ACC-1",
+            finding_number="2",
+            sources=(source(), source()),
         )

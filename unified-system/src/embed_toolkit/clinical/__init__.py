@@ -3,6 +3,7 @@
 from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding, FindingRecordType
+from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.pathology import (
     PathologyAttributionLink,
     PathologyDiagnosis,
@@ -18,6 +19,7 @@ __all__ = [
     "Exam",
     "Finding",
     "FindingRecordType",
+    "ImagingInterpretation",
     "PathologyAttributionLink",
     "PathologyDiagnosis",
     "PathologyObservation",

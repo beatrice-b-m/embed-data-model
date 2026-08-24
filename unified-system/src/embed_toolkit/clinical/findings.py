@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.procedures import _to_plain
 from embed_toolkit.core.anatomy import AnatomicalPosition
 from embed_toolkit.core.primitives import Laterality
@@ -26,7 +27,7 @@ class Finding:
     laterality: Laterality
     finding_number: str
     finding_type: Optional[str] = None
-    assessment: Optional[str] = None
+    interpretation: Optional[ImagingInterpretation] = None
     anatomical_position: Optional[AnatomicalPosition] = None
     raw_source_fields: Dict[str, Any] = field(default_factory=dict)
     source_location_codes: Dict[str, Any] = field(default_factory=dict)
@@ -45,6 +46,11 @@ class Finding:
             if self.finding_number == "-9"
             else FindingRecordType.FINDING
         )
+        if (
+            self.interpretation is not None
+            and self.interpretation.identity != self.identity
+        ):
+            raise ValueError("Finding interpretation identity must match Finding")
 
     @property
     def identity(self) -> Tuple[str, str]:
@@ -61,7 +67,7 @@ class Finding:
     def merge_observation(self, observation: "Finding") -> None:
         """Merge a repeated wide row while surfacing invariant conflicts."""
 
-        for attribute in ("laterality", "finding_type", "assessment"):
+        for attribute in ("laterality", "finding_type"):
             current = getattr(self, attribute)
             observed = getattr(observation, attribute)
             if current is None and observed is not None:
@@ -84,4 +90,26 @@ class Finding:
         ) + 1
 
     def to_dict(self) -> Dict[str, Any]:
-        return _to_plain(self)
+        return {
+            "accession_number": self.accession_number,
+            "laterality": self.laterality.value,
+            "finding_number": self.finding_number,
+            "finding_type": self.finding_type,
+            "interpretation_reference": (
+                {
+                    "accession_number": self.interpretation.accession_number,
+                    "finding_number": self.interpretation.finding_number,
+                }
+                if self.interpretation is not None
+                else None
+            ),
+            "anatomical_position": _to_plain(self.anatomical_position),
+            "raw_source_fields": _to_plain(self.raw_source_fields),
+            "source_location_codes": _to_plain(self.source_location_codes),
+            "source_depth_codes": _to_plain(self.source_depth_codes),
+            "descriptors": _to_plain(self.descriptors),
+            "normalization_warnings": _to_plain(self.normalization_warnings),
+            "validation_issues": _to_plain(self.validation_issues),
+            "metadata": _to_plain(self.metadata),
+            "record_type": self.record_type.value,
+        }

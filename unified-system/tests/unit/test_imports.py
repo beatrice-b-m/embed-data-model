@@ -204,6 +204,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert audit.WorkflowResult
     assert audit.export_result
     assert clinical.Finding
+    assert clinical.ImagingInterpretation
     assert clinical.PathologyObservation
     assert clinical.PathologyDiagnosis
     assert clinical.PathologyAttributionLink

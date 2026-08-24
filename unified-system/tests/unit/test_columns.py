@@ -17,6 +17,7 @@ def test_default_embed_columns_match_documented_embed_names() -> None:
     assert config.nipple_x == "nipple_x"
     assert config.nipple_y == "nipple_y"
     assert config.finding_number == "numfind"
+    assert config.finding_recommendation == "recomm"
     assert config.pathology_report_date == "pdate_anon"
     assert config.to_dict() == DEFAULT_EMBED_COLUMN_NAMES
 
@@ -78,7 +79,7 @@ def test_with_overrides_preserves_original_config() -> None:
     assert config.finding_distance == "distance"
     assert custom.image_view == "view"
     assert custom.finding_distance == "dist_cm"
-    assert custom.finding_columns()[-2:] == ("dist_cm", "asses")
+    assert custom.finding_columns()[-3:] == ("dist_cm", "asses", "recomm")
 
 
 def test_mapping_round_trip_is_serialization_friendly() -> None:

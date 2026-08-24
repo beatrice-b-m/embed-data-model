@@ -30,6 +30,7 @@ DEFAULT_EMBED_COLUMN_NAMES = {
     "finding_depth": "depth",
     "finding_distance": "distance",
     "finding_assessment": "asses",
+    "finding_recommendation": "recomm",
     "procedure_laterality": "bside",
     "procedure_date": "procdate_anon",
     "procedure_type": "type",

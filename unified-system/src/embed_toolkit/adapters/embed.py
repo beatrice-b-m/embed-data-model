@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding
+from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.clinical.associations import (
     AttributionStatus,
@@ -45,6 +46,7 @@ from embed_toolkit.core.primitives import (
     ViewPosition,
 )
 from embed_toolkit.core.provenance import (
+    AvailabilityState,
     BuildIssue,
     IssueSeverity,
     ResolutionState,
@@ -66,6 +68,7 @@ class EmbedClinicalTables:
     patients: Tuple[Patient, ...]
     exams: Tuple[Exam, ...]
     findings: Tuple[Finding, ...]
+    interpretations: Tuple[ImagingInterpretation, ...]
     breast_sides: Tuple[BreastSide, ...]
     procedures: Tuple[Procedure, ...]
     finding_procedure_links: Tuple[FindingProcedureLink, ...]
@@ -172,6 +175,7 @@ class _ColumnAliases:
     clinical_side: Tuple[str, ...] = ()
     finding_type: Tuple[str, ...] = ("finding_type", "massshape", "finding")
     assessment: Tuple[str, ...] = ()
+    recommendation: Tuple[str, ...] = ()
     procedure_id: Tuple[str, ...] = ("procedure_id", "proc_id")
     procedure_type: Tuple[str, ...] = ()
     procedure_date: Tuple[str, ...] = ()
@@ -221,6 +225,10 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
         finding_number=_aliases(columns.finding_number, "finding_number"),
         clinical_side=_aliases(columns.finding_laterality, "laterality"),
         assessment=_aliases(columns.finding_assessment, "assessment", "birads"),
+        recommendation=_aliases(
+            columns.finding_recommendation,
+            "recommendation",
+        ),
         procedure_type=_aliases(columns.procedure_type, "procedure_type", "proc_type"),
         procedure_date=_aliases(columns.procedure_date, "procedure_date", "proc_date"),
         procedure_laterality=_aliases(
@@ -461,15 +469,32 @@ def build_clinical_tables(
 
         assert finding_number is not None
         side = _clinical_laterality(_get(row, column_aliases.clinical_side))
+        row_interpretation = _interpretation_from_row(
+            row,
+            column_aliases,
+            accession,
+            finding_number,
+            locator,
+        )
+        existing_finding = exam.finding_index.get((accession, finding_number))
         finding = Finding(
             accession_number=accession,
             laterality=side,
             finding_number=finding_number,
             finding_type=_string_value(_get(row, column_aliases.finding_type)),
-            assessment=_string_value(_get(row, column_aliases.assessment)),
+            interpretation=row_interpretation,
             raw_source_fields=dict(row),
         )
         finding = exam.add_finding(finding)
+        if existing_finding is not None:
+            merged_interpretation, interpretation_issues = _merge_interpretations(
+                existing_finding.interpretation,
+                row_interpretation,
+                locator,
+                policy,
+            )
+            finding.interpretation = merged_interpretation
+            build_issues.extend(interpretation_issues)
         resolved_procedure, link, unresolved_procedure = _procedure_from_row(
             row,
             column_aliases,
@@ -529,6 +554,11 @@ def build_clinical_tables(
     ordered_patients = tuple(patients.values())
     ordered_exams = tuple(exams.values())
     ordered_findings = tuple(finding for exam in ordered_exams for finding in exam.findings)
+    ordered_interpretations = tuple(
+        finding.interpretation
+        for finding in ordered_findings
+        if finding.interpretation is not None
+    )
     ordered_sides = tuple(
         side for exam in ordered_exams for side in exam.breast_sides.values()
     )
@@ -536,6 +566,7 @@ def build_clinical_tables(
         patients=ordered_patients,
         exams=ordered_exams,
         findings=ordered_findings,
+        interpretations=ordered_interpretations,
         breast_sides=ordered_sides,
         procedures=tuple(procedure_registry.values()),
         finding_procedure_links=tuple(finding_procedure_links),
@@ -545,6 +576,122 @@ def build_clinical_tables(
         pathology_attribution_links=tuple(pathology_attribution_links),
         unresolved_occurrences=tuple(unresolved_occurrences.values()),
         build_issues=tuple(build_issues),
+    )
+
+
+def _interpretation_from_row(
+    row: Row,
+    columns: _ColumnAliases,
+    accession_number: str,
+    finding_number: str,
+    locator: SourceLocator,
+) -> Optional[ImagingInterpretation]:
+    assessment = _get(row, columns.assessment)
+    recommendation = _get(row, columns.recommendation)
+    if assessment is _MISSING and recommendation is _MISSING:
+        return None
+    return ImagingInterpretation(
+        accession_number=accession_number,
+        finding_number=finding_number,
+        sources=(locator,),
+        assessment=_string_value(assessment),
+        assessment_availability=(
+            AvailabilityState.UNAVAILABLE
+            if assessment is _MISSING
+            else AvailabilityState.BOUND
+        ),
+        recommendation=_string_value(recommendation),
+        recommendation_availability=(
+            AvailabilityState.UNAVAILABLE
+            if recommendation is _MISSING
+            else AvailabilityState.BOUND
+        ),
+    )
+
+
+def _merge_interpretations(
+    retained: Optional[ImagingInterpretation],
+    observed: Optional[ImagingInterpretation],
+    locator: SourceLocator,
+    policy: BuildPolicy,
+) -> Tuple[Optional[ImagingInterpretation], Tuple[BuildIssue, ...]]:
+    if observed is None:
+        return retained, ()
+    if retained is None:
+        return observed, ()
+    if (
+        retained.accession_number,
+        retained.finding_number,
+    ) != (
+        observed.accession_number,
+        observed.finding_number,
+    ):
+        raise ValueError("Interpretation identities must match before merge")
+
+    values = {
+        "assessment": retained.assessment,
+        "assessment_availability": retained.assessment_availability,
+        "recommendation": retained.recommendation,
+        "recommendation_availability": retained.recommendation_availability,
+    }
+    issues = []
+    for attribute in ("assessment", "recommendation"):
+        availability_attribute = f"{attribute}_availability"
+        retained_value = values[attribute]
+        retained_availability = values[availability_attribute]
+        observed_value = getattr(observed, attribute)
+        observed_availability = getattr(observed, availability_attribute)
+        if (
+            retained_availability is AvailabilityState.UNAVAILABLE
+            and observed_availability is AvailabilityState.BOUND
+        ):
+            values[attribute] = observed_value
+            values[availability_attribute] = AvailabilityState.BOUND
+            continue
+        if (
+            retained_availability is AvailabilityState.BOUND
+            and observed_availability is AvailabilityState.BOUND
+        ):
+            if retained_value is None and observed_value is not None:
+                values[attribute] = observed_value
+            elif (
+                retained_value is not None
+                and observed_value is not None
+                and retained_value != observed_value
+            ):
+                issues.append(
+                    BuildIssue(
+                        code="conflicting_interpretation_attribute",
+                        message=(
+                            "Repeated rows contain conflicting non-null "
+                            f"{attribute} values for one finding."
+                        ),
+                        severity=IssueSeverity.ERROR,
+                        source=locator,
+                        context={
+                            "accession_number": retained.accession_number,
+                            "finding_number": retained.finding_number,
+                            "attribute": attribute,
+                            "retained": retained_value,
+                            "observed": observed_value,
+                        },
+                    )
+                )
+
+    for issue in issues:
+        policy.handle_issue(issue)
+    sources = tuple(dict.fromkeys((*retained.sources, *observed.sources)))
+    return (
+        ImagingInterpretation(
+            accession_number=retained.accession_number,
+            finding_number=retained.finding_number,
+            sources=sources,
+            assessment=values["assessment"],
+            assessment_availability=values["assessment_availability"],
+            recommendation=values["recommendation"],
+            recommendation_availability=values["recommendation_availability"],
+        ),
+        tuple(issues),
     )
 
 

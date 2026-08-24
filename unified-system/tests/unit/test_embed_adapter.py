@@ -13,6 +13,7 @@ from embed_toolkit.clinical.associations import AttributionStatus
 from embed_toolkit.clinical.pathology import PathologySeverity
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.provenance import AvailabilityState
 
 
 def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
@@ -56,7 +57,11 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
     finding = tables.findings[0]
     assert finding.identity == ("ACC-1", "1")
     assert finding.finding_type == "mass"
-    assert finding.assessment == "4"
+    assert finding.interpretation is tables.interpretations[0]
+    assert finding.interpretation.assessment == "4"
+    assert finding.interpretation.recommendation_availability is (
+        AvailabilityState.UNAVAILABLE
+    )
     assert [
         procedure.source_occurrences[0].raw_values["procedure_id"]
         for procedure in tables.procedures
@@ -450,6 +455,7 @@ def test_builders_accept_custom_column_configuration() -> None:
         finding_number="finding_key",
         finding_laterality="finding_side",
         finding_assessment="assessment_value",
+        finding_recommendation="recommendation_value",
         image_id="image_key",
         image_laterality="image_side",
         image_view="view_name",
@@ -465,6 +471,7 @@ def test_builders_accept_custom_column_configuration() -> None:
                 "finding_key": 7,
                 "finding_side": "R",
                 "assessment_value": "3",
+                "recommendation_value": "short follow-up",
             }
         ],
         columns=columns,
@@ -485,7 +492,9 @@ def test_builders_accept_custom_column_configuration() -> None:
     )
 
     assert clinical.findings[0].identity == ("ACC-CUSTOM", "7")
-    assert clinical.findings[0].assessment == "3"
+    assert clinical.findings[0].interpretation is clinical.interpretations[0]
+    assert clinical.interpretations[0].assessment == "3"
+    assert clinical.interpretations[0].recommendation == "short follow-up"
     assert image_tables.images[0].image_id == "IMG-CUSTOM"
     assert image_tables.images[0].view_position is ViewPosition.MLO
     assert image_tables.rois[0].coordinates == (5, 6, 8, 9)

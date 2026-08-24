@@ -51,6 +51,9 @@ class EmbedColumnConfig:
     finding_depth: str = DEFAULT_EMBED_COLUMN_NAMES["finding_depth"]
     finding_distance: str = DEFAULT_EMBED_COLUMN_NAMES["finding_distance"]
     finding_assessment: str = DEFAULT_EMBED_COLUMN_NAMES["finding_assessment"]
+    finding_recommendation: str = DEFAULT_EMBED_COLUMN_NAMES[
+        "finding_recommendation"
+    ]
     procedure_laterality: str = DEFAULT_EMBED_COLUMN_NAMES["procedure_laterality"]
     procedure_date: str = DEFAULT_EMBED_COLUMN_NAMES["procedure_date"]
     procedure_type: str = DEFAULT_EMBED_COLUMN_NAMES["procedure_type"]
@@ -151,6 +154,7 @@ class EmbedColumnConfig:
             "finding_depth",
             "finding_distance",
             "finding_assessment",
+            "finding_recommendation",
         )
 
     def required_image_columns(self) -> Tuple[str, ...]:
