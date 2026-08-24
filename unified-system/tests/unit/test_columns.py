@@ -24,20 +24,20 @@ def test_default_embed_columns_match_documented_embed_names() -> None:
     assert config.to_dict() == DEFAULT_EMBED_COLUMN_NAMES
 
 
-def test_placeholder_columns_cover_identifiers_roi_frames_and_landmark_provenance() -> None:
+def test_v1c_columns_bind_known_identifiers_and_roi_frames() -> None:
     config = EmbedColumnConfig.default()
 
-    assert config.image_id == "PLACEHOLDER_IMAGE_ID"
-    assert config.series_id == "PLACEHOLDER_SERIES_ID"
-    assert config.sop_instance_uid == "PLACEHOLDER_SOP_INSTANCE_UID"
-    assert config.acquisition_group_id == "PLACEHOLDER_ACQUISITION_GROUP_ID"
-    assert config.roi_frames == "PLACEHOLDER_ROI_FRAMES"
+    assert config.image_id == "anon_dicom_path"
+    assert config.series_id == "SeriesInstanceUID"
+    assert config.sop_instance_uid == "anon_dicom_path"
+    assert config.acquisition_group_id == "acquisition_group_id"
+    assert config.roi_frames == "ROI_frames"
     assert config.roi_source == "PLACEHOLDER_ROI_SOURCE"
     assert config.nipple_confidence == "PLACEHOLDER_NIPPLE_CONFIDENCE"
 
     assert config.roi_columns() == (
         "ROI_coords",
-        "PLACEHOLDER_ROI_FRAMES",
+        "ROI_frames",
         "PLACEHOLDER_ROI_SOURCE",
     )
     assert config.landmark_columns() == (

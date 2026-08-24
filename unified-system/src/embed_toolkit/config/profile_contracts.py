@@ -20,7 +20,9 @@ from embed_toolkit.core.provenance import AvailabilityState, ResolutionState
 
 
 INTERNAL_V2_PROFILE = "internal-v2"
-INTERNAL_V1C_PROFILE = "internal-v1c"
+# Compatibility name for the V1c image artifact. V1c is the artifact version;
+# the MCP catalog keeps it inside the Internal V2 dataset profile.
+INTERNAL_V1C_PROFILE = INTERNAL_V2_PROFILE
 
 
 class ProfileKind(str, Enum):
@@ -399,7 +401,7 @@ INTERNAL_V2_FIELD_INVENTORY = _profile_inventory(
 )
 
 INTERNAL_V1C_FIELD_INVENTORY = _profile_inventory(
-    "internal-v1c-repository-image-fields-v1",
+    "internal-v2-v1c-repository-image-fields-v1",
     _IMAGE_FIELDS,
     INTERNAL_V1C_PROFILE,
 )
@@ -448,11 +450,11 @@ def _internal_v2_capabilities() -> ProfileCapabilities:
         ),
         GovernedConcept.IMAGE: (
             AvailabilityState.UNAVAILABLE,
-            "Image binding belongs to the separate internal-v1c contract.",
+            "Image binding belongs to the V1c image-artifact contract.",
         ),
         GovernedConcept.REGION_OF_INTEREST: (
             AvailabilityState.UNAVAILABLE,
-            "ROI binding belongs to the separate internal-v1c contract.",
+            "ROI binding belongs to the V1c image-artifact contract.",
         ),
         GovernedConcept.PROCEDURE: (
             AvailabilityState.BOUND,
@@ -490,7 +492,7 @@ def _internal_v1c_capabilities() -> ProfileCapabilities:
     states: Mapping[GovernedConcept, Tuple[AvailabilityState | ResolutionState, str]] = {
         GovernedConcept.PATIENT: (
             ResolutionState.UNRESOLVED,
-            "Patient identifiers occur on image rows without a patient-object binding.",
+            "Patient identifiers occur on V1c image rows without a patient-object binding.",
         ),
         GovernedConcept.IMAGING_EPISODE: (
             AvailabilityState.UNAVAILABLE,
@@ -546,7 +548,7 @@ def _internal_v1c_capabilities() -> ProfileCapabilities:
         ),
     }
     return ProfileCapabilities(
-        source_profile=INTERNAL_V1C_PROFILE,
+        source_profile=INTERNAL_V2_PROFILE,
         governed_concepts=tuple(states),
         declarations=tuple(
             _capability(concept, state, reason)
@@ -614,19 +616,14 @@ INTERNAL_V2_CONTRACT = ProfileContract(
 )
 
 INTERNAL_V1C_CONTRACT = ProfileContract(
-    source_profile=INTERNAL_V1C_PROFILE,
+    source_profile=INTERNAL_V2_PROFILE,
     kind=ProfileKind.IMAGE,
     field_inventory=INTERNAL_V1C_FIELD_INVENTORY,
     capabilities=_internal_v1c_capabilities(),
     field_coverage=_field_coverage(
-        INTERNAL_V1C_PROFILE,
+        INTERNAL_V2_PROFILE,
         _IMAGE_FIELDS,
         {
-            "image_id": ResolutionState.UNRESOLVED,
-            "series_id": ResolutionState.UNRESOLVED,
-            "sop_instance_uid": ResolutionState.UNRESOLVED,
-            "acquisition_group_id": ResolutionState.UNRESOLVED,
-            "roi_frames": ResolutionState.UNRESOLVED,
             "roi_source": ResolutionState.UNRESOLVED,
             "nipple_x": AvailabilityState.RAW_ONLY,
             "nipple_y": AvailabilityState.RAW_ONLY,
@@ -642,8 +639,8 @@ INTERNAL_V1C_CONTRACT = ProfileContract(
 
 
 _BUILT_IN_CONTRACTS = {
-    INTERNAL_V2_PROFILE: INTERNAL_V2_CONTRACT,
-    INTERNAL_V1C_PROFILE: INTERNAL_V1C_CONTRACT,
+    (INTERNAL_V2_PROFILE, ProfileKind.CLINICAL): INTERNAL_V2_CONTRACT,
+    (INTERNAL_V2_PROFILE, ProfileKind.IMAGE): INTERNAL_V1C_CONTRACT,
 }
 
 
@@ -657,7 +654,18 @@ def profile_contract_for(
 
     if not isinstance(source_profile, str) or not source_profile.strip():
         raise ValueError("source_profile must be a non-empty string")
-    built_in = _BUILT_IN_CONTRACTS.get(source_profile)
+    resolved_kind = ProfileKind(expected_kind) if expected_kind is not None else None
+    built_in = (
+        _BUILT_IN_CONTRACTS.get((source_profile, resolved_kind))
+        if resolved_kind is not None
+        else None
+    )
+    if resolved_kind is None and source_profile == INTERNAL_V2_PROFILE:
+        if supplied_contract is None:
+            raise ValueError(
+                "Internal V2 profile resolution requires an expected profile kind"
+            )
+        built_in = _BUILT_IN_CONTRACTS.get((source_profile, supplied_contract.kind))
     if built_in is not None:
         if supplied_contract is not None and supplied_contract != built_in:
             raise ValueError("Built-in profiles require their governed built-in contract")
@@ -672,9 +680,9 @@ def profile_contract_for(
         if supplied_contract.source_profile != source_profile:
             raise ValueError("Supplied contract profile identity must match source_profile")
         resolved = supplied_contract
-    if expected_kind is not None and resolved.kind is not ProfileKind(expected_kind):
+    if resolved_kind is not None and resolved.kind is not resolved_kind:
         raise ValueError(
-            f"Profile contract kind must be {ProfileKind(expected_kind).value!r}"
+            f"Profile contract kind must be {resolved_kind.value!r}"
         )
     return resolved
 

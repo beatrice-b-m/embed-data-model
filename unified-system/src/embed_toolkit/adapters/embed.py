@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import math
+import re
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -64,7 +65,6 @@ from embed_toolkit.clinical.procedures import (
 )
 from embed_toolkit.config.columns import EmbedColumnConfig, default_embed_columns
 from embed_toolkit.config.profile_contracts import (
-    INTERNAL_V1C_PROFILE,
     INTERNAL_V2_PROFILE,
     ProfileContract,
     ProfileKind,
@@ -1978,7 +1978,7 @@ def build_image_tables(
     build_policy: Optional[BuildPolicy] = None,
     source_scope: Optional[str] = None,
     source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
-    source_profile: str = INTERNAL_V1C_PROFILE,
+    source_profile: str = INTERNAL_V2_PROFILE,
     source_table: str = "image_metadata",
     profile_contract: Optional[ProfileContract] = None,
 ) -> EmbedImageTables:
@@ -2027,7 +2027,11 @@ def build_image_tables(
         )
         row_issues: list[BuildIssue] = []
         roi_eligible = False
-        image_id = _string_value(_get(raw_values, column_aliases.image_id))
+        image_id, derived_sop_instance_uid = _image_identity_from_row(
+            raw_values,
+            column_aliases.image_id,
+            resolved_columns.image_path,
+        )
         if image_id is None:
             issue = BuildIssue(
                 code="missing_image_identity",
@@ -2047,6 +2051,7 @@ def build_image_tables(
                 column_aliases,
                 image_id,
                 locator,
+                derived_sop_instance_uid=derived_sop_instance_uid,
             )
             for issue in metadata_issues:
                 policy.handle_issue(issue)
@@ -2140,6 +2145,8 @@ def _image_from_row(
     columns: _ColumnAliases,
     image_id: str,
     locator: SourceLocator,
+    *,
+    derived_sop_instance_uid: Optional[str] = None,
 ) -> Tuple[Optional[MammogramImage], Tuple[BuildIssue, ...]]:
     modality = ImageModality.coerce(_get(row, columns.modality))
     issues = []
@@ -2198,7 +2205,10 @@ def _image_from_row(
         "frame_count": parsed_integers["frame_count"],
         "study_instance_uid": _string_value(_get(row, columns.study_uid)),
         "series_instance_uid": _string_value(_get(row, columns.series_uid)),
-        "sop_instance_uid": _string_value(_get(row, columns.sop_uid)),
+        "sop_instance_uid": (
+            derived_sop_instance_uid
+            or _string_value(_get(row, columns.sop_uid))
+        ),
         "patient_orientation": patient_orientation,
         "coordinate_frame_id": _string_value(
             _get(row, columns.coordinate_frame_id)
@@ -2225,6 +2235,24 @@ def _image_from_row(
                 ),
             ),
         )
+
+
+def _image_identity_from_row(
+    row: Row,
+    image_id_columns: Tuple[str, ...],
+    image_path_column: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve image identity, deriving the SOP UID from the V1c file path."""
+
+    source_field, raw_value = _matched_value(row, image_id_columns)
+    value = _string_value(raw_value)
+    if value is None or source_field != image_path_column:
+        return value, None
+    filename = re.split(r"[\\/]", value.strip())[-1]
+    sop_instance_uid = (
+        filename[:-4] if filename.lower().endswith(".dcm") else filename
+    )
+    return sop_instance_uid or None, sop_instance_uid or None
 
 
 def _positive_image_integer(value: Any) -> Any:

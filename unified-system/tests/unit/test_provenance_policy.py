@@ -143,7 +143,7 @@ def test_source_locator_accepts_a_source_key_as_ordinal_alternative() -> None:
     source = SourceLocator(
         scope="embed-v1c",
         scope_kind=SourceScopeKind.DATASET,
-        source_profile="internal-v1c",
+        source_profile="internal-v2",
         source_table="images",
         source_key="SOP-123",
     )
@@ -164,7 +164,7 @@ def test_source_locator_requires_one_row_address(
         SourceLocator(
             scope="embed-v1c",
             scope_kind=SourceScopeKind.DATASET,
-            source_profile="internal-v1c",
+            source_profile="internal-v2",
             source_table="images",
             row_ordinal=row_ordinal,
             source_key=source_key,

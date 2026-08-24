@@ -38,7 +38,7 @@ def test_image_builder_scope_validation_and_ephemeral_default() -> None:
     locator = tables.source_occurrences[0].locator
     assert locator.scope.startswith("in-memory:")
     assert locator.scope_kind is SourceScopeKind.MATERIALIZATION
-    assert locator.source_profile == "internal-v1c"
+    assert locator.source_profile == "internal-v2"
     assert locator.source_table == "image_metadata"
 
     custom_contract = replace(
@@ -66,6 +66,31 @@ def test_image_builder_scope_validation_and_ephemeral_default() -> None:
     assert scoped_locator.scope_kind is SourceScopeKind.DATASET
     assert scoped_locator.source_profile == "custom-profile"
     assert scoped_locator.source_table == "custom-images"
+
+
+def test_v1c_path_derives_sop_identity_and_binds_acquisition_group() -> None:
+    tables = build_image_tables(
+        [
+            {
+                "empi_anon": "P-1",
+                "acc_anon": "ACC-1",
+                "anon_dicom_path": "/release/images/1.2.840.123.dcm",
+                "ImageLateralityFinal": "L",
+                "ViewPosition": "CC",
+                "FinalImageType": "2D",
+                "SeriesInstanceUID": "SERIES-1",
+                "acquisition_group_id": "GROUP-1",
+            }
+        ],
+        source_scope="internal-v2-release",
+    )
+
+    image = tables.images[0]
+    assert image.image_id == "1.2.840.123"
+    assert image.sop_instance_uid == "1.2.840.123"
+    assert image.series_instance_uid == "SERIES-1"
+    assert image.coordinate_frame_id == "GROUP-1"
+    assert image.canonical_source.source_profile == "internal-v2"
 
 
 def test_ledger_retains_all_ordinals_and_equal_duplicate_sources() -> None:

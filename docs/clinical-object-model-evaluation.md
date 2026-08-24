@@ -56,8 +56,9 @@ are unresolved, radiology reports are unavailable, pathology specimens are
 unsupported, and external-catalog completeness remains unresolved. Custom
 profiles must supply their own exact contract.
 
-The only runtime built-ins are exactly `internal-v2` for clinical ingestion and
-`internal-v1c` for image ingestion. `embed_context_internal` is not an alias.
+The only runtime dataset profile is `internal-v2`. Clinical V2 and the paired
+V1c image-metadata artifact use distinct kind-specific contracts under that
+shared profile identity; V1c names the image artifact version, not a profile.
 
 Current verification on 2026-08-24:
 

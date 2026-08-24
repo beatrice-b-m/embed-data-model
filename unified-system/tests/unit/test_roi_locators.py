@@ -24,7 +24,7 @@ def image_locator(scope: str = "embed-v1c-2026-08") -> SourceLocator:
     return SourceLocator(
         scope=scope,
         scope_kind=SourceScopeKind.MATERIALIZATION,
-        source_profile="internal-v1c",
+        source_profile="internal-v2",
         source_table="images",
         source_key="SOP-123",
     )
@@ -47,7 +47,7 @@ def test_synthetic_roi_locator_is_structured_and_scope_sensitive() -> None:
         "image_locator": {
             "scope": "materialization-a",
             "scope_kind": "materialization",
-            "source_profile": "internal-v1c",
+            "source_profile": "internal-v2",
             "source_table": "images",
             "row_ordinal": None,
             "source_key": "SOP-123",

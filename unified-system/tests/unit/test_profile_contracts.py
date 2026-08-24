@@ -155,7 +155,7 @@ def test_built_in_profiles_expose_only_evidenced_capability_boundaries() -> None
         )
     assert (
         INTERNAL_V1C_CONTRACT.field_coverage.declaration_for("image_id").state
-        is ResolutionState.UNRESOLVED
+        is AvailabilityState.BOUND
     )
     assert (
         INTERNAL_V1C_CONTRACT.field_coverage.declaration_for("nipple_x").state
@@ -376,7 +376,7 @@ def test_build_results_and_combined_graph_preserve_distinct_contracts() -> None:
     assert graph.image_profile_contract is images.profile_contract
     serialized = graph.to_dict()
     assert serialized["clinical_profile_contract"]["source_profile"] == "internal-v2"
-    assert serialized["image_profile_contract"]["source_profile"] == "internal-v1c"
+    assert serialized["image_profile_contract"]["source_profile"] == "internal-v2"
     json.dumps(serialized)
 
 
