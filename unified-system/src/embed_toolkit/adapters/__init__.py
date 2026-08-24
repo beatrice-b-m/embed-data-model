@@ -4,7 +4,7 @@ from embed_toolkit.adapters.embed import (
     EmbedClinicalImageGraph,
     EmbedClinicalTables,
     EmbedImageTables,
-    FindingImageJoin,
+    FindingImageCandidateProjection,
     assemble_clinical_image_graph,
     build_clinical_tables,
     build_exams,
@@ -12,7 +12,7 @@ from embed_toolkit.adapters.embed import (
     build_images,
     build_patients,
     build_rois,
-    join_findings_to_images,
+    project_finding_image_candidates,
 )
 from embed_toolkit.adapters.magview import (
     MagViewLocationNormalization,
@@ -25,7 +25,7 @@ __all__ = [
     "EmbedClinicalImageGraph",
     "EmbedClinicalTables",
     "EmbedImageTables",
-    "FindingImageJoin",
+    "FindingImageCandidateProjection",
     "MagViewLocationNormalization",
     "MagViewNormalizationWarning",
     "MagViewSourceEvidence",
@@ -36,6 +36,6 @@ __all__ = [
     "build_images",
     "build_patients",
     "build_rois",
-    "join_findings_to_images",
+    "project_finding_image_candidates",
     "normalize_magview_location",
 ]

@@ -6,13 +6,16 @@ import pytest
 
 from embed_toolkit.adapters import (
     EmbedClinicalImageGraph,
+    FindingImageCandidateProjection,
     assemble_clinical_image_graph,
+    project_finding_image_candidates,
 )
 from embed_toolkit.adapters.embed import (
     build_clinical_tables,
     build_image_tables,
 )
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
+from embed_toolkit.clinical.associations import AttributionStatus
 from embed_toolkit.core.primitives import Laterality
 
 
@@ -224,3 +227,125 @@ def test_assembly_rejects_invalid_table_wrappers(
 ) -> None:
     with pytest.raises(TypeError, match=message):
         assemble_clinical_image_graph(clinical, image_tables)  # type: ignore[arg-type]
+
+
+def test_candidate_projection_excludes_mismatched_and_unmatched_images() -> None:
+    clinical = clinical_tables("ACC-1")
+    images = build_image_tables(
+        [
+            image_row("valid", "ACC-1"),
+            image_row("patient-mismatch", "ACC-1", patient_id="P-2"),
+            image_row("unmatched-accession", "ACC-2"),
+        ]
+    )
+    graph = assemble_clinical_image_graph(
+        clinical,
+        images,
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+
+    projection = project_finding_image_candidates(graph)[0]
+
+    assert [image.image_id for image in projection.candidate_images] == ["valid"]
+    assert [image.image_id for image in graph.unmatched_images] == [
+        "patient-mismatch",
+        "unmatched-accession",
+    ]
+
+
+def test_bilateral_candidate_projection_unions_sides_without_duplicates() -> None:
+    clinical = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P-1",
+                "acc_anon": "ACC-1",
+                "numfind": "1",
+                "side": "B",
+            }
+        ],
+        source_scope="clinical-materialization",
+    )
+    images = build_image_tables(
+        [
+            image_row("left", "ACC-1", laterality="L"),
+            image_row("right", "ACC-1", laterality="R"),
+        ]
+    )
+    graph = assemble_clinical_image_graph(clinical, images)
+    graph.exams[0].breast_sides[Laterality.LEFT].images.append(images.images[0])
+
+    projection = project_finding_image_candidates(graph)[0]
+
+    assert [image.image_id for image in projection.candidate_images] == [
+        "left",
+        "right",
+    ]
+
+
+def test_unknown_laterality_preserves_empty_candidate_projection() -> None:
+    clinical = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P-1",
+                "acc_anon": "ACC-1",
+                "numfind": "1",
+                "side": "unknown-code",
+            }
+        ],
+        source_scope="clinical-materialization",
+    )
+    graph = assemble_clinical_image_graph(
+        clinical,
+        build_image_tables([image_row("left", "ACC-1")]),
+    )
+
+    projections = project_finding_image_candidates(graph)
+
+    assert len(projections) == 1
+    assert projections[0].candidate_images == ()
+
+
+def test_candidate_projection_ignores_graph_images_outside_exam_hierarchy() -> None:
+    clinical = clinical_tables("ACC-1")
+    image = build_image_tables([image_row("not-contained", "ACC-1")]).images[0]
+    graph = EmbedClinicalImageGraph(
+        exams=clinical.exams,
+        images=(image,),
+        unmatched_images=(image,),
+        unmatched_exams=clinical.exams,
+        build_issues=(),
+    )
+
+    projection = project_finding_image_candidates(graph)[0]
+
+    assert projection.candidate_images == ()
+
+
+def test_candidate_projection_serialization_is_reference_based_and_explicit() -> None:
+    graph = assemble_clinical_image_graph(
+        clinical_tables("ACC-1"),
+        build_image_tables([image_row("left", "ACC-1")]),
+    )
+
+    projection = project_finding_image_candidates(graph)[0]
+    serialized = projection.to_dict()
+
+    assert isinstance(projection, FindingImageCandidateProjection)
+    assert projection.status is AttributionStatus.CANDIDATE
+    assert serialized == {
+        "finding_reference": {
+            "accession_number": "ACC-1",
+            "finding_number": "1",
+        },
+        "candidate_image_references": ["left"],
+        "selection_basis": "assembled_exam_unilateral_side_membership",
+        "status": "candidate",
+    }
+    assert "finding" not in serialized
+    assert "images" not in serialized
+    json.dumps(serialized)
+
+
+def test_candidate_projection_rejects_invalid_graph_wrapper() -> None:
+    with pytest.raises(TypeError, match="graph must be an EmbedClinicalImageGraph"):
+        project_finding_image_candidates(object())  # type: ignore[arg-type]

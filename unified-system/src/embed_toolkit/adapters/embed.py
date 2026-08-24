@@ -3,15 +3,15 @@
 The public EMBED tables have two different meanings: MagView clinical rows
 describe clinical grains and source-colocated associations, while image
 metadata rows describe files and optional image-local ROIs. This adapter keeps
-those sources separate and only links them through explicit side-aware join
-helpers.
+those sources separate, assembles exam-to-image ownership explicitly, and only
+projects finding-image candidate sets from that owned hierarchy.
 """
 
 from __future__ import annotations
 
 import ast
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 from embed_toolkit.clinical.exams import BreastSide, Exam
@@ -130,11 +130,34 @@ class EmbedClinicalImageGraph:
 
 
 @dataclass(frozen=True)
-class FindingImageJoin:
-    """An intentional clinical-to-image side-aware join result."""
+class FindingImageCandidateProjection:
+    """Candidate images selected without asserting clinical attribution."""
 
     finding: Finding
-    images: Tuple[MammogramImage, ...]
+    candidate_images: Tuple[MammogramImage, ...]
+    selection_basis: str = field(
+        default="assembled_exam_unilateral_side_membership",
+        init=False,
+    )
+    status: AttributionStatus = field(
+        default=AttributionStatus.CANDIDATE,
+        init=False,
+    )
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize finding and candidate membership through references."""
+
+        return {
+            "finding_reference": {
+                "accession_number": self.finding.accession_number,
+                "finding_number": self.finding.finding_number,
+            },
+            "candidate_image_references": [
+                image.image_id for image in self.candidate_images
+            ],
+            "selection_basis": self.selection_basis,
+            "status": self.status.value,
+        }
 
 
 @dataclass(frozen=True)
@@ -678,28 +701,41 @@ def assemble_clinical_image_graph(
     )
 
 
-def join_findings_to_images(
-    findings: Iterable[Finding],
-    images: Iterable[MammogramImage],
-) -> Tuple[FindingImageJoin, ...]:
-    """Join clinical findings to images by accession and compatible side."""
+def project_finding_image_candidates(
+    graph: EmbedClinicalImageGraph,
+) -> Tuple[FindingImageCandidateProjection, ...]:
+    """Project side-compatible candidates from assembled exam containment.
 
-    image_list = tuple(images)
-    joins = []
-    for finding in findings:
-        compatible_sides = _join_sides(finding.laterality)
-        joins.append(
-            FindingImageJoin(
-                finding=finding,
-                images=tuple(
-                    image
-                    for image in image_list
-                    if image.accession_number == finding.accession_number
-                    and image.laterality in compatible_sides
-                ),
+    Candidate membership is a search-space projection only. It is not an
+    inferred or confirmed clinical finding-to-image attribution.
+    """
+
+    if not isinstance(graph, EmbedClinicalImageGraph):
+        raise TypeError("graph must be an EmbedClinicalImageGraph")
+
+    projections = []
+    for exam in graph.exams:
+        for finding in exam.findings:
+            candidates = []
+            seen_image_ids = set()
+            for laterality in finding.laterality.expand():
+                side = exam.breast_sides.get(laterality)
+                if side is None:
+                    continue
+                for image in side.images:
+                    if image.laterality is not laterality:
+                        continue
+                    if image.image_id in seen_image_ids:
+                        continue
+                    candidates.append(image)
+                    seen_image_ids.add(image.image_id)
+            projections.append(
+                FindingImageCandidateProjection(
+                    finding=finding,
+                    candidate_images=tuple(candidates),
+                )
             )
-        )
-    return tuple(joins)
+    return tuple(projections)
 
 
 def build_patients(
@@ -747,14 +783,6 @@ def _clinical_laterality(value: Any) -> Laterality:
         return Laterality.BILATERAL
     side = Laterality.coerce(value)
     return side
-
-
-def _join_sides(value: Any) -> Tuple[Laterality, ...]:
-    side = Laterality.coerce(value)
-    if side is Laterality.UNKNOWN:
-        return (Laterality.LEFT, Laterality.RIGHT)
-    expanded = side.expand()
-    return expanded if expanded else (side,)
 
 
 def _procedure_from_row(

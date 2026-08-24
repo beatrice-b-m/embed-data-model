@@ -148,14 +148,6 @@ def test_resolved_procedure_identity_and_finding_link_are_non_recursive() -> Non
         "accession_number": "ACC-1",
         "finding_number": "2",
     }
-    with pytest.raises(ValueError, match="cannot be unresolved"):
-        FindingProcedureLink(
-            accession_number="ACC-1",
-            finding_number="2",
-            procedure=identity,
-            status=AttributionStatus.UNRESOLVED,
-            source=source(),
-        )
     assert ProcedureIdentity(
         patient_id="P-1",
         performed_date="2020-01-02",
@@ -233,6 +225,39 @@ def test_pathology_attribution_is_explicit_and_source_scoped() -> None:
             target=target,
             status=AttributionStatus.INFERRED,
             source=source(4),
+        )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [AttributionStatus.CANDIDATE, AttributionStatus.UNRESOLVED],
+)
+def test_resolved_links_reject_non_attribution_statuses(
+    status: AttributionStatus,
+) -> None:
+    with pytest.raises(ValueError, match="procedure link requires attribution status"):
+        FindingProcedureLink(
+            accession_number="ACC-1",
+            finding_number="2",
+            procedure=procedure_identity(),
+            status=status,
+            source=source(),
+        )
+
+    pathology = PathologyReference(
+        kind=PathologyRecordKind.OBSERVATION,
+        source=source(),
+        source_slot="path1",
+    )
+    with pytest.raises(ValueError, match="pathology link requires attribution status"):
+        PathologyAttributionLink(
+            pathology=pathology,
+            target=ClinicalObjectReference(
+                kind=ClinicalObjectKind.FINDING,
+                identity=("ACC-1", "2"),
+            ),
+            status=status,
+            source=source(),
         )
 
 

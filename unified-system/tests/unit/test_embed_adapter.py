@@ -3,11 +3,13 @@ from __future__ import annotations
 import pytest
 
 from embed_toolkit.adapters.embed import (
+    assemble_clinical_image_graph,
     build_clinical_tables,
     build_image_tables,
-    join_findings_to_images,
+    project_finding_image_candidates,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig
+from embed_toolkit.clinical.associations import AttributionStatus
 from embed_toolkit.clinical.pathology import PathologySeverity
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
@@ -490,13 +492,18 @@ def test_builders_accept_custom_column_configuration() -> None:
     assert image_tables.rois[0].frame_index == 4
 
 
-def test_side_aware_join_is_explicit_and_respects_accession() -> None:
+def test_candidate_projection_is_explicit_and_uses_assembled_hierarchy() -> None:
     clinical = build_clinical_tables(
         [
             {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": "L", "side": "L"},
             {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": "R", "side": "R"},
             {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": "B", "side": "B"},
-            {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": "U"},
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": "U",
+                "side": "unknown-code",
+            },
         ]
     )
     image_tables = build_image_tables(
@@ -522,15 +529,22 @@ def test_side_aware_join_is_explicit_and_respects_accession() -> None:
         ]
     )
 
-    joins = join_findings_to_images(clinical.findings, image_tables.images)
-    joined_ids = {
-        join.finding.finding_id: [image.image_id for image in join.images]
-        for join in joins
+    graph = assemble_clinical_image_graph(clinical, image_tables)
+    projections = project_finding_image_candidates(graph)
+    candidate_ids = {
+        projection.finding.finding_id: [
+            image.image_id for image in projection.candidate_images
+        ]
+        for projection in projections
     }
 
-    assert joined_ids == {
+    assert candidate_ids == {
         "ACC-1:L": ["ACC1-L"],
         "ACC-1:R": ["ACC1-R"],
         "ACC-1:B": ["ACC1-L", "ACC1-R"],
-        "ACC-1:U": ["ACC1-L", "ACC1-R"],
+        "ACC-1:U": [],
     }
+    assert all(
+        projection.status is AttributionStatus.CANDIDATE
+        for projection in projections
+    )

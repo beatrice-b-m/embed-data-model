@@ -199,6 +199,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         workflows = importlib.import_module("embed_toolkit.workflows")
 
     assert adapters.build_clinical_tables
+    assert adapters.project_finding_image_candidates
     assert adapters.normalize_magview_location
     assert audit.WorkflowResult
     assert audit.export_result

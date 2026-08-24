@@ -3,11 +3,13 @@ from __future__ import annotations
 import pytest
 
 from embed_toolkit.adapters.embed import (
+    assemble_clinical_image_graph,
     build_clinical_tables,
     build_image_tables,
-    join_findings_to_images,
+    project_finding_image_candidates,
 )
 from embed_toolkit.audit.results import ResultStatus
+from embed_toolkit.clinical.associations import AttributionStatus
 from embed_toolkit.core.primitives import Laterality, ViewPosition
 from embed_toolkit.imaging.alignment import Alignment, AlignmentDirection
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark, LandmarkType
@@ -108,7 +110,7 @@ def test_legacy_parity_clock_mapping_is_laterality_aware_before_matching() -> No
     }
 
 
-def test_legacy_parity_bilateral_and_missing_side_expand_for_image_join() -> None:
+def test_legacy_parity_bilateral_candidate_projection_uses_both_sides() -> None:
     clinical = build_clinical_tables(
         [
             {"empi_anon": "P1", "acc_anon": "ACC-EXPAND", "numfind": "B", "side": "B"},
@@ -138,20 +140,28 @@ def test_legacy_parity_bilateral_and_missing_side_expand_for_image_join() -> Non
         ]
     )
 
-    joins = join_findings_to_images(clinical.findings, images.images)
-    joined_image_ids = {
-        join.finding.finding_id: [image.image_id for image in join.images]
-        for join in joins
+    projections = project_finding_image_candidates(
+        assemble_clinical_image_graph(clinical, images)
+    )
+    candidate_image_ids = {
+        projection.finding.finding_id: [
+            image.image_id for image in projection.candidate_images
+        ]
+        for projection in projections
     }
 
     assert [finding.laterality for finding in clinical.findings] == [
         Laterality.BILATERAL,
         Laterality.BILATERAL,
     ]
-    assert joined_image_ids == {
+    assert candidate_image_ids == {
         "ACC-EXPAND:B": ["left-cc", "right-cc"],
         "ACC-EXPAND:U": ["left-cc", "right-cc"],
     }
+    assert all(
+        projection.status is AttributionStatus.CANDIDATE
+        for projection in projections
+    )
 
 
 def test_legacy_parity_localization_preserves_source_evidence() -> None:

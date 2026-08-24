@@ -144,7 +144,10 @@ class PathologyAttributionLink:
     source: SourceLocator
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "status", AttributionStatus(self.status))
+        status = AttributionStatus(self.status)
+        if not status.is_resolved_attribution:
+            raise ValueError("A resolved pathology link requires attribution status")
+        object.__setattr__(self, "status", status)
         if self.source != self.pathology.source:
             raise ValueError("Pathology link provenance must match pathology source")
 

@@ -16,7 +16,18 @@ class AttributionStatus(str, Enum):
     SOURCE_ASSERTED = "source_asserted"
     SOURCE_COLOCATED = "source_colocated"
     INFERRED = "inferred"
+    CANDIDATE = "candidate"
     UNRESOLVED = "unresolved"
+
+    @property
+    def is_resolved_attribution(self) -> bool:
+        """Whether this state asserts a resolved domain association."""
+
+        return self in {
+            self.SOURCE_ASSERTED,
+            self.SOURCE_COLOCATED,
+            self.INFERRED,
+        }
 
 
 class ClinicalObjectKind(str, Enum):
@@ -65,8 +76,8 @@ class FindingProcedureLink:
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{attribute} must be a non-empty string")
         status = AttributionStatus(self.status)
-        if status is AttributionStatus.UNRESOLVED:
-            raise ValueError("A resolved procedure link cannot be unresolved")
+        if not status.is_resolved_attribution:
+            raise ValueError("A resolved procedure link requires attribution status")
         object.__setattr__(self, "status", status)
 
     def to_dict(self) -> Dict[str, Any]:
