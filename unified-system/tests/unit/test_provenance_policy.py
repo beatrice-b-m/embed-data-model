@@ -26,7 +26,7 @@ def locator(row_ordinal: int) -> SourceLocator:
     return SourceLocator(
         scope="internal-v2-2026-08",
         scope_kind=SourceScopeKind.MATERIALIZATION,
-        source_profile="embed_context_internal",
+        source_profile="internal-v2",
         source_table="magview",
         row_ordinal=row_ordinal,
     )
@@ -105,7 +105,7 @@ def test_contracts_serialize_to_json_ready_values() -> None:
         "locator": {
             "scope": "internal-v2-2026-08",
             "scope_kind": "materialization",
-            "source_profile": "embed_context_internal",
+            "source_profile": "internal-v2",
             "source_table": "magview",
             "row_ordinal": 10,
             "source_key": None,

@@ -35,7 +35,7 @@ def source(row_ordinal: int = 3) -> SourceLocator:
     return SourceLocator(
         scope="internal-v2-materialization",
         scope_kind=SourceScopeKind.MATERIALIZATION,
-        source_profile="embed_context_internal",
+        source_profile="internal-v2",
         source_table="magview",
         row_ordinal=row_ordinal,
     )

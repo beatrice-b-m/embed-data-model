@@ -95,7 +95,7 @@ def test_procedure_owns_resolved_source_evidence_not_finding_references() -> Non
     source = SourceLocator(
         scope="materialization-1",
         scope_kind=SourceScopeKind.MATERIALIZATION,
-        source_profile="embed_context_internal",
+        source_profile="internal-v2",
         source_table="magview",
         row_ordinal=1,
     )
@@ -143,7 +143,7 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
                 source=SourceLocator(
                     scope="clinical-materialization",
                     scope_kind=SourceScopeKind.MATERIALIZATION,
-                    source_profile="embed_context_internal",
+                    source_profile="internal-v2",
                     source_table="magview",
                     row_ordinal=0,
                 ),
