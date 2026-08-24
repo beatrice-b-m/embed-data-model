@@ -17,7 +17,7 @@ class FindingRecordType(str, Enum):
     """Governed meaning of EMBED finding-number records."""
 
     FINDING = "finding"
-    NO_FINDING_SENTINEL = "no_finding_sentinel"
+    SYNTHETIC_CONTRALATERAL_NEGATIVE = "synthetic_contralateral_negative"
 
 
 @dataclass(frozen=True)
@@ -107,7 +107,7 @@ class Finding:
         self.laterality = Laterality.coerce(self.laterality)
         self.finding_number = str(self.finding_number)
         self.record_type = (
-            FindingRecordType.NO_FINDING_SENTINEL
+            FindingRecordType.SYNTHETIC_CONTRALATERAL_NEGATIVE
             if self.finding_number == "-9"
             else FindingRecordType.FINDING
         )

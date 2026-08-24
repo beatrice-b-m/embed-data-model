@@ -141,6 +141,10 @@ def test_governed_negative_nine_finding_identity_is_preserved() -> None:
     )
 
     assert tables.findings[0].finding_number == "-9"
+    assert (
+        tables.findings[0].record_type.value
+        == "synthetic_contralateral_negative"
+    )
     assert len(tables.source_occurrences) == 1
     assert tables.source_occurrences[0].resolution_state.value == "resolved"
     assert tables.build_issues == ()

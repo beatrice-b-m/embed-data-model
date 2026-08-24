@@ -60,11 +60,14 @@ def test_exam_rejects_conflicting_finding_merge_atomically() -> None:
     assert "source_row_count" not in first.metadata
 
 
-def test_negative_nine_remains_a_governed_no_finding_sentinel() -> None:
+def test_negative_nine_is_a_synthetic_contralateral_negative_finding() -> None:
     finding = Finding("ACC-1", Laterality.BILATERAL, -9)
 
-    assert finding.record_type is FindingRecordType.NO_FINDING_SENTINEL
-    assert finding.to_dict()["record_type"] == "no_finding_sentinel"
+    assert (
+        finding.record_type
+        is FindingRecordType.SYNTHETIC_CONTRALATERAL_NEGATIVE
+    )
+    assert finding.to_dict()["record_type"] == "synthetic_contralateral_negative"
 
 
 def test_breast_side_contains_findings_without_attribution_edges() -> None:
