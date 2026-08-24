@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from embed_toolkit.clinical.attributes import ExamAttributeObservation
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.procedures import _to_plain
 from embed_toolkit.core.primitives import Laterality
@@ -89,6 +90,9 @@ class Exam:
     patient_id: Optional[str] = None
     exam_date: Optional[str] = None
     description: Optional[str] = None
+    attribute_observations: List[ExamAttributeObservation] = field(
+        default_factory=list
+    )
     findings: List[Finding] = field(default_factory=list)
     images: List[MammogramImage] = field(default_factory=list)
     breast_sides: Dict[Laterality, BreastSide] = field(default_factory=dict)
@@ -103,6 +107,8 @@ class Exam:
         initial_findings = list(self.findings)
         initial_images = list(self.images)
         initial_sides = tuple(self.breast_sides.values())
+        initial_attribute_observations = list(self.attribute_observations)
+        self.attribute_observations = []
         self.findings = []
         self.images = []
         self.breast_sides = {}
@@ -123,6 +129,8 @@ class Exam:
         self.extend_findings(initial_findings)
         for image in initial_images:
             self.add_image(image)
+        for observation in initial_attribute_observations:
+            self.add_attribute_observation(observation)
 
     @property
     def finding_index(self) -> Dict[Tuple[str, str], Finding]:
@@ -138,6 +146,29 @@ class Exam:
         created = BreastSide(self.accession_number, side)
         self.breast_sides[side] = created
         return created
+
+    def add_attribute_observation(
+        self,
+        observation: ExamAttributeObservation,
+    ) -> ExamAttributeObservation:
+        """Own one uniquely source-attributed invariant observation."""
+
+        if not isinstance(observation, ExamAttributeObservation):
+            raise TypeError("observation must be an ExamAttributeObservation")
+        if observation.accession_number != self.accession_number:
+            raise ValueError(
+                "ExamAttributeObservation accession_number must match Exam"
+            )
+        for existing in self.attribute_observations:
+            if existing.identity == observation.identity:
+                if existing != observation:
+                    raise ValueError(
+                        "One exam attribute observation identity cannot "
+                        "represent different values"
+                    )
+                return existing
+        self.attribute_observations.append(observation)
+        return observation
 
     def add_finding(self, finding: Finding) -> Finding:
         if finding.accession_number != self.accession_number:
@@ -176,6 +207,10 @@ class Exam:
             "patient_id": self.patient_id,
             "exam_date": self.exam_date,
             "description": self.description,
+            "attribute_observations": [
+                observation.to_dict()
+                for observation in self.attribute_observations
+            ],
             "findings": [finding.to_dict() for finding in self.findings],
             "images": [image.to_dict() for image in self.images],
             "breast_sides": [

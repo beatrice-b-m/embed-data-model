@@ -1,6 +1,8 @@
 """Clinical domain objects."""
 
 from embed_toolkit.clinical.attributes import (
+    ExamAttributeName,
+    ExamAttributeObservation,
     PatientAttributeAsOfPolicy,
     PatientAttributeName,
     PatientAttributeObservation,
@@ -31,6 +33,8 @@ __all__ = [
     "BreastSide",
     "Cohort",
     "Exam",
+    "ExamAttributeName",
+    "ExamAttributeObservation",
     "Finding",
     "FindingNormalizationEvidence",
     "FindingNormalizationWarning",

@@ -7,6 +7,7 @@ DEFAULT_EMBED_COLUMN_NAMES = {
     "cohort_id": "cohort_num",
     "accession": "acc_anon",
     "study_date": "studydate_anon",
+    "exam_description": "exam_description",
     "image_path": "anon_dicom_path",
     "image_id": "PLACEHOLDER_IMAGE_ID",
     "image_laterality": "ImageLateralityFinal",

@@ -206,6 +206,8 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert clinical.Finding
     assert clinical.FindingNormalizationEvidence
     assert clinical.FindingNormalizationWarning
+    assert clinical.ExamAttributeName
+    assert clinical.ExamAttributeObservation
     assert clinical.ImagingInterpretation
     assert clinical.PathologyObservation
     assert clinical.PathologyDiagnosis

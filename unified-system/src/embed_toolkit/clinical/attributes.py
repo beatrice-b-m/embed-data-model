@@ -30,11 +30,56 @@ class PatientObservationTimeBasis(str, Enum):
     EXAM_DATE_CONTEXT = "exam_date_context"
 
 
+class ExamAttributeName(str, Enum):
+    """Governed invariant attributes reconciled across exam source rows."""
+
+    EXAM_DATE = "exam_date"
+    DESCRIPTION = "description"
+
+
 class UndatedObservationPolicy(str, Enum):
     """Treatment of observations without a usable context date."""
 
     REJECT = "reject"
     EXCLUDE = "exclude"
+
+
+@dataclass(frozen=True)
+class ExamAttributeObservation:
+    """One source-attributed observation of an invariant exam fact."""
+
+    accession_number: str
+    attribute: ExamAttributeName
+    value: Optional[str]
+    source: SourceLocator
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.accession_number, str)
+            or not self.accession_number.strip()
+        ):
+            raise ValueError("accession_number must be a non-empty string")
+        object.__setattr__(self, "attribute", ExamAttributeName(self.attribute))
+        if self.value is not None:
+            if not isinstance(self.value, str) or not self.value.strip():
+                raise TypeError("exam attribute value must be a string or None")
+            object.__setattr__(self, "value", self.value.strip())
+        if not isinstance(self.source, SourceLocator):
+            raise TypeError("source must be a SourceLocator")
+
+    @property
+    def identity(self) -> Tuple[str, ExamAttributeName, SourceLocator]:
+        return self.accession_number, self.attribute, self.source
+
+    def reference_dict(self) -> dict[str, object]:
+        return {
+            "accession_number": self.accession_number,
+            "attribute": self.attribute.value,
+            "source": self.source.to_dict(),
+        }
+
+    def to_dict(self) -> dict[str, object]:
+        return {**self.reference_dict(), "value": self.value}
 
 
 @dataclass(frozen=True)

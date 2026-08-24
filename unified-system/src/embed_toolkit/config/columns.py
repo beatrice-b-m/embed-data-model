@@ -28,6 +28,7 @@ class EmbedColumnConfig:
     cohort_id: str = DEFAULT_EMBED_COLUMN_NAMES["cohort_id"]
     accession: str = DEFAULT_EMBED_COLUMN_NAMES["accession"]
     study_date: str = DEFAULT_EMBED_COLUMN_NAMES["study_date"]
+    exam_description: str = DEFAULT_EMBED_COLUMN_NAMES["exam_description"]
     image_path: str = DEFAULT_EMBED_COLUMN_NAMES["image_path"]
     image_id: str = DEFAULT_EMBED_COLUMN_NAMES["image_id"]
     image_laterality: str = DEFAULT_EMBED_COLUMN_NAMES["image_laterality"]

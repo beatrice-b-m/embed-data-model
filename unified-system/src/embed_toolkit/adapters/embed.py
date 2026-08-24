@@ -19,6 +19,8 @@ from numbers import Integral, Real
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 from embed_toolkit.clinical.attributes import (
+    ExamAttributeName,
+    ExamAttributeObservation,
     PatientAttributeName,
     PatientAttributeObservation,
     PatientObservationTimeBasis,
@@ -90,6 +92,7 @@ class EmbedClinicalTables:
     patients: Tuple[Patient, ...]
     patient_attribute_observations: Tuple[PatientAttributeObservation, ...]
     exams: Tuple[Exam, ...]
+    exam_attribute_observations: Tuple[ExamAttributeObservation, ...]
     findings: Tuple[Finding, ...]
     interpretations: Tuple[ImagingInterpretation, ...]
     breast_sides: Tuple[BreastSide, ...]
@@ -130,6 +133,10 @@ class EmbedClinicalTables:
                     "patient_id": exam.patient_id,
                     "exam_date": exam.exam_date,
                     "description": exam.description,
+                    "exam_attribute_observation_references": [
+                        observation.reference_dict()
+                        for observation in exam.attribute_observations
+                    ],
                     "finding_references": [
                         {
                             "accession_number": finding.accession_number,
@@ -149,6 +156,10 @@ class EmbedClinicalTables:
                     "metadata": _to_plain(exam.metadata),
                 }
                 for exam in self.exams
+            ],
+            "exam_attribute_observations": [
+                observation.to_dict()
+                for observation in self.exam_attribute_observations
             ],
             "findings": [finding.to_dict() for finding in self.findings],
             "interpretations": [
@@ -331,6 +342,7 @@ class _ClinicalBuildState:
     patients: dict[str, Patient]
     patient_attribute_observations: list[PatientAttributeObservation]
     exams: dict[str, Exam]
+    exam_attribute_observations: list[ExamAttributeObservation]
     procedure_registry: dict[ProcedureIdentity, Procedure]
     finding_procedure_links: list[FindingProcedureLink]
     unresolved_procedure_occurrences: list[UnresolvedProcedureOccurrence]
@@ -351,6 +363,11 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
         sex=_aliases(columns.sex, "sex", "PatientSex"),
         accession=_aliases(columns.accession, "accession_number", "AccessionNumber"),
         exam_date=_aliases(columns.study_date, "exam_date", "StudyDate"),
+        exam_description=_aliases(
+            columns.exam_description,
+            "exam_description",
+            "StudyDescription",
+        ),
         finding_number=_aliases(columns.finding_number, "finding_number"),
         clinical_side=_aliases(columns.finding_laterality, "laterality"),
         finding_location=_aliases(
@@ -458,6 +475,7 @@ def build_clinical_tables(
     patients: dict[str, Patient] = {}
     patient_attribute_observations: list[PatientAttributeObservation] = []
     exams: dict[str, Exam] = {}
+    exam_attribute_observations: list[ExamAttributeObservation] = []
     procedure_registry: dict[ProcedureIdentity, Procedure] = {}
     finding_procedure_links: list[FindingProcedureLink] = []
     unresolved_procedure_occurrences: list[UnresolvedProcedureOccurrence] = []
@@ -470,6 +488,7 @@ def build_clinical_tables(
         patients=patients,
         patient_attribute_observations=patient_attribute_observations,
         exams=exams,
+        exam_attribute_observations=exam_attribute_observations,
         procedure_registry=procedure_registry,
         finding_procedure_links=finding_procedure_links,
         unresolved_procedure_occurrences=unresolved_procedure_occurrences,
@@ -523,6 +542,7 @@ def build_clinical_tables(
         patients=ordered_patients,
         patient_attribute_observations=tuple(patient_attribute_observations),
         exams=ordered_exams,
+        exam_attribute_observations=tuple(exam_attribute_observations),
         findings=ordered_findings,
         interpretations=ordered_interpretations,
         breast_sides=ordered_sides,
@@ -620,6 +640,20 @@ def _build_clinical_row(
     _review_row_issues(policy, attribute_issues)
     issues.extend(attribute_issues)
 
+    exam_observations = _exam_attributes_from_row(
+        row,
+        columns,
+        accession,
+        locator,
+    )
+    exam_attribute_issues, exam_attribute_fills = _reconcile_exam_attributes(
+        existing_exam,
+        exam_observations,
+        locator,
+    )
+    _review_row_issues(policy, exam_attribute_issues)
+    issues.extend(exam_attribute_issues)
+
     patient = state.patients.setdefault(patient_id, Patient(patient_id=patient_id))
     for observation in attribute_observations:
         owned_observation = patient.add_attribute_observation(observation)
@@ -629,12 +663,15 @@ def _build_clinical_row(
         exam = Exam(
             accession_number=accession,
             patient_id=patient_id,
-            exam_date=_string_value(_get(row, columns.exam_date)),
-            description=_string_value(_get(row, columns.exam_description)),
         )
         state.exams[accession] = patient.add_exam(exam)
     else:
         patient.add_exam(exam)
+    for attribute, value in exam_attribute_fills:
+        setattr(exam, attribute.value, value)
+    for observation in exam_observations:
+        owned_observation = exam.add_attribute_observation(observation)
+        state.exam_attribute_observations.append(owned_observation)
 
     if finding_number is None:
         (
@@ -841,7 +878,7 @@ def _patient_attributes_from_row(
         if attribute is PatientAttributeName.SEX:
             value = (
                 None
-                if _is_patient_attribute_blank(raw_value)
+                if _is_attributed_value_blank(raw_value)
                 else str(raw_value).strip()
             )
         elif _is_explicit_patient_attribute_null(raw_value):
@@ -880,6 +917,87 @@ def _patient_attributes_from_row(
     return tuple(observations), tuple(issues)
 
 
+def _exam_attributes_from_row(
+    row: Row,
+    columns: _ColumnAliases,
+    accession_number: str,
+    locator: SourceLocator,
+) -> Tuple[ExamAttributeObservation, ...]:
+    observations = []
+    for attribute, aliases in (
+        (ExamAttributeName.EXAM_DATE, columns.exam_date),
+        (ExamAttributeName.DESCRIPTION, columns.exam_description),
+    ):
+        source_field, raw_value = _matched_value(row, aliases)
+        if source_field is None:
+            continue
+        value = (
+            None
+            if _is_attributed_value_blank(raw_value)
+            else str(raw_value).strip()
+        )
+        observations.append(
+            ExamAttributeObservation(
+                accession_number=accession_number,
+                attribute=attribute,
+                value=value,
+                source=locator,
+            )
+        )
+    return tuple(observations)
+
+
+def _reconcile_exam_attributes(
+    retained_exam: Optional[Exam],
+    observations: Tuple[ExamAttributeObservation, ...],
+    locator: SourceLocator,
+) -> Tuple[
+    Tuple[BuildIssue, ...],
+    Tuple[Tuple[ExamAttributeName, str], ...],
+]:
+    issues = []
+    fills = []
+    for observation in observations:
+        retained_value = (
+            getattr(retained_exam, observation.attribute.value)
+            if retained_exam is not None
+            else None
+        )
+        if retained_value is None:
+            if observation.value is not None:
+                fills.append((observation.attribute, observation.value))
+            continue
+        if observation.value is None or retained_value == observation.value:
+            continue
+        supporting_sources = tuple(
+            item.source
+            for item in retained_exam.attribute_observations
+            if item.attribute is observation.attribute
+            and item.value == retained_value
+        )
+        issues.append(
+            BuildIssue(
+                code="conflicting_exam_attribute",
+                message=(
+                    "Repeated rows contain conflicting populated invariant "
+                    f"Exam {observation.attribute.value} values."
+                ),
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={
+                    "accession_number": retained_exam.accession_number,
+                    "attribute": observation.attribute.value,
+                    "retained": retained_value,
+                    "observed": observation.value,
+                    "retained_supporting_sources": [
+                        source.to_dict() for source in supporting_sources
+                    ],
+                },
+            )
+        )
+    return tuple(issues), tuple(fills)
+
+
 def _patient_attribute_context_date(
     row: Row,
     aliases: Tuple[str, ...],
@@ -888,7 +1006,7 @@ def _patient_attribute_context_date(
     locator: SourceLocator,
 ) -> Tuple[Optional[date], Optional[BuildIssue]]:
     source_field, raw_value = _matched_value(row, aliases)
-    if source_field is None or _is_patient_attribute_blank(raw_value):
+    if source_field is None or _is_attributed_value_blank(raw_value):
         return None, None
     parsed = _parse_patient_context_date(raw_value)
     if parsed is not None:
@@ -927,7 +1045,7 @@ def _parse_patient_context_date(value: Any) -> Optional[date]:
         return None
 
 
-def _is_patient_attribute_blank(value: Any) -> bool:
+def _is_attributed_value_blank(value: Any) -> bool:
     if _is_blank(value):
         return True
     try:

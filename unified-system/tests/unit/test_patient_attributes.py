@@ -141,7 +141,12 @@ def test_builder_retains_changing_values_as_distinct_source_observations() -> No
     tables = build_clinical_tables(
         [
             clinical_row(sex="F", birth_year=1980, studydate_anon="2020-01-01"),
-            clinical_row(sex="X", birth_year=1981, studydate_anon="2021-01-01"),
+            clinical_row(
+                acc_anon="ACC-2",
+                sex="X",
+                birth_year=1981,
+                studydate_anon="2021-01-01",
+            ),
         ],
         source_scope="patient-attribute-tests",
     )
