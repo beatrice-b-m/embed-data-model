@@ -17,9 +17,9 @@ from embed_toolkit.clinical.pathology import (
     PathologyObservation,
     PathologyRecordKind,
     PathologyReference,
+    PathologySeverity,
 )
 from embed_toolkit.clinical.procedures import (
-    PathologySeverity,
     ProcedureIdentity,
     UnresolvedProcedureOccurrence,
 )
@@ -196,7 +196,6 @@ def test_pathology_diagnosis_has_explicit_report_documentation_time() -> None:
 
     serialized = diagnosis.to_dict()
     assert serialized["report_documented_date"] == "2020-01-05"
-    assert "event_date" not in serialized
     assert serialized["severity"] == 2
     assert json.loads(json.dumps(serialized)) == serialized
 

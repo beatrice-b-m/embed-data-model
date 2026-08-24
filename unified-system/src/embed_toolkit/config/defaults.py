@@ -34,6 +34,7 @@ DEFAULT_EMBED_COLUMN_NAMES = {
     "procedure_date": "procdate_anon",
     "procedure_type": "type",
     "pathology_severity": "path_severity",
+    "pathology_report_date": "pdate_anon",
     "pathology_diagnosis_prefix": "path",
 }
 

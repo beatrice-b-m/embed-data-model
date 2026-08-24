@@ -17,6 +17,7 @@ def test_default_embed_columns_match_documented_embed_names() -> None:
     assert config.nipple_x == "nipple_x"
     assert config.nipple_y == "nipple_y"
     assert config.finding_number == "numfind"
+    assert config.pathology_report_date == "pdate_anon"
     assert config.to_dict() == DEFAULT_EMBED_COLUMN_NAMES
 
 

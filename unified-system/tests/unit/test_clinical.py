@@ -123,7 +123,6 @@ def test_exam_aggregates_side_views_without_procedure_containment() -> None:
     assert sides[Laterality.LEFT].findings == [left]
     assert sides[Laterality.RIGHT].findings == [right]
     assert not hasattr(exam, "procedures")
-    assert not hasattr(exam, "pathology_events")
 
 
 def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> None:

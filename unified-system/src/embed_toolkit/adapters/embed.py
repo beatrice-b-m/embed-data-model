@@ -1,9 +1,10 @@
 """EMBED table builders for clinical rows and image metadata rows.
 
 The public EMBED tables have two different meanings: MagView clinical rows
-describe findings and finding-owned procedures, while image metadata rows
-describe files and optional image-local ROIs. This adapter keeps those sources
-separate and only links them through explicit side-aware join helpers.
+describe clinical grains and source-colocated associations, while image
+metadata rows describe files and optional image-local ROIs. This adapter keeps
+those sources separate and only links them through explicit side-aware join
+helpers.
 """
 
 from __future__ import annotations
@@ -11,15 +12,26 @@ from __future__ import annotations
 import ast
 import uuid
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
+from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.patients import Patient
-from embed_toolkit.clinical.associations import AttributionStatus, FindingProcedureLink
-from embed_toolkit.clinical.procedures import (
-    PathologyEvent,
+from embed_toolkit.clinical.associations import (
+    AttributionStatus,
+    ClinicalObjectKind,
+    ClinicalObjectReference,
+    FindingProcedureLink,
+)
+from embed_toolkit.clinical.pathology import (
+    PathologyAttributionLink,
+    PathologyDiagnosis,
+    PathologyObservation,
+    PathologyRecordKind,
+    PathologyReference,
     PathologySeverity,
+)
+from embed_toolkit.clinical.procedures import (
     Procedure,
     ProcedureIdentity,
     UnresolvedProcedureOccurrence,
@@ -58,6 +70,9 @@ class EmbedClinicalTables:
     procedures: Tuple[Procedure, ...]
     finding_procedure_links: Tuple[FindingProcedureLink, ...]
     unresolved_procedure_occurrences: Tuple[UnresolvedProcedureOccurrence, ...]
+    pathology_observations: Tuple[PathologyObservation, ...]
+    pathology_diagnoses: Tuple[PathologyDiagnosis, ...]
+    pathology_attribution_links: Tuple[PathologyAttributionLink, ...]
     unresolved_occurrences: Tuple[SourceOccurrence, ...]
     build_issues: Tuple[BuildIssue, ...]
 
@@ -96,8 +111,12 @@ class _ColumnAliases:
     procedure_laterality: Tuple[str, ...] = ()
     pathology_id: Tuple[str, ...] = ("pathology_id", "path_id")
     pathology_diagnosis: Tuple[str, ...] = ("pathology_diagnosis", "path_diag")
-    pathology_category: Tuple[str, ...] = ()
-    pathology_date: Tuple[str, ...] = ("pathology_date", "path_date")
+    pathology_severity: Tuple[str, ...] = ()
+    pathology_result_category: Tuple[str, ...] = (
+        "pathology_category",
+        "path_result",
+    )
+    pathology_report_date: Tuple[str, ...] = ()
     pathology_malignant: Tuple[str, ...] = ("pathology_malignant", "malignant")
     pathology_descriptor_prefix: str = "path"
     image_id: Tuple[str, ...] = ()
@@ -142,10 +161,12 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
             "bside",
             "procedure_laterality",
         ),
-        pathology_category=_aliases(
+        pathology_severity=_aliases(
             columns.pathology_severity,
-            "pathology_category",
-            "path_result",
+        ),
+        pathology_report_date=_aliases(
+            columns.pathology_report_date,
+            "pathology_report_date",
         ),
         pathology_descriptor_prefix=columns.pathology_diagnosis_prefix,
         image_id=_aliases(columns.image_id, "image_id", "ImageID", columns.image_path),
@@ -180,7 +201,6 @@ def build_clinical_tables(
     rows: Iterable[Row],
     *,
     columns: Optional[EmbedColumnConfig] = None,
-    pathology_validation: Literal["strict", "audit"] = "audit",
     build_policy: Optional[BuildPolicy] = None,
     source_scope: Optional[str] = None,
     source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
@@ -195,8 +215,6 @@ def build_clinical_tables(
     durable source identity. Row ordinals are zero-based within this call.
     """
 
-    if pathology_validation not in {"strict", "audit"}:
-        raise ValueError("pathology_validation must be 'strict' or 'audit'")
     policy = build_policy or BuildPolicy()
     if not isinstance(policy, BuildPolicy):
         raise TypeError("build_policy must be a BuildPolicy")
@@ -222,7 +240,10 @@ def build_clinical_tables(
     procedure_registry: dict[ProcedureIdentity, Procedure] = {}
     finding_procedure_links: list[FindingProcedureLink] = []
     unresolved_procedure_occurrences: list[UnresolvedProcedureOccurrence] = []
-    unresolved_occurrences: list[SourceOccurrence] = []
+    pathology_observations: list[PathologyObservation] = []
+    pathology_diagnoses: list[PathologyDiagnosis] = []
+    pathology_attribution_links: list[PathologyAttributionLink] = []
+    unresolved_occurrences: dict[SourceLocator, SourceOccurrence] = {}
     build_issues: list[BuildIssue] = []
 
     for row_ordinal, row in enumerate(rows):
@@ -233,6 +254,27 @@ def build_clinical_tables(
             source_table=source_table,
             row_ordinal=row_ordinal,
         )
+        row_observations, row_diagnosis, pathology_issues = _pathology_from_row(
+            row,
+            column_aliases,
+            locator,
+        )
+        if pathology_issues:
+            pathology_occurrence = SourceOccurrence(
+                locator=locator,
+                raw_values=dict(row),
+                resolution_state=ResolutionState.UNRESOLVED,
+                issues=pathology_issues,
+            )
+            policy.review(pathology_occurrence)
+            _retain_unresolved_occurrence(
+                unresolved_occurrences,
+                pathology_occurrence,
+            )
+            build_issues.extend(pathology_issues)
+        pathology_observations.extend(row_observations)
+        if row_diagnosis is not None:
+            pathology_diagnoses.append(row_diagnosis)
         patient_id = _string_value(_get(row, column_aliases.patient_id))
         accession = _string_value(_get(row, column_aliases.accession))
         finding_number = _string_value(_get(row, column_aliases.finding_number))
@@ -256,7 +298,7 @@ def build_clinical_tables(
                 issues=identity_issues,
             )
             policy.review(occurrence)
-            unresolved_occurrences.append(occurrence)
+            _retain_unresolved_occurrence(unresolved_occurrences, occurrence)
             build_issues.extend(identity_issues)
             continue
 
@@ -287,7 +329,7 @@ def build_clinical_tables(
                 issues=conflict_issues,
             )
             policy.review(occurrence)
-            unresolved_occurrences.append(occurrence)
+            _retain_unresolved_occurrence(unresolved_occurrences, occurrence)
             build_issues.extend(conflict_issues)
             continue
 
@@ -326,7 +368,27 @@ def build_clinical_tables(
             patient.add_exam(exam)
 
         if finding_occurrence is not None:
-            unresolved_occurrences.append(finding_occurrence)
+            pathology_attribution_links.extend(
+                _pathology_attribution_links(
+                    observations=row_observations,
+                    diagnosis=row_diagnosis,
+                    targets=(
+                        ClinicalObjectReference(
+                            ClinicalObjectKind.PATIENT,
+                            (patient_id,),
+                        ),
+                        ClinicalObjectReference(
+                            ClinicalObjectKind.EXAM,
+                            (accession,),
+                        ),
+                    ),
+                    locator=locator,
+                )
+            )
+            _retain_unresolved_occurrence(
+                unresolved_occurrences,
+                finding_occurrence,
+            )
             build_issues.extend(finding_occurrence.issues)
             continue
 
@@ -341,7 +403,7 @@ def build_clinical_tables(
             raw_source_fields=dict(row),
         )
         finding = exam.add_finding(finding)
-        _, link, unresolved_procedure = _procedure_from_row(
+        resolved_procedure, link, unresolved_procedure = _procedure_from_row(
             row,
             column_aliases,
             patient_id,
@@ -350,14 +412,45 @@ def build_clinical_tables(
             locator,
             procedure_registry,
             policy,
-            pathology_validation,
         )
         if link is not None:
             finding_procedure_links.append(link)
         if unresolved_procedure is not None:
             unresolved_procedure_occurrences.append(unresolved_procedure)
-            unresolved_occurrences.append(unresolved_procedure.occurrence)
+            _retain_unresolved_occurrence(
+                unresolved_occurrences,
+                unresolved_procedure.occurrence,
+            )
             build_issues.extend(unresolved_procedure.occurrence.issues)
+        targets = [
+            ClinicalObjectReference(ClinicalObjectKind.PATIENT, (patient_id,)),
+            ClinicalObjectReference(ClinicalObjectKind.EXAM, (accession,)),
+            ClinicalObjectReference(
+                ClinicalObjectKind.FINDING,
+                (accession, finding.finding_number),
+            ),
+        ]
+        if resolved_procedure is not None:
+            procedure_identity = resolved_procedure.identity
+            targets.append(
+                ClinicalObjectReference(
+                    ClinicalObjectKind.PROCEDURE,
+                    (
+                        procedure_identity.patient_id,
+                        procedure_identity.performed_date,
+                        procedure_identity.procedure_type,
+                        procedure_identity.laterality.value,
+                    ),
+                )
+            )
+        pathology_attribution_links.extend(
+            _pathology_attribution_links(
+                observations=row_observations,
+                diagnosis=row_diagnosis,
+                targets=tuple(targets),
+                locator=locator,
+            )
+        )
 
     ordered_patients = tuple(patients.values())
     ordered_exams = tuple(exams.values())
@@ -373,7 +466,10 @@ def build_clinical_tables(
         procedures=tuple(procedure_registry.values()),
         finding_procedure_links=tuple(finding_procedure_links),
         unresolved_procedure_occurrences=tuple(unresolved_procedure_occurrences),
-        unresolved_occurrences=tuple(unresolved_occurrences),
+        pathology_observations=tuple(pathology_observations),
+        pathology_diagnoses=tuple(pathology_diagnoses),
+        pathology_attribution_links=tuple(pathology_attribution_links),
+        unresolved_occurrences=tuple(unresolved_occurrences.values()),
         build_issues=tuple(build_issues),
     )
 
@@ -516,7 +612,6 @@ def _procedure_from_row(
     locator: SourceLocator,
     registry: dict[ProcedureIdentity, Procedure],
     policy: BuildPolicy,
-    pathology_validation: Literal["strict", "audit"],
 ) -> Tuple[
     Optional[Procedure],
     Optional[FindingProcedureLink],
@@ -587,9 +682,6 @@ def _procedure_from_row(
     )
     procedure = registry.setdefault(identity, Procedure(identity=identity))
     procedure.add_source_occurrence(occurrence)
-    pathology = _pathology_from_row(row, columns, pathology_validation)
-    if pathology is not None:
-        procedure.add_pathology_event(pathology)
     return (
         procedure,
         FindingProcedureLink(
@@ -606,18 +698,28 @@ def _procedure_from_row(
 def _pathology_from_row(
     row: Row,
     columns: _ColumnAliases,
-    validation_mode: Literal["strict", "audit"],
-) -> Optional[PathologyEvent]:
-    pathology_id = _string_value(_get(row, columns.pathology_id))
+    locator: SourceLocator,
+) -> Tuple[
+    Tuple[PathologyObservation, ...],
+    Optional[PathologyDiagnosis],
+    Tuple[BuildIssue, ...],
+]:
     diagnosis = _string_value(_get(row, columns.pathology_diagnosis))
-    category = _string_value(_get(row, columns.pathology_category))
-    event_date = _string_value(_get(row, columns.pathology_date))
+    category = _string_value(_get(row, columns.pathology_result_category))
+    report_documented_date = _string_value(
+        _get(row, columns.pathology_report_date)
+    )
     malignant = _optional_bool(_get(row, columns.pathology_malignant))
-    raw_severity = _get(row, columns.pathology_category)
+    raw_severity = _get(row, columns.pathology_severity)
     if raw_severity is _MISSING or _is_blank(raw_severity):
         raw_severity = None
-    descriptors = tuple(
-        descriptor
+    observations = tuple(
+        PathologyObservation(
+            descriptor=descriptor,
+            source_slot=f"{columns.pathology_descriptor_prefix}{index}",
+            source_ordinal=index,
+            source=locator,
+        )
         for index in range(1, 11)
         if (
             descriptor := _string_value(
@@ -626,64 +728,132 @@ def _pathology_from_row(
         )
         is not None
     )
-    severity, issues = _govern_pathology_severity(raw_severity, descriptors)
-    if issues and validation_mode == "strict":
-        raise ValueError(issues[0]["message"])
+    severity, issues = _govern_pathology_severity(
+        raw_severity,
+        observations,
+        locator,
+    )
     if not any(
         (
-            pathology_id,
             diagnosis,
-            event_date,
+            category,
+            report_documented_date,
             malignant is not None,
             raw_severity is not None,
-            descriptors,
+            observations,
         )
     ):
-        return None
-    return PathologyEvent(
-        pathology_id=pathology_id,
+        return (), None, ()
+    row_diagnosis = PathologyDiagnosis(
+        source=locator,
         diagnosis=diagnosis,
         result_category=category,
-        event_date=event_date,
         malignant=malignant,
         severity=severity,
         raw_severity=raw_severity,
-        descriptors=descriptors,
+        report_documented_date=report_documented_date,
         validation_issues=issues,
-        raw_source_fields=dict(row),
     )
+    return observations, row_diagnosis, issues
 
 
 def _govern_pathology_severity(
     raw_severity: Any,
-    descriptors: Tuple[str, ...],
-) -> Tuple[Optional[PathologySeverity], List[Dict[str, Any]]]:
-    issues: List[Dict[str, Any]] = []
+    observations: Tuple[PathologyObservation, ...],
+    locator: SourceLocator,
+) -> Tuple[Optional[PathologySeverity], Tuple[BuildIssue, ...]]:
+    issues = []
     if raw_severity is None:
-        if descriptors:
+        if observations:
             issues.append(
-                {
-                    "code": "descriptors_without_severity",
-                    "message": "Pathology descriptors require a populated severity",
-                    "raw_severity": None,
-                }
+                BuildIssue(
+                    code="descriptors_without_severity",
+                    message="Pathology descriptors require a populated severity.",
+                    severity=IssueSeverity.ERROR,
+                    source=locator,
+                    context={"raw_severity": None},
+                )
             )
-        return None, issues
+        return None, tuple(issues)
     try:
+        if isinstance(raw_severity, bool):
+            raise ValueError
         numeric = int(raw_severity)
         if float(raw_severity) != numeric:
             raise ValueError
         severity = PathologySeverity(numeric)
     except (TypeError, ValueError):
         issues.append(
-            {
-                "code": "invalid_pathology_severity",
-                "message": f"Pathology severity must be an integer from 0 through 5, got {raw_severity!r}",
-                "raw_severity": raw_severity,
-            }
+            BuildIssue(
+                code="invalid_pathology_severity",
+                message=(
+                    "Pathology severity must be an integer from 0 through 5, "
+                    f"got {raw_severity!r}."
+                ),
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={"raw_severity": raw_severity},
+            )
         )
-        return None, issues
-    return severity, issues
+        return None, tuple(issues)
+    return severity, tuple(issues)
+
+
+def _retain_unresolved_occurrence(
+    occurrences: dict[SourceLocator, SourceOccurrence],
+    occurrence: SourceOccurrence,
+) -> None:
+    """Retain one unresolved occurrence per physical source locator."""
+
+    existing = occurrences.get(occurrence.locator)
+    if existing is None:
+        occurrences[occurrence.locator] = occurrence
+        return
+    if existing.raw_values != occurrence.raw_values:
+        raise ValueError("One source locator cannot represent different raw rows")
+    additional_issues = tuple(
+        issue for issue in occurrence.issues if issue not in existing.issues
+    )
+    occurrences[occurrence.locator] = SourceOccurrence(
+        locator=existing.locator,
+        raw_values=existing.raw_values,
+        resolution_state=ResolutionState.UNRESOLVED,
+        issues=existing.issues + additional_issues,
+    )
+
+
+def _pathology_attribution_links(
+    *,
+    observations: Tuple[PathologyObservation, ...],
+    diagnosis: Optional[PathologyDiagnosis],
+    targets: Tuple[ClinicalObjectReference, ...],
+    locator: SourceLocator,
+) -> Tuple[PathologyAttributionLink, ...]:
+    references = [
+        PathologyReference(
+            kind=PathologyRecordKind.OBSERVATION,
+            source=observation.source,
+            source_slot=observation.source_slot,
+        )
+        for observation in observations
+    ]
+    if diagnosis is not None:
+        references.append(
+            PathologyReference(
+                kind=PathologyRecordKind.DIAGNOSIS,
+                source=diagnosis.source,
+            )
+        )
+    return tuple(
+        PathologyAttributionLink(
+            pathology=reference,
+            target=target,
+            status=AttributionStatus.SOURCE_COLOCATED,
+            source=locator,
+        )
+        for reference in references
+        for target in targets
+    )
 
 
 def _rois_from_row(

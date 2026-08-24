@@ -1,9 +1,9 @@
-"""Resolved procedures, unresolved occurrences, and legacy pathology events."""
+"""Resolved procedures and unresolved source occurrences."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, is_dataclass
-from enum import Enum, IntEnum
+from enum import Enum
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from embed_toolkit.core.primitives import Laterality
@@ -22,17 +22,6 @@ def _to_plain(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_to_plain(item) for item in value]
     return value
-
-
-class PathologySeverity(IntEnum):
-    """Governed EMBED pathology severities without inferred clinical labels."""
-
-    SEVERITY_0 = 0
-    SEVERITY_1 = 1
-    SEVERITY_2 = 2
-    SEVERITY_3 = 3
-    SEVERITY_4 = 4
-    SEVERITY_5 = 5
 
 
 @dataclass(frozen=True)
@@ -127,51 +116,11 @@ class UnresolvedProcedureOccurrence:
 
 
 @dataclass
-class PathologyEvent:
-    """Pathology information linked through a clinical procedure."""
-
-    pathology_id: Optional[str] = None
-    diagnosis: Optional[str] = None
-    result_category: Optional[str] = None
-    event_date: Optional[str] = None
-    malignant: Optional[bool] = None
-    severity: Optional[PathologySeverity] = None
-    raw_severity: Any = None
-    descriptors: Tuple[str, ...] = ()
-    validation_issues: List[Dict[str, Any]] = field(default_factory=list)
-    raw_source_fields: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.severity is not None:
-            self.severity = PathologySeverity(self.severity)
-        self.descriptors = tuple(str(value) for value in self.descriptors)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return _to_plain(self)
-
-    @property
-    def evidence_identity(self) -> Tuple[Any, ...]:
-        if self.pathology_id is not None:
-            return ("pathology_id", self.pathology_id)
-        return (
-            "source_values",
-            self.diagnosis,
-            self.result_category,
-            self.event_date,
-            self.malignant,
-            self.raw_severity,
-            self.descriptors,
-        )
-
-
-@dataclass
 class Procedure:
     """One resolved procedure shared independently of finding attribution."""
 
     identity: ProcedureIdentity
     source_occurrences: List[SourceOccurrence] = field(default_factory=list)
-    pathology_events: List[PathologyEvent] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -197,21 +146,11 @@ class Procedure:
             self.source_occurrences.append(occurrence)
         return occurrence
 
-    def add_pathology_event(self, event: PathologyEvent) -> PathologyEvent:
-        """Attach pathology to this procedure and return it for chaining."""
-
-        for existing in self.pathology_events:
-            if existing.evidence_identity == event.evidence_identity:
-                return existing
-        self.pathology_events.append(event)
-        return event
-
     def to_dict(self) -> Dict[str, Any]:
         return {
             "identity": self.identity.to_dict(),
             "source_occurrences": [
                 occurrence.to_dict() for occurrence in self.source_occurrences
             ],
-            "pathology_events": [event.to_dict() for event in self.pathology_events],
             "metadata": _to_plain(self.metadata),
         }

@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Any, Dict, Optional, Tuple
 
 from embed_toolkit.clinical.associations import (
     AttributionStatus,
     ClinicalObjectReference,
 )
-from embed_toolkit.clinical.procedures import PathologySeverity
 from embed_toolkit.core.provenance import BuildIssue, SourceLocator
+
+
+class PathologySeverity(IntEnum):
+    """Governed EMBED pathology severities without inferred clinical labels."""
+
+    SEVERITY_0 = 0
+    SEVERITY_1 = 1
+    SEVERITY_2 = 2
+    SEVERITY_3 = 3
+    SEVERITY_4 = 4
+    SEVERITY_5 = 5
 
 
 class PathologyRecordKind(str, Enum):
@@ -78,7 +88,7 @@ class PathologyDiagnosis:
             self.raw_severity,
             self.report_documented_date,
         )
-        if all(value is None for value in represented_values):
+        if all(value is None for value in represented_values) and not self.validation_issues:
             raise ValueError("PathologyDiagnosis requires represented diagnosis evidence")
 
     def to_dict(self) -> Dict[str, Any]:

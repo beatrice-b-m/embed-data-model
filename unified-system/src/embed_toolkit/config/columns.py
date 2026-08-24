@@ -55,6 +55,7 @@ class EmbedColumnConfig:
     procedure_date: str = DEFAULT_EMBED_COLUMN_NAMES["procedure_date"]
     procedure_type: str = DEFAULT_EMBED_COLUMN_NAMES["procedure_type"]
     pathology_severity: str = DEFAULT_EMBED_COLUMN_NAMES["pathology_severity"]
+    pathology_report_date: str = DEFAULT_EMBED_COLUMN_NAMES["pathology_report_date"]
     pathology_diagnosis_prefix: str = DEFAULT_EMBED_COLUMN_NAMES[
         "pathology_diagnosis_prefix"
     ]

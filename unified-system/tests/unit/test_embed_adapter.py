@@ -8,8 +8,8 @@ from embed_toolkit.adapters.embed import (
     join_findings_to_images,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig
-from embed_toolkit.clinical.procedures import PathologySeverity
-from embed_toolkit.core.build_policy import BuildMode, BuildPolicy
+from embed_toolkit.clinical.pathology import PathologySeverity
+from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 
 
@@ -62,16 +62,12 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
         "BIO-1",
         "LUMP-1",
     ]
-    assert [
-        event.diagnosis
-        for procedure in tables.procedures
-        for event in procedure.pathology_events
-    ] == [
+    assert [diagnosis.diagnosis for diagnosis in tables.pathology_diagnoses] == [
         "fibroadenoma",
         "dcis",
     ]
-    assert tables.procedures[0].pathology_events[0].malignant is False
-    assert tables.procedures[1].pathology_events[0].malignant is True
+    assert tables.pathology_diagnoses[0].malignant is False
+    assert tables.pathology_diagnoses[1].malignant is True
     assert len(tables.finding_procedure_links) == 2
     assert tables.breast_sides[0].laterality is Laterality.LEFT
     assert tables.breast_sides[0].findings == [finding]
@@ -161,7 +157,7 @@ def test_procedure_laterality_is_independent_and_null_remains_unknown() -> None:
     assert tables.unresolved_procedure_occurrences[0].laterality is Laterality.UNKNOWN
 
 
-def test_complete_procedures_are_patient_deduplicated_without_duplicate_pathology() -> None:
+def test_complete_procedures_are_interned_while_pathology_remains_row_grain() -> None:
     base = {
         "empi_anon": "P1",
         "acc_anon": "ACC-1",
@@ -182,8 +178,8 @@ def test_complete_procedures_are_patient_deduplicated_without_duplicate_patholog
 
     procedure = tables.procedures[0]
     assert len(tables.procedures) == 1
-    assert len(procedure.pathology_events) == 1
     assert len(procedure.source_occurrences) == 3
+    assert len(tables.pathology_diagnoses) == 3
     assert [
         (link.accession_number, link.finding_number)
         for link in tables.finding_procedure_links
@@ -234,9 +230,9 @@ def test_valid_pathology_severities_use_governed_type(raw: int) -> None:
         ]
     )
 
-    event = tables.procedures[0].pathology_events[0]
-    assert event.severity is PathologySeverity(raw)
-    assert event.raw_severity == raw
+    diagnosis = tables.pathology_diagnoses[0]
+    assert diagnosis.severity is PathologySeverity(raw)
+    assert diagnosis.raw_severity == raw
 
 
 def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
@@ -252,23 +248,33 @@ def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
         "path_severity": 6,
         "path1": "KNOWN",
     }
-    audited = build_clinical_tables([invalid], pathology_validation="audit")
-    event = audited.procedures[0].pathology_events[0]
-    assert event.severity is None
-    assert event.raw_severity == 6
-    assert event.descriptors == ("KNOWN",)
-    assert event.validation_issues[0]["code"] == "invalid_pathology_severity"
+    audited = build_clinical_tables(
+        [invalid],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+    diagnosis = audited.pathology_diagnoses[0]
+    assert diagnosis.severity is None
+    assert diagnosis.raw_severity == 6
+    assert [item.descriptor for item in audited.pathology_observations] == ["KNOWN"]
+    assert diagnosis.validation_issues[0].code == "invalid_pathology_severity"
 
-    with pytest.raises(ValueError, match="0 through 5"):
-        build_clinical_tables([invalid], pathology_validation="strict")
+    with pytest.raises(BuildPolicyError, match="0 through 5"):
+        build_clinical_tables([invalid])
 
     missing = {**invalid, "path_severity": None, "path1": "UNKNOWN_TOKEN"}
-    audited_missing = build_clinical_tables([missing], pathology_validation="audit")
-    missing_event = audited_missing.procedures[0].pathology_events[0]
-    assert missing_event.descriptors == ("UNKNOWN_TOKEN",)
-    assert missing_event.validation_issues[0]["code"] == "descriptors_without_severity"
-    with pytest.raises(ValueError, match="require a populated severity"):
-        build_clinical_tables([missing], pathology_validation="strict")
+    audited_missing = build_clinical_tables(
+        [missing],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+    missing_diagnosis = audited_missing.pathology_diagnoses[0]
+    assert [item.descriptor for item in audited_missing.pathology_observations] == [
+        "UNKNOWN_TOKEN"
+    ]
+    assert missing_diagnosis.validation_issues[0].code == (
+        "descriptors_without_severity"
+    )
+    with pytest.raises(BuildPolicyError, match="require a populated severity"):
+        build_clinical_tables([missing])
 
 
 def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> None:
@@ -293,7 +299,7 @@ def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> 
         columns=columns,
     )
 
-    assert tables.procedures[0].pathology_events[0].descriptors == (
+    assert tuple(item.descriptor for item in tables.pathology_observations) == (
         "A",
         "A",
         "UNMAPPED",
@@ -317,7 +323,8 @@ def test_null_pathology_without_descriptors_is_unattached() -> None:
         ]
     )
 
-    assert tables.procedures[0].pathology_events == []
+    assert tables.pathology_observations == ()
+    assert tables.pathology_diagnoses == ()
 
 
 def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> None:
