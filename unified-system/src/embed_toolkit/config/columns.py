@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, fields, replace
-from typing import Any, Mapping, Tuple
+from typing import Mapping, Tuple
 
 from embed_toolkit.config.defaults import (
     DEFAULT_EMBED_COLUMN_NAMES,

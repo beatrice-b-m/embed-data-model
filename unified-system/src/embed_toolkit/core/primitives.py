@@ -6,7 +6,7 @@ import ast
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Optional, Tuple, Union
+from typing import Any, Iterable, Tuple, Union
 
 
 class CoercibleEnum(Enum):
@@ -237,4 +237,3 @@ class FovHorizontalFlip(CoercibleEnum):
             "0": cls.NO,
         }
         return aliases.get(_normalized_text(value), cls.UNKNOWN)
-
