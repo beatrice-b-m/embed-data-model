@@ -19,6 +19,7 @@ def test_mammogram_image_coerces_identity_and_shape() -> None:
         height=2048,
         width=1536,
         frame_count=72,
+        patient_id="P-1",
         study_instance_uid="study",
         series_instance_uid="series",
         sop_instance_uid="sop",
@@ -30,6 +31,7 @@ def test_mammogram_image_coerces_identity_and_shape() -> None:
     assert image.is_dbt
     assert image.image_shape == (2048, 1536)
     assert image.identity == ("img-1", "sop", "series", "study")
+    assert image.to_dict()["patient_id"] == "P-1"
 
 
 def test_landmarks_are_image_owned_and_preserve_provenance() -> None:

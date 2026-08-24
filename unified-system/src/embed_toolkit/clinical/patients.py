@@ -36,4 +36,10 @@ class Patient:
         return exam
 
     def to_dict(self) -> Dict[str, object]:
-        return _to_plain(self)
+        return {
+            "patient_id": self.patient_id,
+            "sex": self.sex,
+            "birth_year": self.birth_year,
+            "exams": [exam.to_dict() for exam in self.exams],
+            "metadata": _to_plain(self.metadata),
+        }

@@ -331,6 +331,7 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
     rows = [
         {
             "image_id": "IMG-L-CC",
+            "empi_anon": "P1",
             "acc_anon": "ACC-1",
             "ImageLateralityFinal": "L",
             "ViewPosition": "L CC",
@@ -366,6 +367,7 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
     assert len(tables.images) == 2
     left_image, right_image = tables.images
     assert left_image.laterality is Laterality.LEFT
+    assert left_image.patient_id == "P1"
     assert left_image.view_position is ViewPosition.CC
     assert left_image.modality is ImageModality.FFDM
     assert left_image.patient_orientation is not None

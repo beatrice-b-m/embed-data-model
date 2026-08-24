@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 import pytest
 
@@ -67,7 +66,7 @@ def test_negative_nine_remains_a_governed_no_finding_sentinel() -> None:
 def test_breast_side_contains_findings_without_attribution_edges() -> None:
     finding = Finding("ACC-2", Laterality.RIGHT, "3")
 
-    side = BreastSide(Laterality.RIGHT)
+    side = BreastSide("ACC-2", Laterality.RIGHT)
     side.add_finding(finding)
 
     assert side.findings == [finding]
@@ -76,7 +75,7 @@ def test_breast_side_contains_findings_without_attribution_edges() -> None:
 
 
 def test_breast_side_rejects_wrong_side_finding() -> None:
-    side = BreastSide(Laterality.LEFT)
+    side = BreastSide("ACC-3", Laterality.LEFT)
 
     with pytest.raises(ValueError):
         side.add_finding(Finding("ACC-3", Laterality.RIGHT, 1))
@@ -168,12 +167,21 @@ def test_patient_and_cohort_aggregate_serialization_friendly_dataclasses() -> No
     cohort = Cohort("training")
     cohort.add_patient(patient)
 
-    serialized = asdict(cohort)
     plain = cohort.to_dict()
 
     assert cohort.exams == (exam,)
     assert cohort.findings == (finding,)
-    assert serialized["patients"][0]["exams"][0]["findings"][0]["finding_number"] == "1"
-    assert serialized["patients"][0]["exams"][0]["patient_id"] == "P1"
+    assert plain["patients"][0]["exams"][0]["findings"][0]["finding_number"] == "1"
+    assert plain["patients"][0]["exams"][0]["patient_id"] == "P1"
     assert plain["patients"][0]["exams"][0]["findings"][0]["laterality"] == "L"
+    assert plain["patients"][0]["exams"][0]["breast_sides"] == [
+        {
+            "accession_number": "ACC-7",
+            "laterality": "L",
+            "finding_references": [
+                {"accession_number": "ACC-7", "finding_number": "1"}
+            ],
+            "image_references": [],
+        }
+    ]
     json.dumps(plain)

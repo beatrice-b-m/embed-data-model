@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from embed_toolkit.core.primitives import (
     ImageModality,
@@ -26,6 +26,7 @@ class MammogramImage:
     width: Optional[int] = None
     frame_count: Optional[int] = None
     accession_number: Optional[str] = None
+    patient_id: Optional[str] = None
     study_instance_uid: Optional[str] = None
     series_instance_uid: Optional[str] = None
     sop_instance_uid: Optional[str] = None
@@ -110,3 +111,39 @@ class MammogramImage:
             if posterior_nipple_line is not None
             else None,
         )
+
+    def to_dict(self) -> Dict[str, object]:
+        """Return a JSON-ready non-recursive image representation."""
+
+        return {
+            "image_id": self.image_id,
+            "patient_id": self.patient_id,
+            "accession_number": self.accession_number,
+            "laterality": self.laterality.value,
+            "view_position": self.view_position.value,
+            "modality": self.modality.value,
+            "height": self.height,
+            "width": self.width,
+            "frame_count": self.frame_count,
+            "study_instance_uid": self.study_instance_uid,
+            "series_instance_uid": self.series_instance_uid,
+            "sop_instance_uid": self.sop_instance_uid,
+            "patient_orientation": (
+                list(self.patient_orientation.as_tuple())
+                if self.patient_orientation is not None
+                else None
+            ),
+            "coordinate_frame_id": self.coordinate_frame_id,
+            "landmarks": [
+                {
+                    "y": landmark.y,
+                    "x": landmark.x,
+                    "landmark_type": landmark.landmark_type.value,
+                    "image_id": landmark.image_id,
+                    "source": landmark.source,
+                    "confidence": landmark.confidence,
+                    "provenance": landmark.provenance,
+                }
+                for landmark in self.landmarks
+            ],
+        }

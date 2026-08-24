@@ -63,13 +63,14 @@ def test_pathology_links_only_to_resolved_colocated_grains() -> None:
 
     assert len(tables.pathology_observations) == 1
     assert len(tables.pathology_diagnoses) == 1
-    assert len(tables.pathology_attribution_links) == 8
+    assert len(tables.pathology_attribution_links) == 10
     target_kinds = [
         link.target.kind for link in tables.pathology_attribution_links
     ]
     assert target_kinds.count(ClinicalObjectKind.PATIENT) == 2
     assert target_kinds.count(ClinicalObjectKind.EXAM) == 2
     assert target_kinds.count(ClinicalObjectKind.FINDING) == 2
+    assert target_kinds.count(ClinicalObjectKind.BREAST_SIDE) == 2
     assert target_kinds.count(ClinicalObjectKind.PROCEDURE) == 2
 
 
@@ -95,6 +96,7 @@ def test_incomplete_procedure_does_not_block_pathology_or_gain_attribution() -> 
         ClinicalObjectKind.PATIENT,
         ClinicalObjectKind.EXAM,
         ClinicalObjectKind.FINDING,
+        ClinicalObjectKind.BREAST_SIDE,
     }
 
 

@@ -430,6 +430,13 @@ def build_clinical_tables(
                 (accession, finding.finding_number),
             ),
         ]
+        targets.extend(
+            ClinicalObjectReference(
+                ClinicalObjectKind.BREAST_SIDE,
+                (accession, laterality.value),
+            )
+            for laterality in Laterality.coerce(finding.laterality).expand()
+        )
         if resolved_procedure is not None:
             procedure_identity = resolved_procedure.identity
             targets.append(
@@ -507,6 +514,7 @@ def build_image_tables(
                     if modality is ImageModality.DBT
                     else None,
                     accession_number=_string_value(_get(row, column_aliases.accession)),
+                    patient_id=_string_value(_get(row, column_aliases.patient_id)),
                     study_instance_uid=_string_value(
                         _get(row, column_aliases.study_uid)
                     ),

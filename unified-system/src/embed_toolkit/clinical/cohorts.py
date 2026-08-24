@@ -36,4 +36,9 @@ class Cohort:
         return patient
 
     def to_dict(self) -> Dict[str, object]:
-        return _to_plain(self)
+        return {
+            "cohort_id": self.cohort_id,
+            "description": self.description,
+            "patients": [patient.to_dict() for patient in self.patients],
+            "metadata": _to_plain(self.metadata),
+        }
