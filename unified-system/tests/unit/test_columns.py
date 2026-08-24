@@ -11,13 +11,15 @@ def test_default_embed_columns_match_documented_embed_names() -> None:
 
     assert config.patient_id == "empi_anon"
     assert config.accession == "acc_anon"
+    assert config.sex == "GENDER_DESC"
+    assert config.exam_description == "desc"
     assert config.image_path == "anon_dicom_path"
     assert config.image_laterality == "ImageLateralityFinal"
     assert config.roi_coords == "ROI_coords"
     assert config.nipple_x == "nipple_x"
     assert config.nipple_y == "nipple_y"
     assert config.finding_number == "numfind"
-    assert config.finding_recommendation == "recomm"
+    assert config.finding_recommendation == "recc"
     assert config.pathology_report_date == "pdate_anon"
     assert config.to_dict() == DEFAULT_EMBED_COLUMN_NAMES
 
@@ -79,7 +81,7 @@ def test_with_overrides_preserves_original_config() -> None:
     assert config.finding_distance == "distance"
     assert custom.image_view == "view"
     assert custom.finding_distance == "dist_cm"
-    assert custom.finding_columns()[-3:] == ("dist_cm", "asses", "recomm")
+    assert custom.finding_columns()[-3:] == ("dist_cm", "asses", "recc")
 
 
 def test_mapping_round_trip_is_serialization_friendly() -> None:

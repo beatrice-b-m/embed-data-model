@@ -9,6 +9,7 @@ from embed_toolkit.config.profile_contracts import (
     ProfileContract,
     profile_source_field_candidates,
 )
+from embed_toolkit.core.provenance import AvailabilityState
 
 
 def contract_for_columns(
@@ -19,6 +20,24 @@ def contract_for_columns(
     """Bind a copied test contract to one exact configured physical surface."""
 
     candidates = profile_source_field_candidates(columns, base.kind)
+    defaults = EmbedColumnConfig.default()
+
+    def rebound(declaration):
+        field = declaration.governed_field
+        no_source_state = declaration.state in {
+            AvailabilityState.UNAVAILABLE,
+            AvailabilityState.UNMODELED,
+            AvailabilityState.UNSUPPORTED,
+        }
+        explicitly_overridden = getattr(columns, field) != getattr(defaults, field)
+        if no_source_state and not explicitly_overridden:
+            return replace(declaration, source_fields=())
+        return replace(
+            declaration,
+            state=AvailabilityState.BOUND if no_source_state else declaration.state,
+            source_fields=candidates[field],
+        )
+
     return replace(
         base,
         source_profile=source_profile,
@@ -27,10 +46,7 @@ def contract_for_columns(
             base.field_coverage,
             source_profile=source_profile,
             declarations=tuple(
-                replace(
-                    declaration,
-                    source_fields=candidates[declaration.governed_field],
-                )
+                rebound(declaration)
                 for declaration in base.field_coverage.declarations
             ),
         ),

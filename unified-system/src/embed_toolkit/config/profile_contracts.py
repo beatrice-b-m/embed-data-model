@@ -575,7 +575,16 @@ def _field_coverage(
                 governed_field=governed_field,
                 state=state,
                 reason=reason,
-                source_fields=source_field_candidates[governed_field],
+                source_fields=(
+                    ()
+                    if state
+                    in {
+                        AvailabilityState.UNAVAILABLE,
+                        AvailabilityState.UNMODELED,
+                        AvailabilityState.UNSUPPORTED,
+                    }
+                    else source_field_candidates[governed_field]
+                ),
             )
         )
     return FieldCoverageManifest(
@@ -593,7 +602,10 @@ INTERNAL_V2_CONTRACT = ProfileContract(
     field_coverage=_field_coverage(
         INTERNAL_V2_PROFILE,
         _CLINICAL_FIELDS,
-        {"cohort_id": AvailabilityState.RAW_ONLY},
+        {
+            "birth_year": AvailabilityState.UNAVAILABLE,
+            "cohort_id": AvailabilityState.RAW_ONLY,
+        },
         profile_source_field_candidates(
             default_embed_columns(),
             ProfileKind.CLINICAL,

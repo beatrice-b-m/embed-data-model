@@ -2,12 +2,15 @@
 
 DEFAULT_EMBED_COLUMN_NAMES = {
     "patient_id": "empi_anon",
+    # Internal V2 exposes an anonymized birth date, not a governed birth-year
+    # occurrence. Keep this configurable placeholder for custom profiles while
+    # the built-in Internal V2 contract marks it unavailable.
     "birth_year": "birth_year",
-    "sex": "sex",
+    "sex": "GENDER_DESC",
     "cohort_id": "cohort_num",
     "accession": "acc_anon",
     "study_date": "studydate_anon",
-    "exam_description": "exam_description",
+    "exam_description": "desc",
     "image_path": "anon_dicom_path",
     "image_id": "PLACEHOLDER_IMAGE_ID",
     "image_laterality": "ImageLateralityFinal",
@@ -33,7 +36,7 @@ DEFAULT_EMBED_COLUMN_NAMES = {
     "finding_depth": "depth",
     "finding_distance": "distance",
     "finding_assessment": "asses",
-    "finding_recommendation": "recomm",
+    "finding_recommendation": "recc",
     "procedure_laterality": "bside",
     "procedure_date": "procdate_anon",
     "procedure_type": "type",

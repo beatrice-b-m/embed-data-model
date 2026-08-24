@@ -87,6 +87,31 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
     assert tables.breast_sides[0].findings == [finding]
 
 
+def test_internal_v2_defaults_bind_mcp_profile_columns() -> None:
+    tables = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": 1,
+                "side": "L",
+                "GENDER_DESC": "Female",
+                "studydate_anon": "2020-01-01",
+                "desc": "Screening mammography",
+                "asses": "N",
+                "recc": "R1",
+            }
+        ],
+        source_scope="internal-v2-release",
+    )
+
+    assert tables.exams[0].description == "Screening mammography"
+    assert tables.interpretations[0].recommendation == "R1"
+    patient_sex = tables.patients[0].attribute_observations[0]
+    assert patient_sex.value == "Female"
+    assert patient_sex.source.source_profile == "internal-v2"
+
+
 def test_clinical_builder_expands_bilateral_findings_to_breast_sides() -> None:
     tables = build_clinical_tables(
         [

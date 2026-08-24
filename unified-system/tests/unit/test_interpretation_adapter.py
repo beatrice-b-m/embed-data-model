@@ -42,7 +42,7 @@ def test_interpretation_construction_distinguishes_absent_and_bound_null() -> No
     tables = build_clinical_tables(
         [
             row("assessment-null", asses=None),
-            row("recommendation-blank", recomm=""),
+            row("recommendation-blank", recc=""),
             row("absent"),
         ],
         source_scope="clinical-materialization",
@@ -88,10 +88,10 @@ def test_interpretation_aliases_are_independent() -> None:
 def test_repeated_interpretation_rows_fill_values_and_retain_unique_sources() -> None:
     tables = build_clinical_tables(
         [
-            row("1", recomm="follow-up"),
+            row("1", recc="follow-up"),
             row("1", asses=None),
             row("1", asses="4"),
-            row("1", asses="4", recomm="follow-up"),
+            row("1", asses="4", recc="follow-up"),
         ],
         source_scope="clinical-materialization",
     )
@@ -109,8 +109,8 @@ def test_repeated_interpretation_rows_fill_values_and_retain_unique_sources() ->
 def test_audit_retains_first_conflicting_interpretation_values() -> None:
     tables = build_clinical_tables(
         [
-            row("1", asses="4", recomm="follow-up"),
-            row("1", asses="5", recomm="biopsy"),
+            row("1", asses="4", recc="follow-up"),
+            row("1", asses="5", recc="biopsy"),
         ],
         build_policy=BuildPolicy(BuildMode.AUDIT),
         source_scope="clinical-materialization",
@@ -134,7 +134,7 @@ def test_audit_retains_first_conflicting_interpretation_values() -> None:
     ("first", "second", "attribute"),
     [
         ({"asses": "4"}, {"asses": "5"}, "assessment"),
-        ({"recomm": "follow-up"}, {"recomm": "biopsy"}, "recommendation"),
+        ({"recc": "follow-up"}, {"recc": "biopsy"}, "recommendation"),
     ],
 )
 def test_strict_rejects_conflicting_interpretation_values(
@@ -155,7 +155,7 @@ def test_strict_rejects_conflicting_interpretation_values(
 
 def test_finding_and_aggregate_serialization_use_interpretation_reference() -> None:
     tables = build_clinical_tables(
-        [row("1", asses="4", recomm="follow-up")],
+        [row("1", asses="4", recc="follow-up")],
         source_scope="clinical-materialization",
     )
 

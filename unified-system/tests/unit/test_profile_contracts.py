@@ -161,6 +161,10 @@ def test_built_in_profiles_expose_only_evidenced_capability_boundaries() -> None
         INTERNAL_V1C_CONTRACT.field_coverage.declaration_for("nipple_x").state
         is AvailabilityState.RAW_ONLY
     )
+    assert (
+        INTERNAL_V2_CONTRACT.field_coverage.declaration_for("birth_year").state
+        is AvailabilityState.UNAVAILABLE
+    )
 
 
 def test_contract_rejects_incomplete_boundaries_and_false_source_claims() -> None:
