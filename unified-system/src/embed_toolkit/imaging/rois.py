@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+
+from embed_toolkit.core.provenance import SourceLocator
+from embed_toolkit.imaging.roi_provenance import RoiLocator, RoiSourceProvenance
 
 
 CoordinateBox = Tuple[float, float, float, float]
@@ -12,19 +15,19 @@ CoordinateBox = Tuple[float, float, float, float]
 
 @dataclass(frozen=True)
 class RegionOfInterest:
-    """Canonical image-local half-open ``[y_min, x_min, y_stop, x_stop]`` box.
+    """One scoped ROI observation on exactly one image.
 
-    The minimum edges are included and the stop edges are excluded. Source
-    coordinate conventions belong in provenance and must be normalized before
-    generic geometry, transforms, or pixel slicing use the box.
+    Geometry uses canonical half-open ``[y_min, x_min, y_stop, x_stop]``
+    edges. Identity is always the structured, release-scoped ``locator``;
+    neither ``image_id`` nor a generated string is an ROI identity.
     """
 
     coordinates: CoordinateBox
-    roi_id: Optional[str] = None
-    image_id: Optional[str] = None
-    frame_indices: Tuple[int, ...] = ()
-    frame_index: Optional[int] = None
-    source: Optional[str] = None
+    locator: RoiLocator
+    image_id: str
+    source_provenance: RoiSourceProvenance
+    sources: Tuple[SourceLocator, ...]
+    annotation_source: Optional[str] = None
     confidence: Optional[float] = None
     coordinate_frame_id: Optional[str] = None
     source_coordinates: Optional[CoordinateBox] = None
@@ -36,9 +39,11 @@ class RegionOfInterest:
         coordinates: CoordinateBox,
         **metadata: object,
     ) -> "RegionOfInterest":
-        """Normalize EMBED's inclusive maxima to canonical exclusive stops."""
+        """Normalize EMBED inclusive maxima to canonical exclusive stops."""
 
         y_min, x_min, y_max, x_max = tuple(float(value) for value in coordinates)
+        if y_max < y_min or x_max < x_min:
+            raise ValueError("EMBED ROI maxima must not precede minimum coordinates")
         return cls(
             coordinates=(y_min, x_min, y_max + 1.0, x_max + 1.0),
             source_coordinates=(y_min, x_min, y_max, x_max),
@@ -47,30 +52,63 @@ class RegionOfInterest:
         )
 
     def __post_init__(self) -> None:
+        if not isinstance(self.locator, RoiLocator):
+            raise TypeError("locator must be a RoiLocator")
+        if not isinstance(self.image_id, str) or not self.image_id.strip():
+            raise ValueError("image_id must be a non-empty string")
+        if not isinstance(self.source_provenance, RoiSourceProvenance):
+            raise TypeError("source_provenance must be a RoiSourceProvenance")
+        self.source_provenance.validate_locator(self.locator)
+
+        sources = tuple(self.sources)
+        if not sources:
+            raise ValueError("sources must contain at least one SourceLocator")
+        if any(not isinstance(source, SourceLocator) for source in sources):
+            raise TypeError("sources must contain only SourceLocator values")
+        if len(set(sources)) != len(sources):
+            raise ValueError("sources must contain unique SourceLocator values")
+        locator_source = self.locator.image_locator
+        if locator_source not in sources:
+            raise ValueError("locator image scope must occur in ROI sources")
+
         if len(self.coordinates) != 4:
             raise ValueError("ROI coordinates must contain four values")
         y_min, x_min, y_stop, x_stop = tuple(float(value) for value in self.coordinates)
+        if not all(math.isfinite(value) for value in (y_min, x_min, y_stop, x_stop)):
+            raise ValueError("ROI coordinates must be finite")
         if y_stop < y_min or x_stop < x_min:
             raise ValueError("ROI stop coordinates must be greater than min coordinates")
-        indices = tuple(int(value) for value in self.frame_indices)
-        if self.frame_index is not None:
-            legacy_index = int(self.frame_index)
-            if indices and indices != (legacy_index,):
-                raise ValueError("frame_index conflicts with canonical frame_indices")
-            indices = (legacy_index,)
-        if any(value < 0 for value in indices):
-            raise ValueError("DBT frame indices must be non-negative")
-        if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
-            raise ValueError("ROI confidence must be in [0, 1]")
+        if self.confidence is not None:
+            confidence = float(self.confidence)
+            if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+                raise ValueError("ROI confidence must be finite and in [0, 1]")
+            object.__setattr__(self, "confidence", confidence)
         object.__setattr__(self, "coordinates", (y_min, x_min, y_stop, x_stop))
-        object.__setattr__(self, "frame_indices", indices)
-        object.__setattr__(self, "frame_index", indices[0] if len(indices) == 1 else None)
+        object.__setattr__(self, "sources", sources)
         if self.source_coordinates is not None:
-            object.__setattr__(
-                self,
-                "source_coordinates",
-                tuple(float(value) for value in self.source_coordinates),
+            source_coordinates = tuple(
+                float(value) for value in self.source_coordinates
             )
+            if len(source_coordinates) != 4 or not all(
+                math.isfinite(value) for value in source_coordinates
+            ):
+                raise ValueError("source_coordinates must contain four finite values")
+            object.__setattr__(self, "source_coordinates", source_coordinates)
+
+    @property
+    def frame_indices(self) -> Tuple[int, ...]:
+        """Return governed DBT depth placement from source provenance."""
+
+        return self.source_provenance.frame_indices
+
+    def with_source(self, source: SourceLocator) -> "RegionOfInterest":
+        """Return this ROI with an additional physical evidence occurrence."""
+
+        if not isinstance(source, SourceLocator):
+            raise TypeError("source must be a SourceLocator")
+        if source in self.sources:
+            return self
+        return replace(self, sources=(*self.sources, source))
 
     @property
     def y_min(self) -> float:
@@ -82,14 +120,10 @@ class RegionOfInterest:
 
     @property
     def y_max(self) -> float:
-        """Compatibility name for the exclusive y stop edge."""
-
         return self.coordinates[2]
 
     @property
     def x_max(self) -> float:
-        """Compatibility name for the exclusive x stop edge."""
-
         return self.coordinates[3]
 
     @property
@@ -106,28 +140,7 @@ class RegionOfInterest:
 
     @property
     def centroid(self) -> Tuple[float, float]:
-        """Return the ROI center in ``(y, x)`` order."""
-
         return (self.y_min + self.y_max) / 2.0, (self.x_min + self.x_max) / 2.0
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a JSON-ready image-local ROI representation."""
-
-        return {
-            "coordinates": list(self.coordinates),
-            "roi_id": self.roi_id,
-            "image_id": self.image_id,
-            "frame_indices": list(self.frame_indices),
-            "source": self.source,
-            "confidence": self.confidence,
-            "coordinate_frame_id": self.coordinate_frame_id,
-            "source_coordinates": (
-                list(self.source_coordinates)
-                if self.source_coordinates is not None
-                else None
-            ),
-            "source_coordinate_convention": self.source_coordinate_convention,
-        }
 
     def resize(
         self,
@@ -135,12 +148,25 @@ class RegionOfInterest:
         scale_y: float,
         scale_x: float,
         image_id: Optional[str] = None,
+        locator: Optional[RoiLocator] = None,
+        source_provenance: Optional[RoiSourceProvenance] = None,
+        sources: Optional[Tuple[SourceLocator, ...]] = None,
         coordinate_frame_id: Optional[str] = None,
     ) -> "RegionOfInterest":
-        """Scale canonical box edges from the image origin."""
+        """Scale geometry, requiring governed scope for image reassignment."""
 
         if scale_y <= 0 or scale_x <= 0:
             raise ValueError("Resize scales must be positive")
+        ownership = self._resolved_ownership(
+            image_id=image_id,
+            locator=locator,
+            source_provenance=source_provenance,
+            sources=sources,
+        )
+        resolved_coordinate_frame_id = self._resolved_coordinate_frame_id(
+            image_id=ownership["image_id"],
+            coordinate_frame_id=coordinate_frame_id,
+        )
         return replace(
             self,
             coordinates=(
@@ -149,10 +175,8 @@ class RegionOfInterest:
                 self.y_max * scale_y,
                 self.x_max * scale_x,
             ),
-            image_id=self.image_id if image_id is None else image_id,
-            coordinate_frame_id=self.coordinate_frame_id
-            if coordinate_frame_id is None
-            else coordinate_frame_id,
+            coordinate_frame_id=resolved_coordinate_frame_id,
+            **ownership,
         )
 
     def realign(
@@ -163,12 +187,25 @@ class RegionOfInterest:
         scale_y: float = 1.0,
         scale_x: float = 1.0,
         image_id: Optional[str] = None,
+        locator: Optional[RoiLocator] = None,
+        source_provenance: Optional[RoiSourceProvenance] = None,
+        sources: Optional[Tuple[SourceLocator, ...]] = None,
         coordinate_frame_id: Optional[str] = None,
     ) -> "RegionOfInterest":
-        """Scale then translate canonical edges into another coordinate frame."""
+        """Scale and translate, requiring governed scope for reassignment."""
 
         if scale_y <= 0 or scale_x <= 0:
             raise ValueError("Realignment scales must be positive")
+        ownership = self._resolved_ownership(
+            image_id=image_id,
+            locator=locator,
+            source_provenance=source_provenance,
+            sources=sources,
+        )
+        resolved_coordinate_frame_id = self._resolved_coordinate_frame_id(
+            image_id=ownership["image_id"],
+            coordinate_frame_id=coordinate_frame_id,
+        )
         return replace(
             self,
             coordinates=(
@@ -177,11 +214,55 @@ class RegionOfInterest:
                 self.y_max * scale_y + offset_y,
                 self.x_max * scale_x + offset_x,
             ),
-            image_id=self.image_id if image_id is None else image_id,
-            coordinate_frame_id=self.coordinate_frame_id
-            if coordinate_frame_id is None
-            else coordinate_frame_id,
+            coordinate_frame_id=resolved_coordinate_frame_id,
+            **ownership,
         )
+
+    def _resolved_ownership(
+        self,
+        *,
+        image_id: Optional[str],
+        locator: Optional[RoiLocator],
+        source_provenance: Optional[RoiSourceProvenance],
+        sources: Optional[Tuple[SourceLocator, ...]],
+    ) -> Dict[str, object]:
+        resolved_image_id = self.image_id if image_id is None else image_id
+        changes_image = resolved_image_id != self.image_id
+        supplied_scope = any(
+            value is not None for value in (locator, source_provenance, sources)
+        )
+        if changes_image and not all(
+            value is not None for value in (locator, source_provenance, sources)
+        ):
+            raise ValueError(
+                "Changing ROI image ownership requires locator, provenance, and sources"
+            )
+        if not changes_image and supplied_scope:
+            raise ValueError(
+                "Governed ownership replacements require a different image_id"
+            )
+        return {
+            "image_id": resolved_image_id,
+            "locator": self.locator if locator is None else locator,
+            "source_provenance": (
+                self.source_provenance
+                if source_provenance is None
+                else source_provenance
+            ),
+            "sources": self.sources if sources is None else sources,
+        }
+
+    def _resolved_coordinate_frame_id(
+        self,
+        *,
+        image_id: object,
+        coordinate_frame_id: Optional[str],
+    ) -> Optional[str]:
+        if coordinate_frame_id is not None:
+            return coordinate_frame_id
+        if image_id != self.image_id:
+            return None
+        return self.coordinate_frame_id
 
     def intersection_area(self, other: "RegionOfInterest") -> float:
         y_overlap = max(0.0, min(self.y_max, other.y_max) - max(self.y_min, other.y_min))
@@ -191,13 +272,9 @@ class RegionOfInterest:
     def iou(self, other: "RegionOfInterest") -> float:
         intersection = self.intersection_area(other)
         union = self.area + other.area - intersection
-        if union == 0.0:
-            return 0.0
-        return intersection / union
+        return 0.0 if union == 0.0 else intersection / union
 
     def containment_ratio(self, container: "RegionOfInterest") -> float:
-        """Return the fraction of this ROI area contained by ``container``."""
-
         if self.area == 0.0:
             return 0.0
         return self.intersection_area(container) / self.area
@@ -206,3 +283,23 @@ class RegionOfInterest:
         self_y, self_x = self.centroid
         other_y, other_x = other.centroid
         return math.hypot(self_y - other_y, self_x - other_x)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a flat JSON-ready ROI representation."""
+
+        return {
+            "locator": self.locator.to_dict(),
+            "image_id": self.image_id,
+            "source_provenance": self.source_provenance.to_dict(),
+            "source_references": [source.to_dict() for source in self.sources],
+            "coordinates": list(self.coordinates),
+            "annotation_source": self.annotation_source,
+            "confidence": self.confidence,
+            "coordinate_frame_id": self.coordinate_frame_id,
+            "source_coordinates": (
+                list(self.source_coordinates)
+                if self.source_coordinates is not None
+                else None
+            ),
+            "source_coordinate_convention": self.source_coordinate_convention,
+        }

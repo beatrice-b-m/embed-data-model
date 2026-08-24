@@ -11,6 +11,10 @@ from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPositio
 from embed_toolkit.core.provenance import ResolutionState, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.landmarks import ImageLandmark, LandmarkType
+from embed_toolkit.imaging.roi_provenance import (
+    RoiDepthFrameProvenance,
+    RoiSourceProvenance,
+)
 
 
 def row(image_id: object = "IMG-1", **values: object) -> dict[str, object]:
@@ -302,7 +306,7 @@ def test_modality_conflict_cannot_fill_dbt_frame_count_into_ffdm_image() -> None
     assert tables.source_occurrences[1].resolution_state is ResolutionState.UNRESOLVED
 
 
-def test_equal_duplicate_rows_continue_current_roi_projection() -> None:
+def test_equal_duplicate_roi_locator_deduplicates_and_retains_row_evidence() -> None:
     repeated = row(ROI_coords=[1, 2, 3, 4])
     tables = build_image_tables(
         [repeated, repeated],
@@ -311,7 +315,8 @@ def test_equal_duplicate_rows_continue_current_roi_projection() -> None:
 
     assert len(tables.images) == 1
     assert len(tables.images[0].sources) == 2
-    assert len(tables.rois) == 2
+    assert len(tables.rois) == 1
+    assert tables.rois[0].sources == tuple(tables.images[0].sources)
 
 
 def test_flat_serialization_retains_raw_row_once_and_uses_source_references() -> None:
@@ -336,6 +341,67 @@ def test_flat_serialization_retains_raw_row_once_and_uses_source_references() ->
     )
     assert "raw_values" not in serialized["images"][0]
     assert serialized["rois"][0]["image_id"] == "IMG-1"
+    assert serialized["rois"][0]["source_references"] == [
+        tables.source_occurrences[0].locator.to_dict()
+    ]
+
+
+def test_image_tables_enforce_roi_containment_and_canonical_locator_scope() -> None:
+    tables = build_image_tables(
+        [row(ROI_coords=[1, 2, 3, 4])],
+        source_scope="image-materialization",
+    )
+    roi = tables.rois[0]
+
+    with pytest.raises(ValueError, match="resolve to a table image"):
+        replace(tables, rois=(replace(roi, image_id="missing-image"),))
+
+    combined = build_image_tables(
+        [
+            row(ROI_coords=[1, 2, 3, 4]),
+            row("IMG-2", ROI_coords=[1, 2, 3, 4]),
+        ],
+        source_scope="image-materialization",
+    )
+    first, other = combined.rois
+    mismatched_scope = replace(
+        first,
+        locator=other.locator,
+        sources=other.sources,
+    )
+    with pytest.raises(ValueError, match="canonical_source"):
+        replace(combined, rois=(mismatched_scope,))
+
+
+def test_image_tables_reject_roi_modality_and_frame_bound_mismatches() -> None:
+    ffdm = build_image_tables(
+        [row(ROI_coords=[1, 2, 3, 4])],
+        source_scope="image-materialization",
+    )
+    ffdm_roi = ffdm.rois[0]
+    dbt_provenance = RoiSourceProvenance(
+        modality=ImageModality.DBT,
+        source_count=ffdm_roi.source_provenance.source_count,
+        depth_frame_provenance=RoiDepthFrameProvenance.UNAVAILABLE_DBT,
+    )
+    with pytest.raises(ValueError, match="modality"):
+        replace(ffdm, rois=(replace(ffdm_roi, source_provenance=dbt_provenance),))
+
+    dbt = build_image_tables(
+        [
+            row(
+                FinalImageType="DBT",
+                NumberOfFrames=5,
+                ROI_coords=[1, 2, 3, 4],
+                ROI_frames=[2],
+            )
+        ],
+        source_scope="dbt-materialization",
+    )
+    dbt_roi = dbt.rois[0]
+    out_of_range = replace(dbt_roi.source_provenance, frame_indices=(5,))
+    with pytest.raises(ValueError, match="frame_count"):
+        replace(dbt, rois=(replace(dbt_roi, source_provenance=out_of_range),))
 
 
 def test_image_source_contract_is_required_unique_and_copy_preserved() -> None:

@@ -194,7 +194,11 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         clinical = importlib.import_module("embed_toolkit.clinical")
         config = importlib.import_module("embed_toolkit.config")
         core = importlib.import_module("embed_toolkit.core")
+        provenance = importlib.import_module("embed_toolkit.core.provenance")
         imaging = importlib.import_module("embed_toolkit.imaging")
+        roi_provenance = importlib.import_module(
+            "embed_toolkit.imaging.roi_provenance"
+        )
         visualization = importlib.import_module("embed_toolkit.visualization")
         workflows = importlib.import_module("embed_toolkit.workflows")
 
@@ -229,7 +233,33 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert core.MassShape.LOBULATED.value == "lobulated"
     assert imaging.Alignment.reference().is_reference
     assert imaging.MammogramImage
-    assert imaging.RegionOfInterest((0, 0, 1, 1)).area == 1
+    image_source = provenance.SourceLocator(
+        scope="import-smoke",
+        scope_kind=provenance.SourceScopeKind.MATERIALIZATION,
+        source_profile="test",
+        source_table="images",
+        row_ordinal=0,
+    )
+    roi_source = roi_provenance.RoiSourceProvenance(
+        modality=core.ImageModality.FFDM,
+        source_count=roi_provenance.RoiSourceCount(
+            1,
+            roi_provenance.RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+        ),
+        depth_frame_provenance=(
+            roi_provenance.RoiDepthFrameProvenance.NOT_APPLICABLE_2D
+        ),
+    )
+    assert imaging.RegionOfInterest(
+        (0, 0, 1, 1),
+        locator=roi_provenance.RoiLocator.synthetic(
+            image_locator=image_source,
+            source_ordinal=0,
+        ),
+        image_id="IMG-1",
+        source_provenance=roi_source,
+        sources=(image_source,),
+    ).area == 1
     assert visualization.build_mammogram_render_plan
     assert workflows.FindingLocalizer
     assert workflows.FindingRoiMatcher

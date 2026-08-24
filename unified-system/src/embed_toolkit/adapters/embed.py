@@ -86,10 +86,26 @@ from embed_toolkit.core.provenance import (
     SourceScopeKind,
 )
 from embed_toolkit.imaging.images import MammogramImage
+from embed_toolkit.imaging.roi_provenance import (
+    RoiDepthFrameProvenance,
+    RoiLocator,
+    RoiSourceCount,
+    RoiSourceCountBasis,
+    RoiSourceProvenance,
+)
 from embed_toolkit.imaging.rois import RegionOfInterest
 
 
 Row = Mapping[str, Any]
+
+
+@dataclass
+class _ImageRowState:
+    raw_values: dict[str, Any]
+    locator: SourceLocator
+    image_id: Optional[str]
+    issues: list[BuildIssue]
+    roi_eligible: bool
 
 _IMAGE_INVARIANT_ATTRIBUTES = (
     "accession_number",
@@ -253,6 +269,40 @@ class EmbedImageTables:
     rois: Tuple[RegionOfInterest, ...]
     source_occurrences: Tuple[SourceOccurrence, ...]
     build_issues: Tuple[BuildIssue, ...]
+
+    def __post_init__(self) -> None:
+        for attribute in ("images", "rois", "source_occurrences", "build_issues"):
+            object.__setattr__(self, attribute, tuple(getattr(self, attribute)))
+        _require_instances(self.images, MammogramImage, "images")
+        _require_instances(self.rois, RegionOfInterest, "rois")
+        _require_instances(
+            self.source_occurrences,
+            SourceOccurrence,
+            "source_occurrences",
+        )
+        _require_instances(self.build_issues, BuildIssue, "build_issues")
+        if len({roi.locator for roi in self.rois}) != len(self.rois):
+            raise ValueError("EmbedImageTables ROI locators must be unique")
+        images_by_id = _unique_by_key(
+            self.images,
+            lambda image: image.image_id,
+            "image_id",
+        )
+        for roi in self.rois:
+            image = images_by_id.get(roi.image_id)
+            if image is None:
+                raise ValueError("Every ROI image_id must resolve to a table image")
+            if roi.locator.image_locator != image.canonical_source:
+                raise ValueError(
+                    "ROI locator image scope must match image canonical_source"
+                )
+            if any(source not in image.sources for source in roi.sources):
+                raise ValueError("ROI sources must occur in its image source ledger")
+            if roi.source_provenance.modality is not image.modality:
+                raise ValueError("ROI source modality must match its image modality")
+            if image.modality is ImageModality.DBT and image.frame_count is not None:
+                if any(frame >= image.frame_count for frame in roi.frame_indices):
+                    raise ValueError("ROI frame indices must be within image frame_count")
 
     def to_dict(self) -> dict[str, object]:
         """Serialize images, ROIs, and canonical source evidence once."""
@@ -1800,11 +1850,12 @@ def build_image_tables(
     column_aliases = _column_aliases(columns)
     images: list[MammogramImage] = []
     rois: list[RegionOfInterest] = []
+    roi_index_by_locator: dict[RoiLocator, int] = {}
     image_by_id: dict[str, MammogramImage] = {}
-    source_occurrences: list[SourceOccurrence] = []
-    build_issues: list[BuildIssue] = []
+    row_states: list[_ImageRowState] = []
 
     for row_ordinal, row in enumerate(rows):
+        raw_values = dict(row)
         locator = SourceLocator(
             scope=resolved_source_scope,
             scope_kind=scope_kind,
@@ -1813,7 +1864,8 @@ def build_image_tables(
             row_ordinal=row_ordinal,
         )
         row_issues: list[BuildIssue] = []
-        image_id = _string_value(_get(row, column_aliases.image_id))
+        roi_eligible = False
+        image_id = _string_value(_get(raw_values, column_aliases.image_id))
         if image_id is None:
             issue = BuildIssue(
                 code="missing_image_identity",
@@ -1829,7 +1881,7 @@ def build_image_tables(
             row_issues.append(issue)
         else:
             observed, metadata_issues = _image_from_row(
-                row,
+                raw_values,
                 column_aliases,
                 image_id,
                 locator,
@@ -1842,14 +1894,7 @@ def build_image_tables(
                 if retained is None:
                     images.append(observed)
                     image_by_id[image_id] = observed
-                    rois.extend(
-                        _rois_from_row(
-                            row,
-                            column_aliases,
-                            observed,
-                            observed.coordinate_frame_id,
-                        )
-                    )
+                    roi_eligible = True
                 else:
                     conflict_issues, fills = _reconcile_image_attributes(
                         retained,
@@ -1863,29 +1908,61 @@ def build_image_tables(
                     for attribute, value, source in fills:
                         setattr(retained, attribute, value)
                         retained.attribute_sources[attribute] = source
-                    if not conflict_issues:
-                        rois.extend(
-                            _rois_from_row(
-                                row,
-                                column_aliases,
-                                retained,
-                                retained.coordinate_frame_id,
-                            )
-                        )
+                    roi_eligible = not conflict_issues
+        row_states.append(
+            _ImageRowState(
+                raw_values=raw_values,
+                locator=locator,
+                image_id=image_id,
+                issues=row_issues,
+                roi_eligible=roi_eligible,
+            )
+        )
+
+    # ROI semantics depend on the fully reconciled image modality and frame
+    # count, so projection is deliberately deferred until all image rows have
+    # contributed safe fills. Original row order remains the evidence order.
+    for state in row_states:
+        if not state.roi_eligible or state.image_id is None:
+            continue
+        image = image_by_id[state.image_id]
+        row_rois, roi_issues = _rois_from_row(
+            state.raw_values,
+            column_aliases,
+            image,
+            image.coordinate_frame_id,
+            state.locator,
+        )
+        for issue in roi_issues:
+            policy.handle_issue(issue)
+        state.issues.extend(roi_issues)
+        duplicate_issues = _merge_row_rois(
+            row_rois,
+            rois,
+            roi_index_by_locator,
+            state.locator,
+        )
+        for issue in duplicate_issues:
+            policy.handle_issue(issue)
+        state.issues.extend(duplicate_issues)
+
+    source_occurrences: list[SourceOccurrence] = []
+    build_issues: list[BuildIssue] = []
+    for state in row_states:
         resolution_state = (
             ResolutionState.UNRESOLVED
-            if any(issue.severity is IssueSeverity.ERROR for issue in row_issues)
+            if any(issue.severity is IssueSeverity.ERROR for issue in state.issues)
             else ResolutionState.RESOLVED
         )
         source_occurrences.append(
             SourceOccurrence(
-                locator=locator,
-                raw_values=dict(row),
+                locator=state.locator,
+                raw_values=state.raw_values,
                 resolution_state=resolution_state,
-                issues=tuple(row_issues),
+                issues=tuple(state.issues),
             )
         )
-        build_issues.extend(row_issues)
+        build_issues.extend(state.issues)
 
     return EmbedImageTables(
         images=tuple(images),
@@ -2597,51 +2674,322 @@ def _rois_from_row(
     columns: _ColumnAliases,
     image: MammogramImage,
     coordinate_frame_id: Optional[str],
-) -> Tuple[RegionOfInterest, ...]:
-    coordinate_sets = _coordinate_sets(row, columns)
+    row_locator: SourceLocator,
+) -> Tuple[Tuple[RegionOfInterest, ...], Tuple[BuildIssue, ...]]:
+    try:
+        coordinate_sets, count_basis = _coordinate_sets(row, columns)
+    except (TypeError, ValueError, OverflowError) as exc:
+        return (), (
+            _roi_build_issue(
+                row_locator,
+                image.image_id,
+                "invalid_roi_coordinates",
+                "ROI coordinates must be finite, complete, and geometrically valid.",
+                {"detail": str(exc)},
+            ),
+        )
     if not coordinate_sets:
-        return ()
+        return (), ()
 
-    frames = _sequence_value(_get(row, columns.roi_frames)) if image.is_dbt else ()
-    if frames and len(frames) != len(coordinate_sets):
-        raise ValueError("Nonempty ROI_frames must align positionally with ROI_coords")
-    roi_ids = _sequence_value(_get(row, columns.roi_id))
-    source = _string_value(_get(row, columns.roi_source))
-    confidence = _optional_float(_get(row, columns.roi_confidence))
+    issues: list[BuildIssue] = []
+    count = RoiSourceCount(len(coordinate_sets), count_basis)
+    if image.modality is ImageModality.UNKNOWN:
+        return (), (
+            _roi_build_issue(
+                row_locator,
+                image.image_id,
+                "unknown_roi_image_modality",
+                "ROI depth/frame provenance requires a known 2D or DBT modality.",
+            ),
+        )
+
+    frame_sets, frame_issue, recover_frames = _roi_frame_sets(
+        row,
+        columns,
+        image,
+        len(coordinate_sets),
+        row_locator,
+    )
+    if frame_issue is not None:
+        issues.append(frame_issue)
+        if not recover_frames:
+            return (), tuple(issues)
+
+    roi_values, roi_id_issue = _roi_source_values(
+        row,
+        columns,
+        len(coordinate_sets),
+        row_locator,
+        image.image_id,
+    )
+    if roi_id_issue is not None:
+        issues.append(roi_id_issue)
+
+    raw_confidence = _get(row, columns.roi_confidence)
+    confidence = None
+    if raw_confidence is not _MISSING and not _is_blank(raw_confidence):
+        try:
+            if isinstance(raw_confidence, bool):
+                raise ValueError("boolean confidence is not numeric evidence")
+            confidence = float(raw_confidence)
+            if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+                raise ValueError("confidence must be finite and in [0, 1]")
+        except (TypeError, ValueError, OverflowError) as exc:
+            issues.append(
+                _roi_build_issue(
+                    row_locator,
+                    image.image_id,
+                    "invalid_roi_confidence",
+                    "ROI confidence must be finite and in [0, 1].",
+                    {"raw_value": raw_confidence, "detail": str(exc)},
+                )
+            )
+            confidence = None
+
+    annotation_source = _string_value(_get(row, columns.roi_source))
     rois = []
     for index, coordinates in enumerate(coordinate_sets):
+        source_value = roi_values[index]
+        locator = (
+            RoiLocator.from_source(
+                image_locator=image.canonical_source,
+                source_value=source_value,
+            )
+            if source_value is not None
+            else RoiLocator.synthetic(
+                image_locator=image.canonical_source,
+                source_ordinal=index,
+            )
+        )
+        frame_indices = frame_sets[index]
+        depth_frame_provenance = (
+            RoiDepthFrameProvenance.SOURCE_SUPPLIED
+            if image.is_dbt and frame_indices
+            else RoiDepthFrameProvenance.UNAVAILABLE_DBT
+            if image.is_dbt
+            else RoiDepthFrameProvenance.NOT_APPLICABLE_2D
+        )
+        source_provenance = RoiSourceProvenance(
+            modality=image.modality,
+            source_count=count,
+            depth_frame_provenance=depth_frame_provenance,
+            frame_indices=frame_indices,
+        )
+        source_provenance.validate_locator(locator)
         rois.append(
             RegionOfInterest.from_embed_coordinates(
                 coordinates=coordinates,
-                roi_id=_string_value(_indexed_value(roi_ids, index))
-                or _string_value(_get(row, columns.roi_id))
-                or f"{image.image_id}:roi:{index + 1}",
+                locator=locator,
                 image_id=image.image_id,
-                frame_indices=_frame_indices(_indexed_value(frames, index)),
-                source=source,
+                source_provenance=source_provenance,
+                sources=tuple(
+                    dict.fromkeys((image.canonical_source, row_locator))
+                ),
+                annotation_source=annotation_source,
                 confidence=confidence,
                 coordinate_frame_id=coordinate_frame_id,
             )
         )
-        if image.frame_count is not None and any(
-            frame >= image.frame_count for frame in rois[-1].frame_indices
-        ):
-            raise ValueError(
-                f"ROI frame index must be below DBT frame count {image.frame_count}"
+    return tuple(rois), tuple(issues)
+
+
+def _merge_row_rois(
+    proposed: Tuple[RegionOfInterest, ...],
+    retained: list[RegionOfInterest],
+    index_by_locator: dict[RoiLocator, int],
+    row_locator: SourceLocator,
+) -> Tuple[BuildIssue, ...]:
+    issues = []
+    for roi in proposed:
+        retained_index = index_by_locator.get(roi.locator)
+        if retained_index is None:
+            index_by_locator[roi.locator] = len(retained)
+            retained.append(roi)
+            continue
+        existing = retained[retained_index]
+        if _same_roi_observation(existing, roi):
+            merged = existing
+            for source in roi.sources:
+                merged = merged.with_source(source)
+            retained[retained_index] = merged
+            continue
+        issues.append(
+            _roi_build_issue(
+                row_locator,
+                roi.image_id,
+                "conflicting_roi_locator",
+                "One scoped ROI locator cannot identify conflicting observations.",
+                {
+                    "locator": roi.locator.to_dict(),
+                    "retained_coordinates": list(existing.coordinates),
+                    "observed_coordinates": list(roi.coordinates),
+                    "retained_sources": [
+                        source.to_dict() for source in existing.sources
+                    ],
+                },
             )
-    return tuple(rois)
+        )
+    return tuple(issues)
+
+
+def _same_roi_observation(
+    retained: RegionOfInterest,
+    observed: RegionOfInterest,
+) -> bool:
+    return all(
+        getattr(retained, attribute) == getattr(observed, attribute)
+        for attribute in (
+            "coordinates",
+            "locator",
+            "image_id",
+            "source_provenance",
+            "annotation_source",
+            "confidence",
+            "coordinate_frame_id",
+            "source_coordinates",
+            "source_coordinate_convention",
+        )
+    )
+
+
+def _roi_build_issue(
+    source: SourceLocator,
+    image_id: str,
+    code: str,
+    message: str,
+    context: Optional[Mapping[str, Any]] = None,
+) -> BuildIssue:
+    return BuildIssue(
+        code=code,
+        message=message,
+        severity=IssueSeverity.ERROR,
+        source=source,
+        context={"image_id": image_id, **dict(context or {})},
+    )
+
+
+def _roi_source_values(
+    row: Row,
+    columns: _ColumnAliases,
+    count: int,
+    source: SourceLocator,
+    image_id: str,
+) -> Tuple[Tuple[Optional[str], ...], Optional[BuildIssue]]:
+    raw_value = _get(row, columns.roi_id)
+    if raw_value is _MISSING or _is_blank(raw_value):
+        return (None,) * count, None
+    values = _sequence_value(raw_value)
+    if not values:
+        return (None,) * count, None
+    if len(values) != count:
+        return (
+            (None,) * count,
+            _roi_build_issue(
+                source,
+                image_id,
+                "misaligned_roi_source_identifiers",
+                "Source ROI identifiers must align exactly with ROI coordinates.",
+                {"coordinate_count": count, "identifier_count": len(values)},
+            ),
+        )
+    return tuple(_string_value(value) for value in values), None
+
+
+def _roi_frame_sets(
+    row: Row,
+    columns: _ColumnAliases,
+    image: MammogramImage,
+    count: int,
+    source: SourceLocator,
+) -> Tuple[Tuple[Tuple[int, ...], ...], Optional[BuildIssue], bool]:
+    raw_frames = _get(row, columns.roi_frames)
+    outer = (
+        _sequence_value(raw_frames)
+        if raw_frames is not _MISSING and not _is_blank(raw_frames)
+        else ()
+    )
+    populated = any(_sequence_value(value) for value in outer)
+    if not image.is_dbt:
+        issue = (
+            _roi_build_issue(
+                source,
+                image.image_id,
+                "frames_on_2d_roi",
+                "2D ROI observations cannot carry DBT frame indices.",
+            )
+            if populated
+            else None
+        )
+        return ((),) * count, issue, True
+    if not populated:
+        return ((),) * count, None, True
+
+    if len(outer) != count:
+        return (
+            (),
+            _roi_build_issue(
+                source,
+                image.image_id,
+                "misaligned_roi_frames",
+                "DBT ROI frame collections must align exactly with ROI coordinates.",
+                {"coordinate_count": count, "frame_collection_count": len(outer)},
+            ),
+            False,
+        )
+    try:
+        frame_sets = tuple(_frame_indices(value) for value in outer)
+    except (TypeError, ValueError, OverflowError) as exc:
+        return (
+            (),
+            _roi_build_issue(
+                source,
+                image.image_id,
+                "invalid_roi_frames",
+                "DBT ROI frames must be unique non-negative integers.",
+                {"detail": str(exc)},
+            ),
+            False,
+        )
+    if image.frame_count is not None and any(
+        frame >= image.frame_count
+        for frame_indices in frame_sets
+        for frame in frame_indices
+    ):
+        return (
+            (),
+            _roi_build_issue(
+                source,
+                image.image_id,
+                "roi_frame_out_of_range",
+                "ROI frame indices must be below the DBT frame count.",
+                {"frame_count": image.frame_count},
+            ),
+            False,
+        )
+    return frame_sets, None, True
 
 
 def _coordinate_sets(
     row: Row,
     columns: _ColumnAliases,
-) -> Tuple[Tuple[float, float, float, float], ...]:
+) -> Tuple[
+    Tuple[Tuple[float, float, float, float], ...],
+    RoiSourceCountBasis,
+]:
     raw_coordinates = _get(row, columns.roi_coordinates)
-    if raw_coordinates is not _MISSING:
+    if raw_coordinates is not _MISSING and not _is_blank(raw_coordinates):
         parsed = _sequence_value(raw_coordinates)
         if len(parsed) == 4 and not any(isinstance(item, (list, tuple)) for item in parsed):
-            return (_coordinate_box(parsed),)
-        return tuple(_coordinate_box(_sequence_value(item)) for item in parsed)
+            return (
+                (_coordinate_box(parsed),),
+                RoiSourceCountBasis.ALIGNED_COORDINATE_COLLECTION,
+            )
+        return (
+            tuple(_coordinate_box(_sequence_value(item)) for item in parsed),
+            RoiSourceCountBasis.ALIGNED_COORDINATE_COLLECTION,
+        )
+    if raw_coordinates is not _MISSING:
+        return (), RoiSourceCountBasis.ALIGNED_COORDINATE_COLLECTION
 
     values = (
         _get(row, columns.y_min),
@@ -2649,15 +2997,26 @@ def _coordinate_sets(
         _get(row, columns.y_max),
         _get(row, columns.x_max),
     )
-    if any(value is _MISSING or _is_blank(value) for value in values):
-        return ()
-    return (_coordinate_box(values),)
+    populated = tuple(value is not _MISSING and not _is_blank(value) for value in values)
+    if not any(populated):
+        return (), RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE
+    if not all(populated):
+        raise ValueError("Separate ROI bounds must all be populated")
+    return (
+        (_coordinate_box(values),),
+        RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+    )
 
 
 def _coordinate_box(values: Sequence[Any]) -> Tuple[float, float, float, float]:
     if len(values) != 4:
         raise ValueError("ROI coordinates must have four values")
-    return tuple(float(value) for value in values)  # type: ignore[return-value]
+    coordinates = tuple(float(value) for value in values)
+    if not all(math.isfinite(value) for value in coordinates):
+        raise ValueError("ROI coordinates must be finite")
+    if coordinates[2] < coordinates[0] or coordinates[3] < coordinates[1]:
+        raise ValueError("ROI maxima must not precede minima")
+    return coordinates  # type: ignore[return-value]
 
 
 def _frame_indices(value: Any) -> Tuple[int, ...]:
@@ -2665,12 +3024,15 @@ def _frame_indices(value: Any) -> Tuple[int, ...]:
 
     if value is _MISSING or _is_blank(value):
         return ()
-    return tuple(_required_frame_index(item) for item in _sequence_value(value))
+    indices = tuple(_required_frame_index(item) for item in _sequence_value(value))
+    if len(set(indices)) != len(indices):
+        raise ValueError("ROI frame indices cannot contain duplicates")
+    return indices
 
 
 def _required_frame_index(value: Any) -> int:
-    frame = _optional_int(value)
-    if frame is None:
+    frame = _normalize_exact_integer_source_value(value)
+    if frame is None or frame is _INVALID_EXACT_INTEGER or frame < 0:
         raise ValueError("ROI frame indices must be populated integers")
     return frame
 

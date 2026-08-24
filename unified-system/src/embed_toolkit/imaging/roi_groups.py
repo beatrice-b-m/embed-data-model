@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, Tuple
 
 from embed_toolkit.core.primitives import Laterality
+from embed_toolkit.imaging.roi_provenance import RoiLocator
 from embed_toolkit.imaging.rois import RegionOfInterest
 
 
 @dataclass(frozen=True)
 class RoiGroup:
-    """Related raw boxes that may depict one lesion across views or frames.
-
-    Group membership is an explicit evidence assertion; this object does not
-    infer that boxes belong together merely because their geometry overlaps.
-    """
+    """An explicit assertion relating scoped ROI observations."""
 
     group_id: str
     accession_number: str
@@ -35,20 +34,22 @@ class RoiGroup:
             raise ValueError("ROI group laterality must be LEFT or RIGHT")
         if not self.rois:
             raise ValueError("ROI group must contain at least one ROI")
-        if any(roi.roi_id is None for roi in self.rois):
-            raise ValueError("Grouped ROIs require stable roi_id values")
-        if len(set(self.roi_ids)) != len(self.roi_ids):
-            raise ValueError("ROI group cannot contain duplicate roi_id values")
+        if any(not isinstance(roi, RegionOfInterest) for roi in self.rois):
+            raise TypeError("rois must contain only RegionOfInterest values")
+        if any(not isinstance(roi.locator, RoiLocator) for roi in self.rois):
+            raise TypeError("Grouped ROIs require RoiLocator values")
+        if len(set(self.roi_locators)) != len(self.roi_locators):
+            raise ValueError("ROI group cannot contain duplicate ROI locators")
+        if not isinstance(self.grouping_basis, str) or not self.grouping_basis.strip():
+            raise ValueError("ROI group grouping_basis is required")
 
     @property
-    def roi_ids(self) -> Tuple[str, ...]:
-        return tuple(roi.roi_id for roi in self.rois if roi.roi_id is not None)
+    def roi_locators(self) -> Tuple[RoiLocator, ...]:
+        return tuple(roi.locator for roi in self.rois)
 
     @property
     def image_ids(self) -> Tuple[str, ...]:
-        return tuple(
-            dict.fromkeys(roi.image_id for roi in self.rois if roi.image_id is not None)
-        )
+        return tuple(dict.fromkeys(roi.image_id for roi in self.rois))
 
     @property
     def frame_indices(self) -> Tuple[int, ...]:
@@ -62,10 +63,10 @@ class RoiGroup:
         accession_number: str,
         laterality: Laterality,
     ) -> "RoiGroup":
-        if roi.roi_id is None:
-            raise ValueError("Singleton ROI groups require a stable roi_id")
+        encoded = json.dumps(roi.locator.to_dict(), sort_keys=True).encode("utf-8")
+        assertion_id = hashlib.sha256(encoded).hexdigest()[:20]
         return cls(
-            group_id=f"group:{roi.roi_id}",
+            group_id=f"singleton:{assertion_id}",
             accession_number=accession_number,
             laterality=laterality,
             rois=(roi,),
@@ -77,7 +78,7 @@ class RoiGroup:
             "group_id": self.group_id,
             "accession_number": self.accession_number,
             "laterality": self.laterality.value,
-            "roi_ids": list(self.roi_ids),
+            "roi_locators": [locator.to_dict() for locator in self.roi_locators],
             "image_ids": list(self.image_ids),
             "frame_indices": list(self.frame_indices),
             "grouping_basis": self.grouping_basis,
@@ -91,7 +92,7 @@ def singleton_roi_groups(
     accession_number: str,
     laterality: Laterality,
 ) -> Tuple[RoiGroup, ...]:
-    """Wrap ungrouped ROIs without inventing cross-view relationships."""
+    """Wrap ungrouped ROIs as explicit singleton assertions."""
 
     return tuple(
         RoiGroup.singleton(

@@ -14,6 +14,11 @@ from embed_toolkit.clinical.pathology import PathologySeverity
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.provenance import AvailabilityState, ResolutionState
+from embed_toolkit.imaging.roi_provenance import (
+    RoiDepthFrameProvenance,
+    RoiLocatorKind,
+    RoiSourceCountBasis,
+)
 
 
 def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
@@ -439,13 +444,20 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
     assert tables.rois[0].coordinates == (10, 20, 41, 61)
     assert tables.rois[0].source_coordinates == (10, 20, 40, 60)
     assert tables.rois[0].source_coordinate_convention == "inclusive_maxima"
-    assert tables.rois[0].source == "synthetic"
+    assert tables.rois[0].annotation_source == "synthetic"
+    assert tables.rois[0].locator.kind is RoiLocatorKind.SOURCE_SUPPLIED
+    assert tables.rois[0].locator.source_value == "ROI-1"
+    assert tables.rois[0].source_provenance.source_count.basis is (
+        RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE
+    )
     assert tables.rois[0].confidence == 0.8
     assert tables.rois[1].coordinates == (1, 2, 4, 5)
     assert tables.rois[1].frame_indices == (12,)
-    assert tables.rois[1].frame_index == 12
+    assert tables.rois[1].source_provenance.depth_frame_provenance is (
+        RoiDepthFrameProvenance.SOURCE_SUPPLIED
+    )
     assert tables.rois[2].coordinates == (10, 20, 31, 41)
-    assert tables.rois[2].frame_index == 15
+    assert tables.rois[2].frame_indices == (15,)
 
 
 def test_dbt_roi_frames_preserve_plural_associations_and_validate_count() -> None:
@@ -462,38 +474,274 @@ def test_dbt_roi_frames_preserve_plural_associations_and_validate_count() -> Non
 
     assert tables.images[0].frame_count == 21
     assert [roi.frame_indices for roi in tables.rois] == [(12, 13), (20,)]
-    assert tables.rois[0].frame_index is None
-    assert tables.rois[1].frame_index == 20
 
-    with pytest.raises(ValueError, match="below DBT frame count"):
+    with pytest.raises(BuildPolicyError, match="below the DBT frame count"):
         build_image_tables([{**row, "ROI_frames": [[12, 13], [21]]}])
 
 
-def test_roi_frame_collections_validate_alignment_and_ignore_non_dbt_values() -> None:
+def test_roi_frame_collections_follow_strict_and_audit_policy() -> None:
     dbt_row = {
         "image_id": "DBT-1",
         "FinalImageType": "DBT",
         "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
     }
-    with pytest.raises(ValueError, match="align positionally"):
+    with pytest.raises(BuildPolicyError, match="align exactly"):
         build_image_tables([{**dbt_row, "ROI_frames": [[12, 13]]}])
 
     empty = build_image_tables([{**dbt_row, "ROI_frames": [[], []]}])
     assert [roi.frame_indices for roi in empty.rois] == [(), ()]
+    assert all(
+        roi.source_provenance.depth_frame_provenance
+        is RoiDepthFrameProvenance.UNAVAILABLE_DBT
+        for roi in empty.rois
+    )
 
+    two_d_row = {
+        "image_id": "2D-1",
+        "FinalImageType": "2D",
+        "ImagesInAcquisition": 99,
+        "ROI_coords": [[1, 2, 3, 4]],
+        "ROI_frames": [[7, 8]],
+    }
+    with pytest.raises(BuildPolicyError, match="cannot carry DBT frame"):
+        build_image_tables([two_d_row])
     two_d = build_image_tables(
         [
-            {
-                "image_id": "2D-1",
-                "FinalImageType": "2D",
-                "ImagesInAcquisition": 99,
-                "ROI_coords": [[1, 2, 3, 4]],
-                "ROI_frames": [[7, 8]],
-            }
-        ]
+            two_d_row
+        ],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
     )
     assert two_d.images[0].frame_count is None
     assert two_d.rois[0].frame_indices == ()
+    assert two_d.build_issues[0].code == "frames_on_2d_roi"
+
+
+@pytest.mark.parametrize(
+    ("values", "issue_code"),
+    [
+        ({"ROI_coords": [1, 2, 0, 4]}, "invalid_roi_coordinates"),
+        (
+            {
+                "FinalImageType": "DBT",
+                "ROI_coords": [[1, 2, 3, 4], [5, 6, 7, 8]],
+                "ROI_frames": [[2]],
+            },
+            "misaligned_roi_frames",
+        ),
+        (
+            {
+                "FinalImageType": "DBT",
+                "ImagesInAcquisition": 3,
+                "ROI_coords": [[1, 2, 3, 4]],
+                "ROI_frames": [[3]],
+            },
+            "roi_frame_out_of_range",
+        ),
+        ({"FinalImageType": "unknown", "ROI_coords": [1, 2, 3, 4]}, "unknown_roi_image_modality"),
+    ],
+)
+def test_fatal_roi_errors_omit_row_rois_in_audit(
+    values: dict[str, object],
+    issue_code: str,
+) -> None:
+    row = {"image_id": "IMG-ERROR", "ImageLateralityFinal": "L", **values}
+
+    with pytest.raises(BuildPolicyError) as exc_info:
+        build_image_tables([row], source_scope="roi-errors")
+    assert exc_info.value.issue.code == issue_code
+
+    audited = build_image_tables(
+        [row],
+        source_scope="roi-errors",
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+    assert len(audited.images) == 1
+    assert audited.rois == ()
+    assert audited.source_occurrences[0].resolution_state is ResolutionState.UNRESOLVED
+    assert audited.build_issues[0].code == issue_code
+
+
+def test_source_identifier_alignment_and_confidence_recover_in_audit() -> None:
+    row = {
+        "image_id": "IMG-RECOVER",
+        "FinalImageType": "2D",
+        "ROI_coords": [[1, 2, 3, 4], [5, 6, 7, 8]],
+        "roi_id": ["ONLY-ONE"],
+        "roi_confidence": 2.0,
+    }
+    with pytest.raises(BuildPolicyError) as exc_info:
+        build_image_tables([row], source_scope="roi-recovery")
+    assert exc_info.value.issue.code == "misaligned_roi_source_identifiers"
+
+    audited = build_image_tables(
+        [row],
+        source_scope="roi-recovery",
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+
+    assert [issue.code for issue in audited.build_issues] == [
+        "misaligned_roi_source_identifiers",
+        "invalid_roi_confidence",
+    ]
+    assert [roi.locator.kind for roi in audited.rois] == [
+        RoiLocatorKind.SYNTHETIC,
+        RoiLocatorKind.SYNTHETIC,
+    ]
+    assert [roi.locator.source_ordinal for roi in audited.rois] == [0, 1]
+    assert all(roi.confidence is None for roi in audited.rois)
+    assert all(
+        roi.source_provenance.source_count.value == 2 for roi in audited.rois
+    )
+    assert all(
+        roi.source_provenance.source_count.basis
+        is RoiSourceCountBasis.ALIGNED_COORDINATE_COLLECTION
+        for roi in audited.rois
+    )
+
+
+def test_mixed_source_and_synthetic_roi_locators_preserve_scope() -> None:
+    tables = build_image_tables(
+        [
+            {
+                "image_id": "IMG-MIXED",
+                "FinalImageType": "2D",
+                "ROI_coords": [[1, 2, 3, 4], [5, 6, 7, 8]],
+                "roi_id": ["SOURCE-1", None],
+            }
+        ],
+        source_scope="roi-scope",
+    )
+
+    first, second = tables.rois
+    assert first.locator.kind is RoiLocatorKind.SOURCE_SUPPLIED
+    assert second.locator.kind is RoiLocatorKind.SYNTHETIC
+    assert second.locator.source_ordinal == 1
+    assert first.locator.image_locator is tables.images[0].canonical_source
+    assert second.locator.image_locator is tables.images[0].canonical_source
+
+
+def test_invalid_roi_confidence_strict_error_and_audit_recovery() -> None:
+    row = {
+        "image_id": "IMG-CONFIDENCE",
+        "FinalImageType": "2D",
+        "ROI_coords": [1, 2, 3, 4],
+        "roi_confidence": float("nan"),
+    }
+    with pytest.raises(BuildPolicyError) as exc_info:
+        build_image_tables([row], source_scope="roi-confidence")
+    assert exc_info.value.issue.code == "invalid_roi_confidence"
+
+    audited = build_image_tables(
+        [row],
+        source_scope="roi-confidence",
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+    assert len(audited.rois) == 1
+    assert audited.rois[0].confidence is None
+    assert audited.source_occurrences[0].resolution_state is ResolutionState.UNRESOLVED
+
+
+def test_duplicate_roi_locator_deduplicates_equal_and_governs_conflicts() -> None:
+    equal = {
+        "image_id": "IMG-DUP",
+        "FinalImageType": "2D",
+        "ROI_coords": [1, 2, 3, 4],
+        "roi_id": "SOURCE-1",
+    }
+    deduplicated = build_image_tables(
+        [equal, equal],
+        source_scope="roi-duplicates",
+    )
+    assert len(deduplicated.rois) == 1
+    assert len(deduplicated.rois[0].sources) == 2
+
+    conflicting = {**equal, "ROI_coords": [10, 20, 30, 40]}
+    with pytest.raises(BuildPolicyError) as exc_info:
+        build_image_tables(
+            [equal, conflicting],
+            source_scope="roi-duplicates",
+        )
+    assert exc_info.value.issue.code == "conflicting_roi_locator"
+
+    audited = build_image_tables(
+        [equal, conflicting],
+        source_scope="roi-duplicates",
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+    assert len(audited.rois) == 1
+    assert audited.rois[0].coordinates == (1, 2, 4, 5)
+    assert audited.source_occurrences[1].resolution_state is ResolutionState.UNRESOLVED
+
+
+def test_roi_projection_uses_final_reconciled_image_modality() -> None:
+    tables = build_image_tables(
+        [
+            {
+                "image_id": "IMG-LATE-MODALITY",
+                "FinalImageType": "unknown",
+                "ROI_coords": [1, 2, 3, 4],
+            },
+            {
+                "image_id": "IMG-LATE-MODALITY",
+                "FinalImageType": "2D",
+            },
+        ],
+        source_scope="late-image-modality",
+    )
+
+    assert tables.images[0].modality is ImageModality.FFDM
+    assert len(tables.images[0].sources) == 2
+    assert len(tables.rois) == 1
+    assert tables.rois[0].source_provenance.modality is ImageModality.FFDM
+    assert tables.source_occurrences[0].resolution_state is ResolutionState.RESOLVED
+
+
+def test_strict_duplicate_roi_failure_does_not_mutate_inputs_or_later_builds() -> None:
+    first = {
+        "image_id": "IMG-ATOMIC-ROI",
+        "FinalImageType": "2D",
+        "ROI_coords": [1, 2, 3, 4],
+        "roi_id": "SOURCE-1",
+    }
+    conflicting = {**first, "ROI_coords": [10, 20, 30, 40]}
+    original_first = {**first, "ROI_coords": list(first["ROI_coords"])}
+    original_conflicting = {
+        **conflicting,
+        "ROI_coords": list(conflicting["ROI_coords"]),
+    }
+
+    with pytest.raises(BuildPolicyError, match="conflicting_roi_locator"):
+        build_image_tables(
+            [first, conflicting],
+            source_scope="strict-roi-atomicity",
+        )
+
+    assert first == original_first
+    assert conflicting == original_conflicting
+    rebuilt = build_image_tables(
+        [first],
+        source_scope="strict-roi-atomicity-retry",
+    )
+    assert len(rebuilt.images[0].sources) == 1
+    assert len(rebuilt.rois) == 1
+
+
+def test_equal_geometry_with_distinct_source_locators_remains_distinct() -> None:
+    tables = build_image_tables(
+        [
+            {
+                "image_id": "IMG-DISTINCT",
+                "FinalImageType": "2D",
+                "ROI_coords": [[1, 2, 3, 4], [1, 2, 3, 4]],
+                "roi_id": ["ROI-A", "ROI-B"],
+            }
+        ],
+        source_scope="roi-distinct",
+    )
+
+    assert len(tables.rois) == 2
+    assert tables.rois[0].locator != tables.rois[1].locator
+    assert tables.rois[0].coordinates == tables.rois[1].coordinates
 
 
 def test_builders_accept_custom_column_configuration() -> None:
@@ -546,7 +794,7 @@ def test_builders_accept_custom_column_configuration() -> None:
     assert image_tables.images[0].image_id == "IMG-CUSTOM"
     assert image_tables.images[0].view_position is ViewPosition.MLO
     assert image_tables.rois[0].coordinates == (5, 6, 8, 9)
-    assert image_tables.rois[0].frame_index == 4
+    assert image_tables.rois[0].frame_indices == (4,)
 
 
 def test_candidate_projection_is_explicit_and_uses_assembled_hierarchy() -> None:
