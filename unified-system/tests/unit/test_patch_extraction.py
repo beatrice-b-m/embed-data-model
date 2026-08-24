@@ -45,6 +45,22 @@ def test_extracts_in_bounds_patch_from_nested_sequences() -> None:
     assert result.warnings == []
 
 
+def test_extracts_inclusive_embed_box_at_image_boundary() -> None:
+    image = [[row * 100 + column for column in range(260)] for row in range(160)]
+    roi = RegionOfInterest.from_embed_coordinates((100, 200, 150, 250))
+
+    result = extract_patch(image, roi)
+
+    assert result.shape == [51, 51]
+    assert result.patch_payload["data"][0][0] == 10200
+    assert result.patch_payload["data"][-1][-1] == 15250
+
+    boundary = RegionOfInterest.from_embed_coordinates((159, 259, 159, 259))
+    boundary_result = extract_patch(image, boundary)
+    assert boundary_result.shape == [1, 1]
+    assert boundary_result.status is ResultStatus.SUCCESS
+
+
 def test_extracts_out_of_bounds_patch_with_constant_padding() -> None:
     image = [
         [0, 1, 2],

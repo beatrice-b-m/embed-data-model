@@ -137,12 +137,14 @@ def test_image_builder_constructs_images_and_rois_without_clinical_rows() -> Non
         "IMG-R-MLO",
         "IMG-R-MLO",
     ]
-    assert tables.rois[0].coordinates == (10, 20, 40, 60)
+    assert tables.rois[0].coordinates == (10, 20, 41, 61)
+    assert tables.rois[0].source_coordinates == (10, 20, 40, 60)
+    assert tables.rois[0].source_coordinate_convention == "inclusive_maxima"
     assert tables.rois[0].source == "synthetic"
     assert tables.rois[0].confidence == 0.8
-    assert tables.rois[1].coordinates == (1, 2, 3, 4)
+    assert tables.rois[1].coordinates == (1, 2, 4, 5)
     assert tables.rois[1].frame_index == 12
-    assert tables.rois[2].coordinates == (10, 20, 30, 40)
+    assert tables.rois[2].coordinates == (10, 20, 31, 41)
     assert tables.rois[2].frame_index == 15
 
 
@@ -190,7 +192,7 @@ def test_builders_accept_custom_column_configuration() -> None:
     assert clinical.findings[0].assessment == "3"
     assert image_tables.images[0].image_id == "IMG-CUSTOM"
     assert image_tables.images[0].view_position is ViewPosition.MLO
-    assert image_tables.rois[0].coordinates == (5, 6, 7, 8)
+    assert image_tables.rois[0].coordinates == (5, 6, 8, 9)
     assert image_tables.rois[0].frame_index == 4
 
 

@@ -81,7 +81,7 @@ def test_breast_geometry_holds_coordinate_frame_facts_without_matching() -> None
     assert geometry.nipple.image_id == "img-1"
 
 
-def test_roi_uses_embed_yxyx_geometry() -> None:
+def test_roi_uses_canonical_half_open_yxyx_geometry() -> None:
     roi = RegionOfInterest((10, 20, 30, 50), roi_id="roi-1", image_id="img-1")
 
     assert roi.y_min == 10
@@ -92,6 +92,20 @@ def test_roi_uses_embed_yxyx_geometry() -> None:
     assert roi.width == 30
     assert roi.area == 600
     assert roi.centroid == (20, 35)
+
+
+def test_embed_roi_factory_normalizes_inclusive_maxima_and_preserves_source() -> None:
+    roi = RegionOfInterest.from_embed_coordinates((100, 200, 150, 250))
+    pixel = RegionOfInterest.from_embed_coordinates((5, 7, 5, 7))
+
+    assert roi.coordinates == (100, 200, 151, 251)
+    assert roi.height == 51
+    assert roi.width == 51
+    assert roi.area == 2601
+    assert roi.source_coordinates == (100, 200, 150, 250)
+    assert roi.source_coordinate_convention == "inclusive_maxima"
+    assert pixel.coordinates == (5, 7, 6, 8)
+    assert pixel.area == 1
 
 
 def test_roi_resize_and_realign_return_new_roi_and_preserve_dbt_frame() -> None:

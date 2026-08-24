@@ -403,7 +403,7 @@ def _rois_from_row(
     rois = []
     for index, coordinates in enumerate(coordinate_sets):
         rois.append(
-            RegionOfInterest(
+            RegionOfInterest.from_embed_coordinates(
                 coordinates=coordinates,
                 roi_id=_indexed_value(roi_ids, index)
                 or _string_value(_get(row, columns.roi_id))

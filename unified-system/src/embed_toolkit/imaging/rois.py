@@ -12,7 +12,12 @@ CoordinateBox = Tuple[float, float, float, float]
 
 @dataclass(frozen=True)
 class RegionOfInterest:
-    """Image-local ROI box in EMBED ``[y_min, x_min, y_max, x_max]`` order."""
+    """Canonical image-local half-open ``[y_min, x_min, y_stop, x_stop]`` box.
+
+    The minimum edges are included and the stop edges are excluded. Source
+    coordinate conventions belong in provenance and must be normalized before
+    generic geometry, transforms, or pixel slicing use the box.
+    """
 
     coordinates: CoordinateBox
     roi_id: Optional[str] = None
@@ -21,18 +26,42 @@ class RegionOfInterest:
     source: Optional[str] = None
     confidence: Optional[float] = None
     coordinate_frame_id: Optional[str] = None
+    source_coordinates: Optional[CoordinateBox] = None
+    source_coordinate_convention: Optional[str] = None
+
+    @classmethod
+    def from_embed_coordinates(
+        cls,
+        coordinates: CoordinateBox,
+        **metadata: object,
+    ) -> "RegionOfInterest":
+        """Normalize EMBED's inclusive maxima to canonical exclusive stops."""
+
+        y_min, x_min, y_max, x_max = tuple(float(value) for value in coordinates)
+        return cls(
+            coordinates=(y_min, x_min, y_max + 1.0, x_max + 1.0),
+            source_coordinates=(y_min, x_min, y_max, x_max),
+            source_coordinate_convention="inclusive_maxima",
+            **metadata,
+        )
 
     def __post_init__(self) -> None:
         if len(self.coordinates) != 4:
             raise ValueError("ROI coordinates must contain four values")
-        y_min, x_min, y_max, x_max = tuple(float(value) for value in self.coordinates)
-        if y_max < y_min or x_max < x_min:
-            raise ValueError("ROI max coordinates must be greater than min coordinates")
+        y_min, x_min, y_stop, x_stop = tuple(float(value) for value in self.coordinates)
+        if y_stop < y_min or x_stop < x_min:
+            raise ValueError("ROI stop coordinates must be greater than min coordinates")
         if self.frame_index is not None and self.frame_index < 0:
             raise ValueError("DBT frame index must be non-negative")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("ROI confidence must be in [0, 1]")
-        object.__setattr__(self, "coordinates", (y_min, x_min, y_max, x_max))
+        object.__setattr__(self, "coordinates", (y_min, x_min, y_stop, x_stop))
+        if self.source_coordinates is not None:
+            object.__setattr__(
+                self,
+                "source_coordinates",
+                tuple(float(value) for value in self.source_coordinates),
+            )
 
     @property
     def y_min(self) -> float:
@@ -44,10 +73,14 @@ class RegionOfInterest:
 
     @property
     def y_max(self) -> float:
+        """Compatibility name for the exclusive y stop edge."""
+
         return self.coordinates[2]
 
     @property
     def x_max(self) -> float:
+        """Compatibility name for the exclusive x stop edge."""
+
         return self.coordinates[3]
 
     @property
@@ -76,7 +109,7 @@ class RegionOfInterest:
         image_id: Optional[str] = None,
         coordinate_frame_id: Optional[str] = None,
     ) -> "RegionOfInterest":
-        """Scale the ROI coordinates from the image origin."""
+        """Scale canonical box edges from the image origin."""
 
         if scale_y <= 0 or scale_x <= 0:
             raise ValueError("Resize scales must be positive")
@@ -104,7 +137,7 @@ class RegionOfInterest:
         image_id: Optional[str] = None,
         coordinate_frame_id: Optional[str] = None,
     ) -> "RegionOfInterest":
-        """Apply scale then translation to move the ROI into another frame."""
+        """Scale then translate canonical edges into another coordinate frame."""
 
         if scale_y <= 0 or scale_x <= 0:
             raise ValueError("Realignment scales must be positive")
