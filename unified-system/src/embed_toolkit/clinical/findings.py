@@ -10,6 +10,7 @@ from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.procedures import _to_plain
 from embed_toolkit.core.anatomy import AnatomicalPosition
 from embed_toolkit.core.primitives import Laterality
+from embed_toolkit.core.provenance import SourceLocator
 
 
 class FindingRecordType(str, Enum):
@@ -17,6 +18,66 @@ class FindingRecordType(str, Enum):
 
     FINDING = "finding"
     NO_FINDING_SENTINEL = "no_finding_sentinel"
+
+
+@dataclass(frozen=True)
+class FindingNormalizationEvidence:
+    """Source-scoped evidence supporting one normalized finding attribute."""
+
+    source: SourceLocator
+    source_field: str
+    raw_value: Any
+    normalized_kind: str
+    normalized_value: Any = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, SourceLocator):
+            raise TypeError("source must be a SourceLocator")
+        for attribute in ("source_field", "normalized_kind"):
+            value = getattr(self, attribute)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{attribute} must be a non-empty string")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source": self.source.to_dict(),
+            "source_field": self.source_field,
+            "raw_value": _to_plain(self.raw_value),
+            "normalized_kind": self.normalized_kind,
+            "normalized_value": _to_plain(self.normalized_value),
+        }
+
+
+@dataclass(frozen=True)
+class FindingNormalizationWarning:
+    """Source-scoped warning emitted while normalizing finding anatomy."""
+
+    source: SourceLocator
+    code: str
+    message: str
+    source_field: Optional[str] = None
+    raw_value: Any = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.source, SourceLocator):
+            raise TypeError("source must be a SourceLocator")
+        for attribute in ("code", "message"):
+            value = getattr(self, attribute)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{attribute} must be a non-empty string")
+        if self.source_field is not None and (
+            not isinstance(self.source_field, str) or not self.source_field.strip()
+        ):
+            raise ValueError("source_field must be a non-empty string when supplied")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source": self.source.to_dict(),
+            "source_field": self.source_field,
+            "raw_value": _to_plain(self.raw_value),
+            "code": self.code,
+            "message": self.message,
+        }
 
 
 @dataclass
@@ -32,8 +93,14 @@ class Finding:
     raw_source_fields: Dict[str, Any] = field(default_factory=dict)
     source_location_codes: Dict[str, Any] = field(default_factory=dict)
     source_depth_codes: Dict[str, Any] = field(default_factory=dict)
+    source_distance_codes: Dict[str, Any] = field(default_factory=dict)
+    normalization_evidence: List[FindingNormalizationEvidence] = field(
+        default_factory=list
+    )
     descriptors: Dict[str, Any] = field(default_factory=dict)
-    normalization_warnings: List[str] = field(default_factory=list)
+    normalization_warnings: List[FindingNormalizationWarning] = field(
+        default_factory=list
+    )
     validation_issues: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     record_type: FindingRecordType = field(init=False)
@@ -51,6 +118,20 @@ class Finding:
             and self.interpretation.identity != self.identity
         ):
             raise ValueError("Finding interpretation identity must match Finding")
+        if any(
+            not isinstance(item, FindingNormalizationEvidence)
+            for item in self.normalization_evidence
+        ):
+            raise TypeError(
+                "normalization_evidence must contain FindingNormalizationEvidence"
+            )
+        if any(
+            not isinstance(item, FindingNormalizationWarning)
+            for item in self.normalization_warnings
+        ):
+            raise TypeError(
+                "normalization_warnings must contain FindingNormalizationWarning"
+            )
 
     @property
     def identity(self) -> Tuple[str, str]:
@@ -107,8 +188,14 @@ class Finding:
             "raw_source_fields": _to_plain(self.raw_source_fields),
             "source_location_codes": _to_plain(self.source_location_codes),
             "source_depth_codes": _to_plain(self.source_depth_codes),
+            "source_distance_codes": _to_plain(self.source_distance_codes),
+            "normalization_evidence": [
+                item.to_dict() for item in self.normalization_evidence
+            ],
             "descriptors": _to_plain(self.descriptors),
-            "normalization_warnings": _to_plain(self.normalization_warnings),
+            "normalization_warnings": [
+                warning.to_dict() for warning in self.normalization_warnings
+            ],
             "validation_issues": _to_plain(self.validation_issues),
             "metadata": _to_plain(self.metadata),
             "record_type": self.record_type.value,

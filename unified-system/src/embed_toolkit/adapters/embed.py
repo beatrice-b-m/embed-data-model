@@ -10,12 +10,18 @@ projects finding-image candidate sets from that owned hierarchy.
 from __future__ import annotations
 
 import ast
+import math
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
 from embed_toolkit.clinical.exams import BreastSide, Exam
-from embed_toolkit.clinical.findings import Finding
+from embed_toolkit.adapters.magview import normalize_magview_location
+from embed_toolkit.clinical.findings import (
+    Finding,
+    FindingNormalizationEvidence,
+    FindingNormalizationWarning,
+)
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.clinical.associations import (
@@ -39,6 +45,13 @@ from embed_toolkit.clinical.procedures import (
 )
 from embed_toolkit.config.columns import EmbedColumnConfig, default_embed_columns
 from embed_toolkit.core.build_policy import BuildPolicy
+from embed_toolkit.core.anatomy import (
+    AnatomicalPosition,
+    DepthThird,
+    MedialLateralAxis,
+    Quadrant,
+    SuperiorInferiorAxis,
+)
 from embed_toolkit.core.primitives import (
     ImageModality,
     Laterality,
@@ -174,6 +187,9 @@ class _ColumnAliases:
     finding_number: Tuple[str, ...] = ()
     clinical_side: Tuple[str, ...] = ()
     finding_type: Tuple[str, ...] = ("finding_type", "massshape", "finding")
+    finding_location: Tuple[str, ...] = ()
+    finding_depth: Tuple[str, ...] = ()
+    finding_distance: Tuple[str, ...] = ()
     assessment: Tuple[str, ...] = ()
     recommendation: Tuple[str, ...] = ()
     procedure_id: Tuple[str, ...] = ("procedure_id", "proc_id")
@@ -213,6 +229,17 @@ class _ColumnAliases:
     x_max: Tuple[str, ...] = ("x_max", "XMax")
 
 
+@dataclass(frozen=True)
+class _FindingAnatomyObservation:
+    position: Optional[AnatomicalPosition]
+    location_codes: dict[str, Any]
+    depth_codes: dict[str, Any]
+    distance_codes: dict[str, Any]
+    evidence: Tuple[FindingNormalizationEvidence, ...]
+    warnings: Tuple[FindingNormalizationWarning, ...]
+    issues: Tuple[BuildIssue, ...]
+
+
 _MISSING = object()
 
 
@@ -224,6 +251,22 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
         exam_date=_aliases(columns.study_date, "exam_date", "StudyDate"),
         finding_number=_aliases(columns.finding_number, "finding_number"),
         clinical_side=_aliases(columns.finding_laterality, "laterality"),
+        finding_location=_aliases(
+            columns.finding_location,
+            "finding_location",
+            "location",
+            "loc",
+        ),
+        finding_depth=_aliases(
+            columns.finding_depth,
+            "finding_depth",
+            "depth",
+        ),
+        finding_distance=_aliases(
+            columns.finding_distance,
+            "finding_distance",
+            "distance",
+        ),
         assessment=_aliases(columns.finding_assessment, "assessment", "birads"),
         recommendation=_aliases(
             columns.finding_recommendation,
@@ -469,6 +512,14 @@ def build_clinical_tables(
 
         assert finding_number is not None
         side = _clinical_laterality(_get(row, column_aliases.clinical_side))
+        anatomy = _finding_anatomy_from_row(
+            row,
+            column_aliases,
+            side,
+            locator,
+            policy,
+        )
+        build_issues.extend(anatomy.issues)
         row_interpretation = _interpretation_from_row(
             row,
             column_aliases,
@@ -483,10 +534,23 @@ def build_clinical_tables(
             finding_number=finding_number,
             finding_type=_string_value(_get(row, column_aliases.finding_type)),
             interpretation=row_interpretation,
+            anatomical_position=anatomy.position,
             raw_source_fields=dict(row),
+            source_location_codes=anatomy.location_codes,
+            source_depth_codes=anatomy.depth_codes,
+            source_distance_codes=anatomy.distance_codes,
+            normalization_evidence=list(anatomy.evidence),
+            normalization_warnings=list(anatomy.warnings),
         )
         finding = exam.add_finding(finding)
         if existing_finding is not None:
+            anatomy_issues = _merge_finding_anatomy(
+                existing_finding,
+                anatomy,
+                locator,
+                policy,
+            )
+            build_issues.extend(anatomy_issues)
             merged_interpretation, interpretation_issues = _merge_interpretations(
                 existing_finding.interpretation,
                 row_interpretation,
@@ -606,6 +670,299 @@ def _interpretation_from_row(
             if recommendation is _MISSING
             else AvailabilityState.BOUND
         ),
+    )
+
+
+def _finding_anatomy_from_row(
+    row: Row,
+    columns: _ColumnAliases,
+    laterality: Laterality,
+    locator: SourceLocator,
+    policy: BuildPolicy,
+) -> _FindingAnatomyObservation:
+    side_field, side_value = _matched_value(row, columns.clinical_side)
+    location_field, location_value = _matched_value(row, columns.finding_location)
+    depth_field, depth_value = _matched_value(row, columns.finding_depth)
+    distance_field, distance_value = _matched_value(row, columns.finding_distance)
+    location_codes = (
+        {location_field: location_value} if location_field is not None else {}
+    )
+    depth_codes = {depth_field: depth_value} if depth_field is not None else {}
+    distance_codes = (
+        {distance_field: distance_value} if distance_field is not None else {}
+    )
+    evidence = []
+    warnings = []
+    issues = []
+    position = None
+
+    has_location = location_field is not None and not _is_blank(location_value)
+    has_depth = depth_field is not None and not _is_blank(depth_value)
+    if has_location or has_depth:
+        normalized = normalize_magview_location(
+            laterality=laterality,
+            location_code=location_value if has_location else None,
+            depth_code=depth_value if has_depth else None,
+        )
+        source_fields = {
+            "location_code": (location_field, location_value),
+            "depth_code": (depth_field, depth_value),
+            "laterality": (side_field, side_value),
+        }
+        for item in normalized.evidence:
+            source_field, raw_value = source_fields[item.field]
+            if source_field is None:
+                continue
+            translated = FindingNormalizationEvidence(
+                source=locator,
+                source_field=source_field,
+                raw_value=raw_value,
+                normalized_kind=item.normalized_kind,
+                normalized_value=(
+                    item.normalized_value if laterality.is_unilateral else None
+                ),
+            )
+            if translated not in evidence:
+                evidence.append(translated)
+        for item in normalized.warnings:
+            source_field, raw_value = source_fields.get(
+                item.field,
+                (None, item.raw_value),
+            )
+            translated = FindingNormalizationWarning(
+                source=locator,
+                source_field=source_field,
+                raw_value=raw_value,
+                code=item.code,
+                message=item.message,
+            )
+            if translated not in warnings:
+                warnings.append(translated)
+        if laterality.is_unilateral:
+            position = normalized.position
+        else:
+            position = AnatomicalPosition(
+                laterality=laterality,
+                quadrant=Quadrant(laterality=laterality),
+            )
+
+    distance = None
+    if distance_field is not None and not _is_blank(distance_value):
+        try:
+            if isinstance(distance_value, bool):
+                raise ValueError
+            distance = float(distance_value)
+            if not math.isfinite(distance) or distance < 0:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            distance = None
+            issue = BuildIssue(
+                code="invalid_finding_distance",
+                message=(
+                    "Finding distance must be a finite, nonnegative value in "
+                    "centimeters."
+                ),
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={
+                    "source_field": distance_field,
+                    "raw_value": distance_value,
+                },
+            )
+            policy.handle_issue(issue)
+            issues.append(issue)
+        evidence.append(
+            FindingNormalizationEvidence(
+                source=locator,
+                source_field=distance_field,
+                raw_value=distance_value,
+                normalized_kind="distance_from_nipple_cm",
+                normalized_value=distance,
+            )
+        )
+        if position is None and distance is not None and laterality.is_unilateral:
+            position = AnatomicalPosition(
+                laterality=laterality,
+                quadrant=Quadrant(laterality=laterality),
+            )
+        if position is not None and distance is not None:
+            position = replace(position, distance_from_nipple_cm=distance)
+
+    has_anatomy_input = has_location or has_depth or (
+        distance_field is not None and not _is_blank(distance_value)
+    )
+    if (
+        has_anatomy_input
+        and not laterality.is_unilateral
+        and not any(warning.code == "unsupported_laterality" for warning in warnings)
+    ):
+        warnings.append(
+            FindingNormalizationWarning(
+                source=locator,
+                source_field=side_field,
+                raw_value=side_value if side_field is not None else None,
+                code="unsupported_laterality",
+                message=(
+                    "Finding anatomy normalization requires left or right "
+                    "laterality."
+                ),
+            )
+        )
+
+    return _FindingAnatomyObservation(
+        position=position,
+        location_codes=location_codes,
+        depth_codes=depth_codes,
+        distance_codes=distance_codes,
+        evidence=tuple(evidence),
+        warnings=tuple(warnings),
+        issues=tuple(issues),
+    )
+
+
+def _merge_finding_anatomy(
+    finding: Finding,
+    observed: _FindingAnatomyObservation,
+    locator: SourceLocator,
+    policy: BuildPolicy,
+) -> Tuple[BuildIssue, ...]:
+    merged_position, issues = _merge_anatomical_positions(
+        finding.anatomical_position,
+        observed.position,
+        finding,
+        locator,
+    )
+    for issue in issues:
+        policy.handle_issue(issue)
+    finding.anatomical_position = merged_position
+    for retained, additions in (
+        (finding.source_location_codes, observed.location_codes),
+        (finding.source_depth_codes, observed.depth_codes),
+        (finding.source_distance_codes, observed.distance_codes),
+    ):
+        for source_field, raw_value in additions.items():
+            retained.setdefault(source_field, raw_value)
+    for item in observed.evidence:
+        if item not in finding.normalization_evidence:
+            finding.normalization_evidence.append(item)
+    for warning in observed.warnings:
+        if warning not in finding.normalization_warnings:
+            finding.normalization_warnings.append(warning)
+    return issues
+
+
+def _merge_anatomical_positions(
+    retained: Optional[AnatomicalPosition],
+    observed: Optional[AnatomicalPosition],
+    finding: Finding,
+    locator: SourceLocator,
+) -> Tuple[Optional[AnatomicalPosition], Tuple[BuildIssue, ...]]:
+    if observed is None:
+        return retained, ()
+    if retained is None:
+        return observed, ()
+    issues = []
+    if retained.laterality is not observed.laterality:
+        issues.append(
+            _anatomy_conflict_issue(
+                finding,
+                locator,
+                "laterality",
+                retained.laterality.value,
+                observed.laterality.value,
+            )
+        )
+        return retained, tuple(issues)
+
+    def merge_value(
+        attribute: str,
+        current: Any,
+        candidate: Any,
+        missing: Any,
+    ) -> Any:
+        if candidate is missing:
+            return current
+        if current is missing:
+            return candidate
+        if current != candidate:
+            issues.append(
+                _anatomy_conflict_issue(
+                    finding,
+                    locator,
+                    attribute,
+                    getattr(current, "value", current),
+                    getattr(candidate, "value", candidate),
+                )
+            )
+        return current
+
+    quadrant = Quadrant(
+        laterality=retained.laterality,
+        ml=merge_value(
+            "quadrant.ml",
+            retained.quadrant.ml,
+            observed.quadrant.ml,
+            MedialLateralAxis.UNKNOWN,
+        ),
+        si=merge_value(
+            "quadrant.si",
+            retained.quadrant.si,
+            observed.quadrant.si,
+            SuperiorInferiorAxis.UNKNOWN,
+        ),
+        depth=merge_value(
+            "quadrant.depth",
+            retained.quadrant.depth,
+            observed.quadrant.depth,
+            DepthThird.UNKNOWN,
+        ),
+    )
+    return (
+        AnatomicalPosition(
+            laterality=retained.laterality,
+            quadrant=quadrant,
+            clock_position=merge_value(
+                "clock_position",
+                retained.clock_position,
+                observed.clock_position,
+                None,
+            ),
+            location_category=merge_value(
+                "location_category",
+                retained.location_category,
+                observed.location_category,
+                None,
+            ),
+            distance_from_nipple_cm=merge_value(
+                "distance_from_nipple_cm",
+                retained.distance_from_nipple_cm,
+                observed.distance_from_nipple_cm,
+                None,
+            ),
+        ),
+        tuple(issues),
+    )
+
+
+def _anatomy_conflict_issue(
+    finding: Finding,
+    locator: SourceLocator,
+    attribute: str,
+    retained: Any,
+    observed: Any,
+) -> BuildIssue:
+    return BuildIssue(
+        code="conflicting_finding_anatomical_value",
+        message="Repeated rows contain conflicting normalized finding anatomy.",
+        severity=IssueSeverity.ERROR,
+        source=locator,
+        context={
+            "accession_number": finding.accession_number,
+            "finding_number": finding.finding_number,
+            "attribute": attribute,
+            "retained": retained,
+            "observed": observed,
+        },
     )
 
 
@@ -1339,6 +1696,15 @@ def _get(row: Row, names: Tuple[str, ...]) -> Any:
         if name in row:
             return row[name]
     return _MISSING
+
+
+def _matched_value(row: Row, names: Tuple[str, ...]) -> Tuple[Optional[str], Any]:
+    """Return the first physically present alias and its value, including null."""
+
+    for name in names:
+        if name in row:
+            return name, row[name]
+    return None, _MISSING
 
 
 def _sequence_value(value: Any) -> Tuple[Any, ...]:

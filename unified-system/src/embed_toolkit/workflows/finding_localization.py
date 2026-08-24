@@ -51,6 +51,34 @@ class FindingLocalizer:
         if metadata:
             result_metadata.update(dict(metadata))
 
+        if finding is not None:
+            evidence.extend(
+                Evidence(
+                    kind=item.normalized_kind,
+                    source=item.source.source_profile,
+                    payload={
+                        "source": item.source.to_dict(),
+                        "field": item.source_field,
+                        "raw_value": item.raw_value,
+                        "normalized_value": item.normalized_value,
+                    },
+                )
+                for item in finding.normalization_evidence
+            )
+            warnings.extend(
+                AuditWarning(
+                    code=warning.code,
+                    message=warning.message,
+                    payload={
+                        "source": warning.source.to_dict(),
+                        "field": warning.source_field,
+                        "raw_value": warning.raw_value,
+                        "finding_id": finding.finding_id,
+                    },
+                )
+                for warning in finding.normalization_warnings
+            )
+
         if finding is not None and finding.anatomical_position is not None:
             position = finding.anatomical_position
             evidence.append(
@@ -62,7 +90,7 @@ class FindingLocalizer:
                 )
             )
             result_metadata["preferred_source"] = "finding.anatomical_position"
-            status = ResultStatus.SUCCESS
+            status = _status_for_position(position=position, warnings=warnings)
         else:
             normalized = normalize_magview_location(
                 laterality=context.laterality,
@@ -103,16 +131,6 @@ class FindingLocalizer:
                 )
             result_metadata["preferred_source"] = self.source
             status = _status_for_position(position=position, warnings=warnings)
-
-        if finding is not None and finding.normalization_warnings:
-            warnings.extend(
-                AuditWarning(
-                    code="finding_normalization_warning",
-                    message=warning,
-                    payload={"finding_id": finding.finding_id},
-                )
-                for warning in finding.normalization_warnings
-            )
 
         return LocalizationResult(
             status=status,
@@ -219,6 +237,7 @@ def _status_for_position(
         or quadrant.ml.value != "unknown"
         or quadrant.si.value != "unknown"
         or quadrant.depth.value != "unknown"
+        or position.distance_from_nipple_cm is not None
     )
     if not has_location:
         return ResultStatus.FAILED

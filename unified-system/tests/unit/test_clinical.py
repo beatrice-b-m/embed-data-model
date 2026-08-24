@@ -7,7 +7,11 @@ import pytest
 
 from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
-from embed_toolkit.clinical.findings import Finding, FindingRecordType
+from embed_toolkit.clinical.findings import (
+    Finding,
+    FindingNormalizationWarning,
+    FindingRecordType,
+)
 from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.clinical.procedures import Procedure, ProcedureIdentity
 from embed_toolkit.core.anatomy import (
@@ -142,7 +146,21 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
         source_location_codes={"loc": "C2"},
         source_depth_codes={"depth": "P"},
         descriptors={"mass": {"shape": "oval"}},
-        normalization_warnings=["unknown margin code X"],
+        normalization_warnings=[
+            FindingNormalizationWarning(
+                source=SourceLocator(
+                    scope="clinical-materialization",
+                    scope_kind=SourceScopeKind.MATERIALIZATION,
+                    source_profile="embed_context_internal",
+                    source_table="magview",
+                    row_ordinal=0,
+                ),
+                source_field="margin",
+                raw_value="X",
+                code="unknown_margin_code",
+                message="Unknown margin code X.",
+            )
+        ],
     )
 
     serialized = asdict(finding)
@@ -152,7 +170,8 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
     assert serialized["source_location_codes"] == {"loc": "C2"}
     assert serialized["source_depth_codes"] == {"depth": "P"}
     assert serialized["descriptors"] == {"mass": {"shape": "oval"}}
-    assert serialized["normalization_warnings"] == ["unknown margin code X"]
+    assert serialized["normalization_warnings"][0]["code"] == "unknown_margin_code"
+    assert plain["normalization_warnings"][0]["source_field"] == "margin"
     assert serialized["anatomical_position"]["distance_from_nipple_cm"] == 4.5
     assert plain["laterality"] == "L"
     assert plain["anatomical_position"]["clock_position"]["hour"] == 2
