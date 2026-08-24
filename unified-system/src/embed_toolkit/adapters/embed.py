@@ -1577,7 +1577,7 @@ def _interpretation_from_row(
         accession_number=accession_number,
         finding_number=finding_number,
         sources=(locator,),
-        assessment=_string_value(assessment),
+        assessment=_assessment_value(assessment, locator.source_profile),
         assessment_availability=(
             AvailabilityState.UNAVAILABLE
             if assessment is _MISSING
@@ -1590,6 +1590,15 @@ def _interpretation_from_row(
             else AvailabilityState.BOUND
         ),
     )
+
+
+def _assessment_value(value: Any, source_profile: str) -> Optional[str]:
+    """Normalize governed Internal V2 assessment codes for semantic comparison."""
+
+    text = _string_value(value)
+    if text is None or source_profile != INTERNAL_V2_PROFILE:
+        return text
+    return text.strip().upper()
 
 
 def _finding_anatomy_from_row(

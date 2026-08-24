@@ -106,6 +106,23 @@ def test_repeated_interpretation_rows_fill_values_and_retain_unique_sources() ->
     assert tables.build_issues == ()
 
 
+def test_internal_v2_assessment_comparison_trims_and_normalizes_case() -> None:
+    tables = build_clinical_tables(
+        [
+            row("1", asses="s"),
+            row("1", asses=" S "),
+        ],
+        source_scope="clinical-materialization",
+    )
+
+    assert tables.interpretations[0].assessment == "S"
+    assert tables.build_issues == ()
+    assert [occurrence.raw_values["asses"] for occurrence in tables.source_occurrences] == [
+        "s",
+        " S ",
+    ]
+
+
 def test_audit_retains_first_conflicting_interpretation_values() -> None:
     tables = build_clinical_tables(
         [
