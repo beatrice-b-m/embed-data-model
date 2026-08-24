@@ -10,9 +10,17 @@ from embed_toolkit.adapters.embed import (
 )
 from embed_toolkit.audit.results import ResultStatus
 from embed_toolkit.clinical.associations import AttributionStatus
-from embed_toolkit.core.primitives import Laterality, ViewPosition
+from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.alignment import Alignment, AlignmentDirection
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark, LandmarkType
+from embed_toolkit.imaging.roi_provenance import (
+    RoiDepthFrameProvenance,
+    RoiLocator,
+    RoiSourceCount,
+    RoiSourceCountBasis,
+    RoiSourceProvenance,
+)
 from embed_toolkit.imaging.rois import RegionOfInterest
 from embed_toolkit.workflows.finding_localization import FindingLocalizer
 from embed_toolkit.workflows.finding_roi_matching import FindingRoiMatcher
@@ -23,11 +31,11 @@ def warning_codes(result: object) -> set[str]:
     return {warning.code for warning in result.warnings}
 
 
-def candidate_for(result: object, roi_id: str) -> object:
+def candidate_for(result: object, locator: RoiLocator) -> object:
     return next(
         candidate
         for candidate in result.candidates
-        if roi_id in candidate.payload.get("roi_ids", [])
+        if locator in candidate.roi_locators
     )
 
 
@@ -66,16 +74,35 @@ def mlo_geometry() -> BreastGeometry:
 
 
 def aligned_roi(
-    roi_id: str,
+    source_value: str,
     coordinates: tuple[float, float, float, float],
     *,
     image_id: str = "left-cc",
 ) -> RegionOfInterest:
+    source = SourceLocator(
+        scope="legacy-parity-tests",
+        scope_kind=SourceScopeKind.MATERIALIZATION,
+        source_profile="test",
+        source_table="images",
+        source_key=image_id,
+    )
     return RegionOfInterest(
         coordinates,
-        roi_id=roi_id,
+        locator=RoiLocator.from_source(
+            image_locator=source,
+            source_value=source_value,
+        ),
         image_id=image_id,
-        source="synthetic-parity",
+        source_provenance=RoiSourceProvenance(
+            modality=ImageModality.FFDM,
+            source_count=RoiSourceCount(
+                1,
+                RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+            ),
+            depth_frame_provenance=RoiDepthFrameProvenance.NOT_APPLICABLE_2D,
+        ),
+        sources=(source,),
+        annotation_source="synthetic-parity",
         coordinate_frame_id=f"{image_id}-aligned",
     )
 
@@ -159,8 +186,7 @@ def test_legacy_parity_bilateral_candidate_projection_uses_both_sides() -> None:
         "ACC-EXPAND:U": ["left-cc", "right-cc"],
     }
     assert all(
-        projection.status is AttributionStatus.CANDIDATE
-        for projection in projections
+        projection.status is AttributionStatus.CANDIDATE for projection in projections
     )
 
 
@@ -185,12 +211,26 @@ def test_legacy_parity_localization_preserves_source_evidence() -> None:
 
 
 def test_legacy_parity_roi_localization_preserves_geometry_evidence() -> None:
-    roi = RegionOfInterest(
+    base = aligned_roi(
+        "roi-source-evidence",
         (75, 85, 85, 95),
-        roi_id="roi-source-evidence",
-        image_id="left-cc",
-        frame_index=7,
-        source="roi-table",
+    )
+    provenance = RoiSourceProvenance(
+        modality=ImageModality.DBT,
+        source_count=RoiSourceCount(
+            1,
+            RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+        ),
+        depth_frame_provenance=RoiDepthFrameProvenance.SOURCE_SUPPLIED,
+        frame_indices=(7,),
+    )
+    roi = RegionOfInterest(
+        base.coordinates,
+        locator=base.locator,
+        image_id=base.image_id,
+        source_provenance=provenance,
+        sources=base.sources,
+        annotation_source="roi-table",
         confidence=0.75,
         coordinate_frame_id="left-cc-aligned",
     )
@@ -200,17 +240,16 @@ def test_legacy_parity_roi_localization_preserves_geometry_evidence() -> None:
     roi_evidence = result.evidence[0]
     geometry_evidence = result.evidence[1]
     assert result.status is ResultStatus.SUCCESS
-    assert result.metadata["frame_index"] == 7
+    assert result.metadata["frame_indices"] == (7,)
     assert roi_evidence.kind == "roi_geometry"
     assert roi_evidence.source == "roi-table"
     assert roi_evidence.confidence == 0.75
     assert roi_evidence.payload == {
-        "roi_id": "roi-source-evidence",
+        "roi_locator": roi.locator.to_dict(),
         "image_id": "left-cc",
-            "frame_index": 7,
-            "frame_indices": [7],
-        "coordinates": [75, 85, 85, 95],
-        "centroid": [80.0, 90.0],
+        "frame_indices": (7,),
+        "coordinates": (75, 85, 85, 95),
+        "centroid": (80.0, 90.0),
         "coordinate_frame_id": "left-cc-aligned",
     }
     assert geometry_evidence.kind == "breast_geometry"
@@ -229,7 +268,7 @@ def test_legacy_parity_mlo_roi_geometry_maps_view_observable_axis() -> None:
     assert result.status is ResultStatus.SUCCESS
     assert result.continuous_position["si"] == pytest.approx(0.5)
     assert result.continuous_position["depth"] == pytest.approx(1.5)
-    assert result.continuous_position["observable_axes"] == ["si", "depth"]
+    assert result.continuous_position["observable_axes"] == ("si", "depth")
     assert result.anatomical_position["quadrant"] == {
         "ml": "unknown",
         "si": "superior",
@@ -237,7 +276,9 @@ def test_legacy_parity_mlo_roi_geometry_maps_view_observable_axis() -> None:
     }
 
 
-def test_legacy_parity_matching_uses_aligned_roi_geometry_and_reports_unmatched() -> None:
+def test_legacy_parity_matching_uses_aligned_roi_geometry_and_reports_unmatched() -> (
+    None
+):
     raw_alignment = Alignment(AlignmentDirection.RIGHT, AlignmentDirection.DOWN)
     raw_box = (15, 85, 25, 95)
     aligned_box = raw_alignment.realign_box(raw_box, height=120, width=120)
@@ -262,18 +303,18 @@ def test_legacy_parity_matching_uses_aligned_roi_geometry_and_reports_unmatched(
         accession_number="ACC-PARITY",
         breast_side="L",
     )[0]
-    matched_candidate = candidate_for(result, "roi-matched")
-    unmatched_candidate = candidate_for(result, "roi-unmatched")
+    matched_candidate = candidate_for(result, matched_roi.locator)
+    unmatched_candidate = candidate_for(result, unmatched_roi.locator)
 
     assert aligned_box == (95.0, 25.0, 105.0, 35.0)
-    assert result.matched_roi_id == "roi-matched"
-    assert result.unmatched_roi_ids == ["roi-unmatched"]
+    assert result.matched_roi_locators == (matched_roi.locator,)
+    assert result.unmatched_roi_locators == (unmatched_roi.locator,)
     assert result.status is ResultStatus.SUCCESS
     assert "unmatched_rois" in warning_codes(result)
     assert matched_candidate.score == 1.0
-    assert matched_candidate.payload["scored_axes"] == ["ml", "depth"]
+    assert matched_candidate.payload["scored_axes"] == ("ml", "depth")
     assert unmatched_candidate.score == 0.0
-    assert unmatched_candidate.payload["axis_scores"] == [
+    assert unmatched_candidate.payload["axis_scores"] == (
         {
             "axis": "ml",
             "finding_value": "lateral",
@@ -286,4 +327,4 @@ def test_legacy_parity_matching_uses_aligned_roi_geometry_and_reports_unmatched(
             "roi_value": "middle",
             "matched": False,
         },
-    ]
+    )

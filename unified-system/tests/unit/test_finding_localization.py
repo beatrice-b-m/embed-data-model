@@ -116,9 +116,13 @@ def test_explicit_raw_localization_input_supplies_clock_location_and_depth() -> 
 def test_retroareolar_central_and_axillary_tail_categories_are_preserved() -> None:
     localizer = FindingLocalizer()
 
-    retro = localizer.localize(laterality="L", location_code="RA")
-    central = localizer.localize(laterality="R", location_code="central")
-    axillary_tail = localizer.localize(laterality="L", location_code="T")
+    retro = localizer.localize(laterality="L", location_code="RA", subject_id="retro")
+    central = localizer.localize(
+        laterality="R", location_code="central", subject_id="central"
+    )
+    axillary_tail = localizer.localize(
+        laterality="L", location_code="T", subject_id="axillary-tail"
+    )
 
     assert (
         retro.anatomical_position["location_category"]
@@ -143,8 +147,9 @@ def test_unknown_or_missing_location_evidence_warns_without_crashing() -> None:
         location_code="??",
         depth_code="deep",
         clock_code="13",
+        subject_id="unknown-location",
     )
-    missing = FindingLocalizer().localize(laterality="R")
+    missing = FindingLocalizer().localize(laterality="R", subject_id="missing-location")
 
     assert unknown.status is ResultStatus.FAILED
     assert {
@@ -162,6 +167,7 @@ def test_ambiguous_depth_warning_returns_partial_localization() -> None:
         laterality="R",
         location_code="W",
         depth_code=("A", "P"),
+        subject_id="ambiguous-depth",
     )
 
     assert result.status is ResultStatus.PARTIAL

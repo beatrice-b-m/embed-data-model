@@ -10,7 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional, Sequence, Tuple
 
-from embed_toolkit.audit.evidence import JsonValue, serialize_value
+from embed_toolkit.audit.evidence import (
+    JsonValue,
+    freeze_json_mapping,
+    serialize_mapping,
+    serialize_value,
+)
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark
 from embed_toolkit.imaging.rois import RegionOfInterest
@@ -29,13 +34,33 @@ class MammogramRenderPlan:
     layers: Tuple[Layer, ...] = field(default_factory=tuple)
     metadata: Mapping[str, JsonValue] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if self.image_id is not None and (
+            not isinstance(self.image_id, str) or not self.image_id.strip()
+        ):
+            raise ValueError("image_id must be a non-empty string when supplied")
+        if self.shape is not None:
+            shape = tuple(self.shape)
+            if len(shape) != 2 or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in shape
+            ):
+                raise ValueError("shape must contain two non-negative integers")
+            object.__setattr__(self, "shape", shape)
+        object.__setattr__(
+            self,
+            "layers",
+            tuple(freeze_json_mapping(layer) for layer in self.layers),
+        )
+        object.__setattr__(self, "metadata", freeze_json_mapping(self.metadata))
+
     def to_dict(self) -> dict[str, JsonValue]:
         return {
             "kind": "mammogram_render_plan",
             "image_id": self.image_id,
             "shape": list(self.shape) if self.shape is not None else None,
-            "layers": [dict(layer) for layer in self.layers],
-            "metadata": serialize_value(self.metadata),
+            "layers": [serialize_mapping(layer) for layer in self.layers],
+            "metadata": serialize_mapping(self.metadata),
         }
 
 
@@ -150,13 +175,13 @@ def _pixel_layer(pixels: Any, *, include_values: bool) -> dict[str, JsonValue]:
 def _roi_box_layer(roi: RegionOfInterest) -> dict[str, JsonValue]:
     return {
         "type": "roi_box",
-        "roi_id": roi.roi_id,
+        "roi_locator": roi.locator.to_dict(),
         "image_id": roi.image_id,
-        "frame_index": roi.frame_index,
         "frame_indices": list(roi.frame_indices),
         "coordinates": list(roi.coordinates),
         "coordinate_order": "yxyx",
-        "source": roi.source,
+        "annotation_source": roi.annotation_source,
+        "source_provenance": roi.source_provenance.to_dict(),
         "confidence": roi.confidence,
         "coordinate_frame_id": roi.coordinate_frame_id,
     }
@@ -165,7 +190,7 @@ def _roi_box_layer(roi: RegionOfInterest) -> dict[str, JsonValue]:
 def _centroid_layer(roi: RegionOfInterest) -> dict[str, JsonValue]:
     return {
         "type": "centroid",
-        "roi_id": roi.roi_id,
+        "roi_locator": roi.locator.to_dict(),
         "point": list(roi.centroid),
         "coordinate_order": "yx",
     }

@@ -2,8 +2,21 @@ from __future__ import annotations
 
 import pytest
 
-from embed_toolkit.audit.results import AttributionState, LocalizationResult, ResultStatus
+from embed_toolkit.audit.results import (
+    AttributionState,
+    LocalizationResult,
+    ResultStatus,
+)
+from embed_toolkit.core.primitives import ImageModality
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.roi_groups import RoiGroup
+from embed_toolkit.imaging.roi_provenance import (
+    RoiDepthFrameProvenance,
+    RoiLocator,
+    RoiSourceCount,
+    RoiSourceCountBasis,
+    RoiSourceProvenance,
+)
 from embed_toolkit.imaging.rois import RegionOfInterest
 from embed_toolkit.workflows.finding_roi_matching import FindingRoiMatcher
 
@@ -18,9 +31,11 @@ def localized(
     depth: str = "unknown",
     accession_number: str = "ACC-1",
 ) -> LocalizationResult:
+    locator = roi_locator(subject_id) if subject_type == "roi" else None
     return LocalizationResult(
-        subject_id=subject_id,
+        subject_id="" if locator is not None else subject_id,
         subject_type=subject_type,
+        roi_locator=locator,
         anatomical_position={
             "laterality": side,
             "quadrant": {
@@ -34,7 +49,40 @@ def localized(
     )
 
 
-def test_singleton_finding_accepts_all_compatible_groups_and_raw_roi_ids() -> None:
+def roi_locator(value: str) -> RoiLocator:
+    return RoiLocator.from_source(
+        image_locator=SourceLocator(
+            scope="inferred-matching-tests",
+            scope_kind=SourceScopeKind.MATERIALIZATION,
+            source_profile="test",
+            source_table="images",
+            source_key=f"image:{value}",
+        ),
+        source_value=value,
+    )
+
+
+def domain_roi(
+    value: str, image_id: str, coordinates: tuple[int, int, int, int]
+) -> RegionOfInterest:
+    locator = roi_locator(value)
+    return RegionOfInterest(
+        coordinates,
+        locator=locator,
+        image_id=image_id,
+        source_provenance=RoiSourceProvenance(
+            modality=ImageModality.FFDM,
+            source_count=RoiSourceCount(
+                1,
+                RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+            ),
+            depth_frame_provenance=RoiDepthFrameProvenance.NOT_APPLICABLE_2D,
+        ),
+        sources=(locator.image_locator,),
+    )
+
+
+def test_singleton_finding_accepts_all_compatible_groups_and_roi_locators() -> None:
     finding = localized("finding-1", "finding", "L", ml="lateral", depth="posterior")
     rois = [
         localized("roi-cc", "roi", "L", ml="lateral", depth="posterior"),
@@ -46,18 +94,8 @@ def test_singleton_finding_accepts_all_compatible_groups_and_raw_roi_ids() -> No
         accession_number="ACC-1",
         laterality="L",
         rois=(
-            RegionOfInterest(
-                (0, 0, 1, 1),
-                roi_id="roi-cc",
-                image_id="img-cc",
-                frame_indices=(12, 13),
-            ),
-            RegionOfInterest(
-                (1, 1, 2, 2),
-                roi_id="roi-mlo",
-                image_id="img-mlo",
-                frame_indices=(20,),
-            ),
+            domain_roi("roi-cc", "img-cc", (0, 0, 1, 1)),
+            domain_roi("roi-mlo", "img-mlo", (1, 1, 2, 2)),
         ),
         grouping_basis="reviewed_cross_view",
     )
@@ -73,10 +111,18 @@ def test_singleton_finding_accepts_all_compatible_groups_and_raw_roi_ids() -> No
     assert result.status is ResultStatus.SUCCESS
     assert result.attribution_state is AttributionState.INFERRED
     assert result.attribution_basis == "inferred"
-    assert result.matched_roi_group_ids == ["group:roi-extra", "lesion-cross-view"]
-    assert result.matched_roi_ids == ["roi-extra", "roi-cc", "roi-mlo"]
-    assert result.matched_roi_id is None
-    assert result.unmatched_roi_ids == []
+    assert "lesion-cross-view" in result.matched_roi_group_ids
+    assert result.matched_roi_locators == tuple(
+        sorted(
+            (
+                roi_locator("roi-extra"),
+                roi_locator("roi-cc"),
+                roi_locator("roi-mlo"),
+            ),
+            key=lambda locator: str(locator.to_dict()),
+        )
+    )
+    assert result.unmatched_roi_locators == ()
     assert result.algorithm_version == "finding-roi-inference-v2"
 
 
@@ -98,11 +144,13 @@ def test_multifinding_policy_ranks_groups_deterministically() -> None:
         "finding-lower",
         "finding-upper",
     ]
-    assert [result.matched_roi_ids for result in results] == [
-        ["roi-lower"],
-        ["roi-upper"],
+    assert [result.matched_roi_locators for result in results] == [
+        (roi_locator("roi-lower"),),
+        (roi_locator("roi-upper"),),
     ]
-    assert all(result.attribution_state is AttributionState.INFERRED for result in results)
+    assert all(
+        result.attribution_state is AttributionState.INFERRED for result in results
+    )
     assert all(result.score == 1.0 for result in results)
 
 
@@ -121,10 +169,14 @@ def test_tied_multifinding_candidates_are_ambiguous_not_ground_truth() -> None:
     )
 
     assert all(result.status is ResultStatus.SUCCESS for result in results)
-    assert all(result.attribution_state is AttributionState.AMBIGUOUS for result in results)
-    assert all(result.matched_roi_ids == [] for result in results)
+    assert all(
+        result.attribution_state is AttributionState.AMBIGUOUS for result in results
+    )
+    assert all(result.matched_roi_locators == () for result in results)
     assert all(result.score_margin == 0.0 for result in results)
-    assert all(result.attribution_state is not AttributionState.VALIDATED for result in results)
+    assert all(
+        result.attribution_state is not AttributionState.VALIDATED for result in results
+    )
 
 
 def test_weak_evidence_abstains_while_retaining_axis_evidence() -> None:
@@ -149,10 +201,10 @@ def test_weak_evidence_abstains_while_retaining_axis_evidence() -> None:
 
     assert result.status is ResultStatus.SUCCESS
     assert result.attribution_state is AttributionState.ABSTAINED
-    assert result.matched_roi_ids == []
+    assert result.matched_roi_locators == ()
     assert result.score == 0.5
     assert result.observed_descriptors == {"ml": "lateral", "depth": "posterior"}
-    assert result.scored_descriptors == ["ml", "depth"]
+    assert result.scored_descriptors == ("ml", "depth")
     assert result.candidates[0].payload["axis_scores"][1] == {
         "axis": "depth",
         "finding_value": "posterior",
@@ -174,7 +226,7 @@ def test_matching_rejects_unscoped_or_cross_scoped_inputs() -> None:
         matcher.match([finding], [roi], accession_number="ACC-1", breast_side="L")
 
 
-def test_transitional_singular_accessor_only_exposes_exactly_one_roi() -> None:
+def test_matching_serializes_only_plural_structured_roi_locators() -> None:
     singular = localized("finding-1", "finding", "R", depth="posterior")
     one = localized("roi-1", "roi", "R", depth="posterior")
     two = localized("roi-2", "roi", "R", depth="posterior")
@@ -187,7 +239,40 @@ def test_transitional_singular_accessor_only_exposes_exactly_one_roi() -> None:
         [singular], [one, two], accession_number="ACC-1", breast_side="R"
     )[0]
 
-    assert singular_result.matched_roi_id == "roi-1"
-    assert singular_result.to_dict()["matched_roi_ids"] == ["roi-1"]
-    assert plural_result.matched_roi_id is None
-    assert plural_result.to_dict()["matched_roi_ids"] == ["roi-1", "roi-2"]
+    assert singular_result.to_dict()["matched_roi_locators"] == [
+        roi_locator("roi-1").to_dict()
+    ]
+    assert plural_result.to_dict()["matched_roi_locators"] == [
+        locator.to_dict() for locator in plural_result.matched_roi_locators
+    ]
+
+
+def test_matching_rejects_duplicate_group_ids() -> None:
+    finding = localized("finding-1", "finding", "L", ml="lateral")
+    rois = [
+        localized("roi-a", "roi", "L", ml="lateral"),
+        localized("roi-b", "roi", "L", ml="lateral"),
+    ]
+    groups = [
+        RoiGroup(
+            group_id="duplicate",
+            accession_number="ACC-1",
+            laterality="L",
+            rois=(domain_roi("roi-a", "img-a", (0, 0, 1, 1)),),
+        ),
+        RoiGroup(
+            group_id="duplicate",
+            accession_number="ACC-1",
+            laterality="L",
+            rois=(domain_roi("roi-b", "img-b", (0, 0, 1, 1)),),
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="group IDs must be unique"):
+        FindingRoiMatcher().match(
+            [finding],
+            rois,
+            accession_number="ACC-1",
+            breast_side="L",
+            roi_groups=groups,
+        )

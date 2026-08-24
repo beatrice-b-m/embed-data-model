@@ -5,19 +5,76 @@ import json
 import pytest
 
 from embed_toolkit.audit.results import ResultStatus
-from embed_toolkit.core.anatomy import DepthThird, MedialLateralAxis, SuperiorInferiorAxis
-from embed_toolkit.core.primitives import Laterality, ViewPosition
+from embed_toolkit.core.anatomy import (
+    DepthThird,
+    MedialLateralAxis,
+    SuperiorInferiorAxis,
+)
+from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark, LandmarkType
+from embed_toolkit.imaging.roi_provenance import (
+    RoiDepthFrameProvenance,
+    RoiLocator,
+    RoiSourceCount,
+    RoiSourceCountBasis,
+    RoiSourceProvenance,
+)
 from embed_toolkit.imaging.rois import RegionOfInterest
 from embed_toolkit.workflows.roi_localization import RoiLocalizer
 
 
+def roi(
+    coordinates: tuple[float, float, float, float],
+    value: str,
+    image_id: str,
+    *,
+    frame_indices: tuple[int, ...] = (),
+    annotation_source: str | None = None,
+    confidence: float | None = None,
+    coordinate_frame_id: str | None = None,
+) -> RegionOfInterest:
+    source = SourceLocator(
+        scope="roi-localization-tests",
+        scope_kind=SourceScopeKind.MATERIALIZATION,
+        source_profile="test",
+        source_table="images",
+        source_key=image_id,
+    )
+    modality = ImageModality.DBT if frame_indices else ImageModality.FFDM
+    return RegionOfInterest(
+        coordinates,
+        locator=RoiLocator.from_source(
+            image_locator=source,
+            source_value=value,
+        ),
+        image_id=image_id,
+        source_provenance=RoiSourceProvenance(
+            modality=modality,
+            source_count=RoiSourceCount(
+                1,
+                RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+            ),
+            depth_frame_provenance=(
+                RoiDepthFrameProvenance.SOURCE_SUPPLIED
+                if frame_indices
+                else RoiDepthFrameProvenance.NOT_APPLICABLE_2D
+            ),
+            frame_indices=frame_indices,
+        ),
+        sources=(source,),
+        annotation_source=annotation_source,
+        confidence=confidence,
+        coordinate_frame_id=coordinate_frame_id,
+    )
+
+
 def test_roi_localizer_projects_centroid_to_continuous_and_discrete_position() -> None:
-    roi = RegionOfInterest(
+    observed = roi(
         (45, 45, 55, 55),
-        roi_id="roi-1",
-        image_id="img-cc",
-        source="embed",
+        "roi-1",
+        "img-cc",
+        annotation_source="embed",
         confidence=0.9,
     )
     geometry = BreastGeometry(
@@ -32,11 +89,12 @@ def test_roi_localizer_projects_centroid_to_continuous_and_discrete_position() -
         ),
     )
 
-    result = RoiLocalizer(expected_axes=("ml", "depth")).localize(roi, geometry)
+    result = RoiLocalizer(expected_axes=("ml", "depth")).localize(observed, geometry)
     serialized = result.to_dict()
 
     assert result.status is ResultStatus.SUCCESS
-    assert serialized["subject_id"] == "roi-1"
+    assert serialized["roi_locator"] == observed.locator.to_dict()
+    assert "subject_id" not in serialized
     assert serialized["continuous_position"]["ml"] == pytest.approx(0.0)
     assert serialized["continuous_position"]["depth"] == pytest.approx(1.0)
     assert serialized["continuous_position"]["observable_axes"] == ["ml", "depth"]
@@ -46,19 +104,23 @@ def test_roi_localizer_projects_centroid_to_continuous_and_discrete_position() -
         "depth": DepthThird.MIDDLE.value,
     }
     assert serialized["evidence"][0]["payload"]["centroid"] == [50.0, 50.0]
-    assert serialized["evidence"][1]["payload"]["coordinate_frame_id"] == "aligned-left-cc"
+    assert (
+        serialized["evidence"][1]["payload"]["coordinate_frame_id"] == "aligned-left-cc"
+    )
     json.dumps(serialized)
 
 
-def test_roi_localizer_returns_partial_result_when_nipple_and_depth_are_missing() -> None:
-    roi = RegionOfInterest((10, 20, 30, 40), roi_id="roi-2", image_id="img-missing")
+def test_roi_localizer_returns_partial_result_when_nipple_and_depth_are_missing() -> (
+    None
+):
+    observed = roi((10, 20, 30, 40), "roi-2", "img-missing")
     geometry = BreastGeometry(
         image_id="img-missing",
         laterality=Laterality.RIGHT,
         view_position=ViewPosition.MLO,
     )
 
-    result = RoiLocalizer().localize(roi, geometry)
+    result = RoiLocalizer().localize(observed, geometry)
     serialized = result.to_dict()
 
     assert result.status is ResultStatus.PARTIAL
@@ -79,7 +141,7 @@ def test_roi_localizer_returns_partial_result_when_nipple_and_depth_are_missing(
 
 
 def test_roi_localizer_names_si_unobservable_for_cc_view() -> None:
-    roi = RegionOfInterest((45, 45, 55, 55), roi_id="roi-cc", image_id="img-cc")
+    observed = roi((45, 45, 55, 55), "roi-cc", "img-cc")
     geometry = BreastGeometry(
         image_id="img-cc",
         laterality=Laterality.LEFT,
@@ -91,7 +153,7 @@ def test_roi_localizer_names_si_unobservable_for_cc_view() -> None:
         ),
     )
 
-    result = RoiLocalizer().localize(roi, geometry)
+    result = RoiLocalizer().localize(observed, geometry)
     serialized = result.to_dict()
 
     assert result.status is ResultStatus.PARTIAL
@@ -107,7 +169,7 @@ def test_roi_localizer_names_si_unobservable_for_cc_view() -> None:
 
 
 def test_roi_localizer_names_ml_unobservable_for_mlo_view() -> None:
-    roi = RegionOfInterest((40, 30, 60, 50), roi_id="roi-mlo", image_id="img-mlo")
+    observed = roi((40, 30, 60, 50), "roi-mlo", "img-mlo")
     geometry = BreastGeometry(
         image_id="img-mlo",
         laterality=Laterality.RIGHT,
@@ -119,7 +181,7 @@ def test_roi_localizer_names_ml_unobservable_for_mlo_view() -> None:
         ),
     )
 
-    result = RoiLocalizer().localize(roi, geometry)
+    result = RoiLocalizer().localize(observed, geometry)
     serialized = result.to_dict()
 
     assert result.status is ResultStatus.PARTIAL
@@ -136,12 +198,12 @@ def test_roi_localizer_names_ml_unobservable_for_mlo_view() -> None:
 
 
 def test_roi_localizer_preserves_dbt_frame_in_metadata_and_evidence() -> None:
-    roi = RegionOfInterest(
+    observed = roi(
         (40, 45, 60, 55),
-        roi_id="roi-dbt",
-        image_id="dbt-img",
-        frame_index=23,
-        source="embed-roi-csv",
+        "roi-dbt",
+        "dbt-img",
+        frame_indices=(23,),
+        annotation_source="embed-roi-csv",
         coordinate_frame_id="dbt-frame-23",
     )
     geometry = BreastGeometry(
@@ -156,14 +218,16 @@ def test_roi_localizer_preserves_dbt_frame_in_metadata_and_evidence() -> None:
         ),
     )
 
-    serialized = RoiLocalizer(expected_axes=("ml", "depth")).localize(roi, geometry).to_dict()
+    serialized = (
+        RoiLocalizer(expected_axes=("ml", "depth"))
+        .localize(observed, geometry)
+        .to_dict()
+    )
 
-    assert serialized["metadata"]["frame_index"] == 23
     assert serialized["metadata"]["frame_indices"] == [23]
     assert serialized["metadata"]["image_id"] == "dbt-img"
     assert serialized["metadata"]["coordinate_frame_id"] == "aligned-dbt"
     assert serialized["evidence"][0]["source"] == "embed-roi-csv"
-    assert serialized["evidence"][0]["payload"]["frame_index"] == 23
     assert serialized["evidence"][0]["payload"]["frame_indices"] == [23]
     assert serialized["evidence"][0]["payload"]["coordinate_frame_id"] == "dbt-frame-23"
     json.dumps(serialized)

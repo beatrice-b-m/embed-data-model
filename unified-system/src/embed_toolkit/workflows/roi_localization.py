@@ -38,14 +38,14 @@ class RoiLocalizer:
 
         return LocalizationResult(
             status=status,
-            subject_id=roi.roi_id or "",
             subject_type="roi",
+            roi_locator=roi.locator,
             anatomical_position=_quadrant_payload(quadrant),
             continuous_position=_continuous_payload(continuous),
             evidence=[
                 Evidence(
                     kind="roi_geometry",
-                    source=roi.source or "roi",
+                    source=roi.annotation_source or "roi",
                     payload=_roi_payload(roi, centroid),
                     confidence=roi.confidence,
                 ),
@@ -57,11 +57,12 @@ class RoiLocalizer:
             ],
             warnings=warnings,
             metadata={
-                "roi_id": roi.roi_id,
+                "roi_locator": roi.locator.to_dict(),
                 "image_id": roi.image_id,
                 "geometry_image_id": geometry.image_id,
-                "frame_index": roi.frame_index,
                 "frame_indices": list(roi.frame_indices),
+                "annotation_source": roi.annotation_source,
+                "source_provenance": roi.source_provenance.to_dict(),
                 "coordinate_frame_id": continuous.coordinate_frame_id,
                 "expected_axes": list(axes),
             },
@@ -185,9 +186,8 @@ def _continuous_payload(position: ContinuousAnatomicalPosition) -> dict:
 
 def _roi_payload(roi: RegionOfInterest, centroid: Tuple[float, float]) -> dict:
     return {
-        "roi_id": roi.roi_id,
+        "roi_locator": roi.locator.to_dict(),
         "image_id": roi.image_id,
-        "frame_index": roi.frame_index,
         "frame_indices": list(roi.frame_indices),
         "coordinates": list(roi.coordinates),
         "centroid": list(centroid),

@@ -6,12 +6,22 @@ import pytest
 
 from embed_toolkit.audit.evidence import Evidence
 from embed_toolkit.audit.results import LocalizationResult, MatchingResult, ResultStatus
-from embed_toolkit.core.primitives import Laterality, ViewPosition
+from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark, LandmarkType
+from embed_toolkit.imaging.roi_provenance import (
+    RoiDepthFrameProvenance,
+    RoiLocator,
+    RoiSourceCount,
+    RoiSourceCountBasis,
+    RoiSourceProvenance,
+)
 from embed_toolkit.imaging.rois import RegionOfInterest
-from embed_toolkit.visualization.mammogram import build_mammogram_render_plan
+from embed_toolkit.visualization.mammogram import (
+    MammogramRenderPlan,
+    build_mammogram_render_plan,
+)
 
 
 def test_mammogram_render_plan_includes_pixels_roi_and_centroid_layers() -> None:
@@ -28,14 +38,28 @@ def test_mammogram_render_plan_includes_pixels_roi_and_centroid_layers() -> None
                 row_ordinal=0,
             )
         ],
+        modality=ImageModality.FFDM,
         height=3,
         width=4,
     )
+    locator = RoiLocator.from_source(
+        image_locator=image.canonical_source,
+        source_value="roi-1",
+    )
     roi = RegionOfInterest(
         (0, 1, 2, 3),
-        roi_id="roi-1",
+        locator=locator,
         image_id="img-1",
-        source="synthetic",
+        source_provenance=RoiSourceProvenance(
+            modality=image.modality,
+            source_count=RoiSourceCount(
+                1,
+                RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+            ),
+            depth_frame_provenance=RoiDepthFrameProvenance.NOT_APPLICABLE_2D,
+        ),
+        sources=(image.canonical_source,),
+        annotation_source="synthetic",
         confidence=0.8,
     )
 
@@ -101,7 +125,9 @@ def test_mammogram_render_plan_adds_landmarks_pnl_and_depth_thirds() -> None:
     ]
 
 
-def test_mammogram_render_plan_preserves_workflow_expectations_and_match_evidence() -> None:
+def test_mammogram_render_plan_preserves_workflow_expectations_and_match_evidence() -> (
+    None
+):
     finding_expectation = LocalizationResult(
         status=ResultStatus.SUCCESS,
         subject_id="finding-1",
@@ -121,7 +147,6 @@ def test_mammogram_render_plan_preserves_workflow_expectations_and_match_evidenc
     match = MatchingResult(
         status=ResultStatus.SUCCESS,
         finding_id="finding-1",
-        matched_roi_id="roi-1",
         metadata={"score": 0.92},
     )
 
@@ -140,7 +165,7 @@ def test_mammogram_render_plan_preserves_workflow_expectations_and_match_evidenc
         "normalized_value": "lateral",
     }
     assert plan["layers"][2]["type"] == "match_evidence"
-    assert plan["layers"][2]["payload"]["matched_roi_id"] == "roi-1"
+    assert plan["layers"][2]["payload"]["matched_roi_locators"] == []
     json.dumps(plan)
 
 
@@ -166,3 +191,23 @@ def test_mammogram_render_plan_omits_depth_thirds_without_image_shape() -> None:
 def test_mammogram_render_plan_rejects_non_2d_pixels() -> None:
     with pytest.raises(TypeError):
         build_mammogram_render_plan(pixels=3)
+
+
+def test_render_plan_payloads_are_deeply_frozen_and_serialize_fresh() -> None:
+    layers = [{"type": "custom", "payload": {"values": [1, 2]}}]
+    metadata = {"nested": {"labels": ["a"]}}
+    plan = MammogramRenderPlan(layers=layers, metadata=metadata)
+    layers[0]["payload"]["values"].append(3)
+    metadata["nested"]["labels"].append("b")
+
+    assert plan.layers[0]["payload"]["values"] == (1, 2)
+    assert plan.metadata["nested"]["labels"] == ("a",)
+    serialized = plan.to_dict()
+    serialized["layers"][0]["payload"]["values"].append(4)
+    assert plan.to_dict()["layers"][0]["payload"]["values"] == [1, 2]
+    json.dumps(plan.to_dict(), allow_nan=False)
+
+    with pytest.raises(TypeError, match="keys must be strings"):
+        MammogramRenderPlan(metadata={1: "invalid"})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="finite"):
+        MammogramRenderPlan(layers=({"value": float("inf")},))

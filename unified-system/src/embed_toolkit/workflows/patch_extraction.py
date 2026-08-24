@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
@@ -73,8 +75,20 @@ class PatchExtractor:
         )
         status = ResultStatus.PARTIAL if warnings else ResultStatus.SUCCESS
 
-        resolved_image_id = image_id or _object_attr(image, "image_id") or roi.image_id or ""
-        resolved_patch_id = patch_id or _default_patch_id(resolved_image_id, roi.roi_id)
+        resolved_image_id = image_id or _object_attr(image, "image_id") or roi.image_id
+        if resolved_image_id != roi.image_id:
+            raise ValueError("Patch image_id must match ROI image ownership")
+        image_source = _object_attr(image, "canonical_source")
+        image_sources = _object_attr(image, "sources")
+        if image_source is not None and (
+            image_sources is None or roi.locator.image_locator not in image_sources
+        ):
+            raise ValueError("Patch image must match the ROI locator image scope")
+        if image_sources is not None and any(
+            source not in image_sources for source in roi.sources
+        ):
+            raise ValueError("ROI sources must occur in the patch image ledger")
+        resolved_patch_id = patch_id or _default_patch_id(roi)
         shape = _patch_shape(patch_data)
         payload = {
             "data": patch_data,
@@ -85,21 +99,23 @@ class PatchExtractor:
             "padded": self.config.pad and _has_padding(padding),
         }
 
-        result_metadata = {
-            "roi_source": roi.source,
-            "roi_confidence": roi.confidence,
-            "roi_frame_indices": list(roi.frame_indices),
-            "roi_frame_index": roi.frame_index,
-            "coordinate_frame_id": roi.coordinate_frame_id
-            or _object_attr(image, "coordinate_frame_id"),
-        }
-        if metadata:
-            result_metadata.update(metadata)
+        result_metadata = dict(metadata or {})
+        result_metadata.update(
+            {
+                "annotation_source": roi.annotation_source,
+                "confidence": roi.confidence,
+                "frame_indices": list(roi.frame_indices),
+                "source_provenance": roi.source_provenance.to_dict(),
+                "source_references": [source.to_dict() for source in roi.sources],
+                "coordinate_frame_id": roi.coordinate_frame_id
+                or _object_attr(image, "coordinate_frame_id"),
+            }
+        )
 
         return PatchExtractionResult(
             status=status,
             image_id=resolved_image_id,
-            roi_id=roi.roi_id or "",
+            roi_locator=roi.locator,
             patch_id=resolved_patch_id,
             bbox=[float(value) for value in extraction_bbox],
             shape=shape,
@@ -240,7 +256,9 @@ def _apply_padding(
         padded.append([pad_value] * width)
     for row in data:
         padded.append(
-            ([pad_value] * padding["left"]) + list(row) + ([pad_value] * padding["right"])
+            ([pad_value] * padding["left"])
+            + list(row)
+            + ([pad_value] * padding["right"])
         )
     for _ in range(padding["bottom"]):
         padded.append([pad_value] * width)
@@ -280,14 +298,13 @@ def _warnings_for(
     ]
 
 
-def _default_patch_id(image_id: str, roi_id: Optional[str]) -> str:
-    if image_id and roi_id:
-        return f"{image_id}:{roi_id}:patch"
-    if roi_id:
-        return f"{roi_id}:patch"
-    if image_id:
-        return f"{image_id}:patch"
-    return "patch"
+def _default_patch_id(roi: RegionOfInterest) -> str:
+    encoded = json.dumps(
+        roi.locator.to_dict(),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"patch:{hashlib.sha256(encoded).hexdigest()[:20]}"
 
 
 def _object_attr(obj: Optional[Any], name: str) -> Optional[Any]:
