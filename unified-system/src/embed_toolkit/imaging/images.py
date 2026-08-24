@@ -35,6 +35,7 @@ class MammogramImage:
     patient_orientation: Optional[PatientOrientation] = None
     coordinate_frame_id: Optional[str] = None
     landmarks: Tuple[ImageLandmark, ...] = field(default_factory=tuple)
+    attribute_sources: Dict[str, SourceLocator] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.image_id, str) or not self.image_id.strip():
@@ -46,6 +47,14 @@ class MammogramImage:
             raise TypeError("sources must contain only SourceLocator values")
         if len(set(self.sources)) != len(self.sources):
             raise ValueError("sources must contain unique SourceLocator values")
+        self.attribute_sources = dict(self.attribute_sources)
+        for attribute, source in self.attribute_sources.items():
+            if not isinstance(attribute, str) or not attribute.strip():
+                raise ValueError("attribute_sources keys must be non-empty strings")
+            if not isinstance(source, SourceLocator):
+                raise TypeError("attribute_sources values must be SourceLocator values")
+            if source not in self.sources:
+                raise ValueError("attribute_sources locators must occur in sources")
         self.laterality = Laterality.coerce(self.laterality)
         self.view_position = ViewPosition.coerce(self.view_position)
         self.modality = ImageModality.coerce(self.modality)
@@ -94,6 +103,13 @@ class MammogramImage:
         if source not in self.sources:
             self.sources.append(source)
         return source
+
+    def source_for(self, attribute: str) -> SourceLocator:
+        """Return evidence for an attribute, falling back to object evidence."""
+
+        if not isinstance(attribute, str) or not attribute.strip():
+            raise ValueError("attribute must be a non-empty string")
+        return self.attribute_sources.get(attribute, self.canonical_source)
 
     @property
     def image_shape(self) -> Optional[Tuple[int, int]]:
@@ -147,6 +163,10 @@ class MammogramImage:
         return {
             "image_id": self.image_id,
             "sources": [source.to_dict() for source in self.sources],
+            "attribute_sources": {
+                attribute: self.attribute_sources[attribute].to_dict()
+                for attribute in sorted(self.attribute_sources)
+            },
             "patient_id": self.patient_id,
             "accession_number": self.accession_number,
             "laterality": self.laterality.value,

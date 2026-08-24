@@ -27,6 +27,13 @@ from embed_toolkit.clinical.attributes import (
 )
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.adapters.magview import normalize_magview_location
+from embed_toolkit.adapters.reconciliation import (
+    ExamImageContainmentLink,
+    FindingImageCandidate,
+    PatientIdentityCheckStatus,
+    UnmatchedImage,
+    UnmatchedImageReason,
+)
 from embed_toolkit.clinical.findings import (
     Finding,
     FindingNormalizationEvidence,
@@ -83,6 +90,54 @@ from embed_toolkit.imaging.rois import RegionOfInterest
 
 
 Row = Mapping[str, Any]
+
+_IMAGE_INVARIANT_ATTRIBUTES = (
+    "accession_number",
+    "patient_id",
+    "laterality",
+    "view_position",
+    "modality",
+    "height",
+    "width",
+    "frame_count",
+    "study_instance_uid",
+    "series_instance_uid",
+    "sop_instance_uid",
+    "patient_orientation",
+    "coordinate_frame_id",
+)
+
+
+def _has_populated_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _require_instances(values: Iterable[Any], expected: type, name: str) -> None:
+    if any(not isinstance(value, expected) for value in values):
+        raise TypeError(f"{name} must contain only {expected.__name__} values")
+
+
+def _unique_by_key(
+    values: Iterable[Any],
+    key: Any,
+    name: str,
+) -> dict[Any, Any]:
+    indexed = {}
+    for value in values:
+        identity = key(value)
+        if identity in indexed:
+            raise ValueError(f"{name} values must be unique")
+        indexed[identity] = value
+    return indexed
+
+
+def _same_objects(left: Iterable[Any], right: Iterable[Any]) -> bool:
+    left_items = tuple(left)
+    right_items = tuple(right)
+    return len(left_items) == len(right_items) and all(
+        observed is expected
+        for observed, expected in zip(left_items, right_items)
+    )
 
 
 @dataclass(frozen=True)
@@ -218,9 +273,154 @@ class EmbedClinicalImageGraph:
 
     exams: Tuple[Exam, ...]
     images: Tuple[MammogramImage, ...]
-    unmatched_images: Tuple[MammogramImage, ...]
+    containment_links: Tuple[ExamImageContainmentLink, ...]
+    unmatched_images: Tuple[UnmatchedImage, ...]
     unmatched_exams: Tuple[Exam, ...]
     build_issues: Tuple[BuildIssue, ...]
+
+    def __post_init__(self) -> None:
+        for attribute in (
+            "exams",
+            "images",
+            "containment_links",
+            "unmatched_images",
+            "unmatched_exams",
+            "build_issues",
+        ):
+            object.__setattr__(self, attribute, tuple(getattr(self, attribute)))
+        _require_instances(self.exams, Exam, "exams")
+        _require_instances(self.images, MammogramImage, "images")
+        _require_instances(
+            self.containment_links,
+            ExamImageContainmentLink,
+            "containment_links",
+        )
+        _require_instances(self.unmatched_images, UnmatchedImage, "unmatched_images")
+        _require_instances(self.unmatched_exams, Exam, "unmatched_exams")
+        _require_instances(self.build_issues, BuildIssue, "build_issues")
+
+        exam_by_accession = _unique_by_key(
+            self.exams,
+            lambda exam: exam.accession_number,
+            "exam accession_number",
+        )
+        image_by_id = _unique_by_key(
+            self.images,
+            lambda image: image.image_id,
+            "image_id",
+        )
+        link_by_key = _unique_by_key(
+            self.containment_links,
+            lambda link: (link.accession_number, link.image.image_id),
+            "containment link",
+        )
+        unmatched_by_id = _unique_by_key(
+            self.unmatched_images,
+            lambda unmatched: unmatched.image.image_id,
+            "unmatched image",
+        )
+
+        linked_image_ids = set()
+        links_by_accession: dict[str, list[ExamImageContainmentLink]] = {
+            accession: [] for accession in exam_by_accession
+        }
+        for link in link_by_key.values():
+            if link.image.image_id in linked_image_ids:
+                raise ValueError("each graph image may have only one containment link")
+            graph_image = image_by_id.get(link.image.image_id)
+            if graph_image is not link.image:
+                raise ValueError(
+                    "containment link image must be the exact graph-owned image"
+                )
+            exam = exam_by_accession.get(link.accession_number)
+            if exam is None:
+                raise ValueError("containment link accession must resolve to an exam")
+            image_has_id = _has_populated_text(link.image.patient_id)
+            exam_has_id = _has_populated_text(exam.patient_id)
+            if image_has_id and exam_has_id:
+                if link.image.patient_id != exam.patient_id:
+                    raise ValueError("populated patient identity mismatch cannot link")
+                expected_status = PatientIdentityCheckStatus.VERIFIED
+            else:
+                expected_status = PatientIdentityCheckStatus.UNVERIFIED
+            if link.patient_identity_status is not expected_status:
+                raise ValueError("containment patient identity status is inconsistent")
+            linked_image_ids.add(link.image.image_id)
+            links_by_accession[link.accession_number].append(link)
+
+        for unmatched in unmatched_by_id.values():
+            graph_image = image_by_id.get(unmatched.image.image_id)
+            if graph_image is not unmatched.image:
+                raise ValueError(
+                    "unmatched image must be the exact graph-owned image"
+                )
+        unmatched_image_ids = set(unmatched_by_id)
+        if linked_image_ids & unmatched_image_ids:
+            raise ValueError("matched and unmatched image classifications must be disjoint")
+        if linked_image_ids | unmatched_image_ids != set(image_by_id):
+            raise ValueError("every graph image must be classified exactly once")
+
+        for unmatched in unmatched_by_id.values():
+            accession = unmatched.image.accession_number
+            has_accession = _has_populated_text(accession)
+            if unmatched.reason is UnmatchedImageReason.MISSING_ACCESSION:
+                if has_accession:
+                    raise ValueError(
+                        "MISSING_ACCESSION requires an absent image accession"
+                    )
+            elif (
+                unmatched.reason
+                is UnmatchedImageReason.ACCESSION_NOT_IN_CLINICAL_GRAPH
+            ):
+                if not has_accession or accession in exam_by_accession:
+                    raise ValueError(
+                        "ACCESSION_NOT_IN_CLINICAL_GRAPH requires a populated "
+                        "accession absent from graph exams"
+                    )
+            else:
+                exam = exam_by_accession.get(accession) if has_accession else None
+                if (
+                    exam is None
+                    or not _has_populated_text(unmatched.image.patient_id)
+                    or not _has_populated_text(exam.patient_id)
+                    or unmatched.image.patient_id == exam.patient_id
+                ):
+                    raise ValueError(
+                        "PATIENT_IDENTITY_CONFLICT requires a resolved accession "
+                        "and different populated patient identities"
+                    )
+
+        for exam in self.exams:
+            links = links_by_accession[exam.accession_number]
+            expected_images = [link.image for link in links]
+            if not _same_objects(exam.images, expected_images):
+                raise ValueError("exam image hierarchy must exactly match containment links")
+            for laterality, side in exam.breast_sides.items():
+                if (
+                    laterality not in (Laterality.LEFT, Laterality.RIGHT)
+                    or not isinstance(side, BreastSide)
+                    or side.accession_number != exam.accession_number
+                    or side.laterality is not laterality
+                ):
+                    raise ValueError("exam breast-side hierarchy is inconsistent")
+            for laterality in (Laterality.LEFT, Laterality.RIGHT):
+                side = exam.breast_sides.get(laterality)
+                actual = [] if side is None else side.images
+                expected = [
+                    link.image for link in links if link.image.laterality is laterality
+                ]
+                if not _same_objects(actual, expected):
+                    raise ValueError(
+                        "breast-side image hierarchy must exactly match containment links"
+                    )
+
+        expected_unmatched_exams = [
+            exam
+            for exam in self.exams
+            if not links_by_accession[exam.accession_number]
+        ]
+        if not _same_objects(self.unmatched_exams, expected_unmatched_exams):
+            raise ValueError("unmatched_exams must exactly match exams without links")
 
     def to_dict(self) -> dict[str, object]:
         """Serialize images once and containment through image references."""
@@ -246,8 +446,11 @@ class EmbedClinicalImageGraph:
                 for exam in self.exams
             ],
             "images": [image.to_dict() for image in self.images],
-            "unmatched_image_references": [
-                image.image_id for image in self.unmatched_images
+            "containment_links": [
+                link.to_dict() for link in self.containment_links
+            ],
+            "unmatched_images": [
+                unmatched.to_dict() for unmatched in self.unmatched_images
             ],
             "unmatched_exam_references": [
                 exam.accession_number for exam in self.unmatched_exams
@@ -261,7 +464,7 @@ class FindingImageCandidateProjection:
     """Candidate images selected without asserting clinical attribution."""
 
     finding: Finding
-    candidate_images: Tuple[MammogramImage, ...]
+    candidates: Tuple[FindingImageCandidate, ...]
     selection_basis: str = field(
         default="assembled_exam_unilateral_side_membership",
         init=False,
@@ -271,6 +474,28 @@ class FindingImageCandidateProjection:
         init=False,
     )
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.finding, Finding):
+            raise TypeError("finding must be a Finding")
+        object.__setattr__(self, "candidates", tuple(self.candidates))
+        _require_instances(self.candidates, FindingImageCandidate, "candidates")
+        seen_image_ids = set()
+        compatible_lateralities = set(self.finding.laterality.expand())
+        for candidate in self.candidates:
+            image = candidate.image
+            if image.image_id in seen_image_ids:
+                raise ValueError("candidates must contain unique image IDs")
+            seen_image_ids.add(image.image_id)
+            if image.accession_number != self.finding.accession_number:
+                raise ValueError("candidate accession must match finding accession")
+            if (
+                not image.laterality.is_unilateral
+                or image.laterality not in compatible_lateralities
+            ):
+                raise ValueError(
+                    "candidate image laterality must be unilateral and compatible"
+                )
+
     def to_dict(self) -> dict[str, object]:
         """Serialize finding and candidate membership through references."""
 
@@ -279,9 +504,7 @@ class FindingImageCandidateProjection:
                 "accession_number": self.finding.accession_number,
                 "finding_number": self.finding.finding_number,
             },
-            "candidate_image_references": [
-                image.image_id for image in self.candidate_images
-            ],
+            "candidates": [candidate.to_dict() for candidate in self.candidates],
             "selection_basis": self.selection_basis,
             "status": self.status.value,
         }
@@ -1636,9 +1859,10 @@ def build_image_tables(
                     for issue in conflict_issues:
                         policy.handle_issue(issue)
                     row_issues.extend(conflict_issues)
-                    for attribute, value in fills:
-                        setattr(retained, attribute, value)
                     retained.add_source(locator)
+                    for attribute, value, source in fills:
+                        setattr(retained, attribute, value)
+                        retained.attribute_sources[attribute] = source
                     if not conflict_issues:
                         rois.extend(
                             _rois_from_row(
@@ -1740,6 +1964,12 @@ def _image_from_row(
             _get(row, columns.coordinate_frame_id)
         ),
     }
+    values["attribute_sources"] = {
+        attribute: locator
+        for attribute in ("image_id", *_IMAGE_INVARIANT_ATTRIBUTES)
+        if attribute == "image_id"
+        or _known_image_attribute(attribute, values[attribute])
+    }
     try:
         return MammogramImage(**values), ()
     except (TypeError, ValueError, OverflowError) as exc:
@@ -1793,7 +2023,10 @@ def _reconcile_image_attributes(
     retained: MammogramImage,
     observed: MammogramImage,
     locator: SourceLocator,
-) -> Tuple[Tuple[BuildIssue, ...], Tuple[Tuple[str, Any], ...]]:
+) -> Tuple[
+    Tuple[BuildIssue, ...],
+    Tuple[Tuple[str, Any, SourceLocator], ...],
+]:
     issues = []
     fills = []
     resulting_modality = retained.modality
@@ -1802,21 +2035,7 @@ def _reconcile_image_attributes(
         and observed.modality is not ImageModality.UNKNOWN
     ):
         resulting_modality = observed.modality
-    for attribute in (
-        "accession_number",
-        "patient_id",
-        "laterality",
-        "view_position",
-        "modality",
-        "height",
-        "width",
-        "frame_count",
-        "study_instance_uid",
-        "series_instance_uid",
-        "sop_instance_uid",
-        "patient_orientation",
-        "coordinate_frame_id",
-    ):
+    for attribute in _IMAGE_INVARIANT_ATTRIBUTES:
         if (
             attribute == "frame_count"
             and resulting_modality is not ImageModality.DBT
@@ -1828,7 +2047,13 @@ def _reconcile_image_attributes(
         observed_known = _known_image_attribute(attribute, observed_value)
         if not retained_known:
             if observed_known:
-                fills.append((attribute, observed_value))
+                fills.append(
+                    (
+                        attribute,
+                        observed_value,
+                        observed.source_for(attribute),
+                    )
+                )
             continue
         if not observed_known or retained_value == observed_value:
             continue
@@ -1882,16 +2107,12 @@ def assemble_clinical_image_graph(
     image_tables: EmbedImageTables,
     *,
     build_policy: Optional[BuildPolicy] = None,
-    source_scope: Optional[str] = None,
-    source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
-    source_profile: str = "internal-v1c",
-    source_table: str = "image_metadata",
 ) -> EmbedClinicalImageGraph:
     """Attach images to matching exams after cross-table identity checks.
 
-    An omitted scope creates explicitly ephemeral assembly provenance. Dataset
-    scopes must be supplied by the caller. Validation is completed before any
-    attachment so strict failures do not leave a partially assembled graph.
+    Validation is completed before any attachment so strict failures do not
+    leave a partially assembled graph. Reconciliation evidence always retains
+    the original image source ledger.
     """
 
     if not isinstance(clinical, EmbedClinicalTables):
@@ -1901,37 +2122,51 @@ def assemble_clinical_image_graph(
     policy = build_policy or BuildPolicy()
     if not isinstance(policy, BuildPolicy):
         raise TypeError("build_policy must be a BuildPolicy")
-    scope_kind = SourceScopeKind(source_scope_kind)
-    if source_scope is None:
-        if scope_kind is not SourceScopeKind.MATERIALIZATION:
-            raise ValueError("Dataset source scopes must be supplied explicitly")
-        resolved_source_scope = f"in-memory-assembly:{uuid.uuid4()}"
-    elif not isinstance(source_scope, str) or not source_scope.strip():
-        raise ValueError("source_scope must be a non-empty string")
-    else:
-        resolved_source_scope = source_scope
-    for name, value in (
-        ("source_profile", source_profile),
-        ("source_table", source_table),
-    ):
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"{name} must be a non-empty string")
 
     exam_by_accession = {exam.accession_number: exam for exam in clinical.exams}
     attachments = []
+    containment_links = []
     unmatched_images = []
     issues = []
     matched_accessions = set()
 
     for image in image_tables.images:
         accession = image.accession_number
-        exam = exam_by_accession.get(accession) if accession is not None else None
-        if exam is None:
-            unmatched_images.append(image)
+        sources = tuple(image.sources)
+        if not isinstance(accession, str) or not accession.strip():
+            issue = BuildIssue(
+                code="missing_image_accession_for_assembly",
+                message="Image has no accession for clinical graph assembly.",
+                severity=IssueSeverity.WARNING,
+                source=image.source_for("accession_number"),
+                context={"image_id": image.image_id},
+            )
+            policy.handle_issue(issue)
+            issues.append(issue)
+            unmatched_images.append(
+                UnmatchedImage(
+                    image=image,
+                    reason=UnmatchedImageReason.MISSING_ACCESSION,
+                    sources=sources,
+                )
+            )
             continue
+
+        exam = exam_by_accession.get(accession)
+        if exam is None:
+            unmatched_images.append(
+                UnmatchedImage(
+                    image=image,
+                    reason=UnmatchedImageReason.ACCESSION_NOT_IN_CLINICAL_GRAPH,
+                    sources=sources,
+                )
+            )
+            continue
+        image_has_patient_id = _has_populated_text(image.patient_id)
+        exam_has_patient_id = _has_populated_text(exam.patient_id)
         if (
-            image.patient_id is not None
-            and exam.patient_id is not None
+            image_has_patient_id
+            and exam_has_patient_id
             and image.patient_id != exam.patient_id
         ):
             issue = BuildIssue(
@@ -1941,13 +2176,7 @@ def assemble_clinical_image_graph(
                     "accession."
                 ),
                 severity=IssueSeverity.ERROR,
-                source=SourceLocator(
-                    scope=resolved_source_scope,
-                    scope_kind=scope_kind,
-                    source_profile=source_profile,
-                    source_table=source_table,
-                    source_key=image.image_id,
-                ),
+                source=image.source_for("patient_id"),
                 context={
                     "accession_number": accession,
                     "clinical_patient_id": exam.patient_id,
@@ -1957,11 +2186,69 @@ def assemble_clinical_image_graph(
             )
             policy.handle_issue(issue)
             issues.append(issue)
-            unmatched_images.append(image)
+            unmatched_images.append(
+                UnmatchedImage(
+                    image=image,
+                    reason=UnmatchedImageReason.PATIENT_IDENTITY_CONFLICT,
+                    sources=sources,
+                )
+            )
             continue
+
+        if image_has_patient_id and exam_has_patient_id:
+            identity_status = PatientIdentityCheckStatus.VERIFIED
+        else:
+            identity_status = PatientIdentityCheckStatus.UNVERIFIED
+            issue = BuildIssue(
+                code="missing_patient_identity_for_reconciliation",
+                message=(
+                    "Clinical/image patient identity could not be verified "
+                    "because one identity is missing."
+                ),
+                severity=IssueSeverity.WARNING,
+                source=image.source_for("patient_id"),
+                context={
+                    "accession_number": accession,
+                    "clinical_patient_id": exam.patient_id,
+                    "image_patient_id": image.patient_id,
+                    "image_id": image.image_id,
+                },
+            )
+            policy.handle_issue(issue)
+            issues.append(issue)
+
+        if not image.laterality.is_unilateral:
+            issue = BuildIssue(
+                code="unresolved_image_laterality_for_side_containment",
+                message=(
+                    "Image laterality is not unilateral; image was attached "
+                    "to the exam but not to a breast side."
+                ),
+                severity=IssueSeverity.WARNING,
+                source=image.source_for("laterality"),
+                context={
+                    "accession_number": accession,
+                    "image_id": image.image_id,
+                    "image_laterality": image.laterality.value,
+                },
+            )
+            policy.handle_issue(issue)
+            issues.append(issue)
+
+        link = ExamImageContainmentLink(
+            accession_number=accession,
+            image=image,
+            patient_identity_status=identity_status,
+            sources=sources,
+        )
         attachments.append((exam, image))
+        containment_links.append(link)
         matched_accessions.add(exam.accession_number)
 
+    for exam in clinical.exams:
+        exam.images.clear()
+        for side in exam.breast_sides.values():
+            side.images.clear()
     for exam, image in attachments:
         exam.add_image(image)
 
@@ -1973,6 +2260,7 @@ def assemble_clinical_image_graph(
     return EmbedClinicalImageGraph(
         exams=clinical.exams,
         images=image_tables.images,
+        containment_links=tuple(containment_links),
         unmatched_images=tuple(unmatched_images),
         unmatched_exams=unmatched_exams,
         build_issues=tuple(issues),
@@ -1991,6 +2279,10 @@ def project_finding_image_candidates(
     if not isinstance(graph, EmbedClinicalImageGraph):
         raise TypeError("graph must be an EmbedClinicalImageGraph")
 
+    link_by_image_id = {
+        (link.accession_number, link.image.image_id): link
+        for link in graph.containment_links
+    }
     projections = []
     for exam in graph.exams:
         for finding in exam.findings:
@@ -2005,12 +2297,23 @@ def project_finding_image_candidates(
                         continue
                     if image.image_id in seen_image_ids:
                         continue
-                    candidates.append(image)
+                    link = link_by_image_id.get(
+                        (exam.accession_number, image.image_id)
+                    )
+                    if link is None:
+                        continue
+                    candidates.append(
+                        FindingImageCandidate(
+                            image=image,
+                            patient_identity_status=link.patient_identity_status,
+                            sources=link.sources,
+                        )
+                    )
                     seen_image_ids.add(image.image_id)
             projections.append(
                 FindingImageCandidateProjection(
                     finding=finding,
-                    candidate_images=tuple(candidates),
+                    candidates=tuple(candidates),
                 )
             )
     return tuple(projections)

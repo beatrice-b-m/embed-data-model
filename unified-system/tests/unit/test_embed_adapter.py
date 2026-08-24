@@ -590,7 +590,7 @@ def test_candidate_projection_is_explicit_and_uses_assembled_hierarchy() -> None
     projections = project_finding_image_candidates(graph)
     candidate_ids = {
         projection.finding.finding_id: [
-            image.image_id for image in projection.candidate_images
+            candidate.image.image_id for candidate in projection.candidates
         ]
         for projection in projections
     }

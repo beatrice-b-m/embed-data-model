@@ -145,7 +145,7 @@ def test_legacy_parity_bilateral_candidate_projection_uses_both_sides() -> None:
     )
     candidate_image_ids = {
         projection.finding.finding_id: [
-            image.image_id for image in projection.candidate_images
+            candidate.image.image_id for candidate in projection.candidates
         ]
         for projection in projections
     }

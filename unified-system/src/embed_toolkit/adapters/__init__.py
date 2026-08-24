@@ -20,15 +20,27 @@ from embed_toolkit.adapters.magview import (
     MagViewSourceEvidence,
     normalize_magview_location,
 )
+from embed_toolkit.adapters.reconciliation import (
+    ExamImageContainmentLink,
+    FindingImageCandidate,
+    PatientIdentityCheckStatus,
+    UnmatchedImage,
+    UnmatchedImageReason,
+)
 
 __all__ = [
     "EmbedClinicalImageGraph",
     "EmbedClinicalTables",
     "EmbedImageTables",
+    "ExamImageContainmentLink",
+    "FindingImageCandidate",
     "FindingImageCandidateProjection",
     "MagViewLocationNormalization",
     "MagViewNormalizationWarning",
     "MagViewSourceEvidence",
+    "PatientIdentityCheckStatus",
+    "UnmatchedImage",
+    "UnmatchedImageReason",
     "assemble_clinical_image_graph",
     "build_clinical_tables",
     "build_exams",

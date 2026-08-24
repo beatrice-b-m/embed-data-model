@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -165,7 +166,41 @@ def test_duplicate_unknowns_are_filled_without_overwriting_known_values() -> Non
     assert image.frame_count == 20
     assert image.patient_orientation is not None
     assert len(image.sources) == 3
+    for attribute in (
+        "accession_number",
+        "patient_id",
+        "laterality",
+        "view_position",
+        "modality",
+        "height",
+        "width",
+        "frame_count",
+        "patient_orientation",
+    ):
+        assert image.source_for(attribute) is tables.source_occurrences[1].locator
     assert tables.build_issues == ()
+
+
+def test_image_attribute_sources_survive_copy_and_require_ledger_membership() -> None:
+    tables = build_image_tables([row()], source_scope="image-materialization")
+    image = tables.images[0]
+    copied = replace(image)
+
+    assert copied.attribute_sources == image.attribute_sources
+    assert copied.attribute_sources is not image.attribute_sources
+    assert copied.source_for("patient_id") is image.source_for("patient_id")
+
+    outside = build_image_tables(
+        [row("IMG-2")], source_scope="other-materialization"
+    ).images[0].canonical_source
+    with pytest.raises(ValueError, match="must occur in sources"):
+        MammogramImage(
+            image_id="invalid-sources",
+            laterality=Laterality.LEFT,
+            view_position=ViewPosition.CC,
+            sources=[image.canonical_source],
+            attribute_sources={"patient_id": outside},
+        )
 
 
 @pytest.mark.parametrize(
@@ -296,6 +331,9 @@ def test_flat_serialization_retains_raw_row_once_and_uses_source_references() ->
     assert serialized["images"][0]["sources"] == [
         tables.source_occurrences[0].locator.to_dict()
     ]
+    assert serialized["images"][0]["attribute_sources"]["patient_id"] == (
+        tables.source_occurrences[0].locator.to_dict()
+    )
     assert "raw_values" not in serialized["images"][0]
     assert serialized["rois"][0]["image_id"] == "IMG-1"
 
