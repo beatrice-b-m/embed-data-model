@@ -9,6 +9,7 @@ separate and only links them through explicit side-aware join helpers.
 from __future__ import annotations
 
 import ast
+import uuid
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
 
@@ -21,11 +22,20 @@ from embed_toolkit.clinical.procedures import (
     Procedure,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig, default_embed_columns
+from embed_toolkit.core.build_policy import BuildPolicy
 from embed_toolkit.core.primitives import (
     ImageModality,
     Laterality,
     PatientOrientation,
     ViewPosition,
+)
+from embed_toolkit.core.provenance import (
+    BuildIssue,
+    IssueSeverity,
+    ResolutionState,
+    SourceLocator,
+    SourceOccurrence,
+    SourceScopeKind,
 )
 from embed_toolkit.imaging.images import MammogramImage
 from embed_toolkit.imaging.rois import RegionOfInterest
@@ -42,6 +52,8 @@ class EmbedClinicalTables:
     exams: Tuple[Exam, ...]
     findings: Tuple[Finding, ...]
     breast_sides: Tuple[BreastSide, ...]
+    unresolved_occurrences: Tuple[SourceOccurrence, ...]
+    build_issues: Tuple[BuildIssue, ...]
 
 
 @dataclass(frozen=True)
@@ -163,21 +175,128 @@ def build_clinical_tables(
     *,
     columns: Optional[EmbedColumnConfig] = None,
     pathology_validation: Literal["strict", "audit"] = "audit",
+    build_policy: Optional[BuildPolicy] = None,
+    source_scope: Optional[str] = None,
+    source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
+    source_profile: str = "embed_context_internal",
+    source_table: str = "magview",
 ) -> EmbedClinicalTables:
-    """Build patients, exams, sides, findings, procedures, and pathology."""
+    """Build clinical objects under an explicit source-evidence policy.
+
+    ``source_scope`` should name the caller's dataset release or
+    materialization. When omitted, the builder creates an explicitly ephemeral
+    in-memory materialization scope; that scope is provenance, not clinical or
+    durable source identity. Row ordinals are zero-based within this call.
+    """
 
     if pathology_validation not in {"strict", "audit"}:
         raise ValueError("pathology_validation must be 'strict' or 'audit'")
+    policy = build_policy or BuildPolicy()
+    if not isinstance(policy, BuildPolicy):
+        raise TypeError("build_policy must be a BuildPolicy")
+    scope_kind = SourceScopeKind(source_scope_kind)
+    if source_scope is None:
+        if scope_kind is not SourceScopeKind.MATERIALIZATION:
+            raise ValueError("Dataset source scopes must be supplied explicitly")
+        resolved_source_scope = f"in-memory:{uuid.uuid4()}"
+    elif not isinstance(source_scope, str) or not source_scope.strip():
+        raise ValueError("source_scope must be a non-empty string")
+    else:
+        resolved_source_scope = source_scope
+    for name, value in (
+        ("source_profile", source_profile),
+        ("source_table", source_table),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a non-empty string")
+
     column_aliases = _column_aliases(columns)
     patients: dict[str, Patient] = {}
     exams: dict[str, Exam] = {}
     procedure_registry: dict[tuple[str, str, str, Laterality], Procedure] = {}
+    unresolved_occurrences: list[SourceOccurrence] = []
+    build_issues: list[BuildIssue] = []
 
-    for row in rows:
-        patient_id = (
-            _string_value(_get(row, column_aliases.patient_id)) or "UNKNOWN_PATIENT"
+    for row_ordinal, row in enumerate(rows):
+        locator = SourceLocator(
+            scope=resolved_source_scope,
+            scope_kind=scope_kind,
+            source_profile=source_profile,
+            source_table=source_table,
+            row_ordinal=row_ordinal,
         )
-        accession = _required_string(row, column_aliases.accession, "accession_number")
+        patient_id = _string_value(_get(row, column_aliases.patient_id))
+        accession = _string_value(_get(row, column_aliases.accession))
+        finding_number = _string_value(_get(row, column_aliases.finding_number))
+        identity_issues = _clinical_identity_issues(
+            patient_id=patient_id,
+            accession=accession,
+            finding_number=finding_number,
+            locator=locator,
+            columns=column_aliases,
+        )
+        parent_identity_issues = tuple(
+            issue
+            for issue in identity_issues
+            if issue.code != "missing_finding_identity"
+        )
+        if parent_identity_issues:
+            occurrence = SourceOccurrence(
+                locator=locator,
+                raw_values=dict(row),
+                resolution_state=ResolutionState.UNRESOLVED,
+                issues=identity_issues,
+            )
+            policy.review(occurrence)
+            unresolved_occurrences.append(occurrence)
+            build_issues.extend(identity_issues)
+            continue
+
+        assert patient_id is not None
+        assert accession is not None
+        existing_exam = exams.get(accession)
+        if existing_exam is not None and existing_exam.patient_id != patient_id:
+            conflict_issue = BuildIssue(
+                code="conflicting_accession_patient_identity",
+                message="An accession cannot resolve to multiple patient identities.",
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={
+                    "accession_number": accession,
+                    "retained_patient_id": existing_exam.patient_id,
+                    "observed_patient_id": patient_id,
+                },
+            )
+            conflict_issues = (conflict_issue,) + tuple(
+                issue
+                for issue in identity_issues
+                if issue.code == "missing_finding_identity"
+            )
+            occurrence = SourceOccurrence(
+                locator=locator,
+                raw_values=dict(row),
+                resolution_state=ResolutionState.UNRESOLVED,
+                issues=conflict_issues,
+            )
+            policy.review(occurrence)
+            unresolved_occurrences.append(occurrence)
+            build_issues.extend(conflict_issues)
+            continue
+
+        finding_occurrence = None
+        if finding_number is None:
+            finding_occurrence = SourceOccurrence(
+                locator=locator,
+                raw_values=dict(row),
+                resolution_state=ResolutionState.UNRESOLVED,
+                issues=tuple(
+                    issue
+                    for issue in identity_issues
+                    if issue.code == "missing_finding_identity"
+                ),
+            )
+            policy.review(finding_occurrence)
+
         patient = patients.setdefault(
             patient_id,
             Patient(
@@ -186,7 +305,7 @@ def build_clinical_tables(
                 birth_year=_optional_int(_get(row, column_aliases.birth_year)),
             ),
         )
-        exam = exams.get(accession)
+        exam = existing_exam
         if exam is None:
             exam = Exam(
                 accession_number=accession,
@@ -198,11 +317,17 @@ def build_clinical_tables(
         else:
             patient.add_exam(exam)
 
+        if finding_occurrence is not None:
+            unresolved_occurrences.append(finding_occurrence)
+            build_issues.extend(finding_occurrence.issues)
+            continue
+
+        assert finding_number is not None
         side = _clinical_laterality(_get(row, column_aliases.clinical_side))
         finding = Finding(
             accession_number=accession,
             laterality=side,
-            finding_number=_finding_number(row, column_aliases),
+            finding_number=finding_number,
             finding_type=_string_value(_get(row, column_aliases.finding_type)),
             assessment=_string_value(_get(row, column_aliases.assessment)),
             raw_source_fields=dict(row),
@@ -231,6 +356,8 @@ def build_clinical_tables(
         exams=ordered_exams,
         findings=ordered_findings,
         breast_sides=ordered_sides,
+        unresolved_occurrences=tuple(unresolved_occurrences),
+        build_issues=tuple(build_issues),
     )
 
 
@@ -576,11 +703,52 @@ def _patient_orientation(
     return PatientOrientation.coerce(value)
 
 
-def _finding_number(row: Row, columns: _ColumnAliases) -> str:
-    value = _get(row, columns.finding_number)
-    if value is _MISSING or _is_blank(value):
-        return "0"
-    return str(value)
+def _clinical_identity_issues(
+    *,
+    patient_id: Optional[str],
+    accession: Optional[str],
+    finding_number: Optional[str],
+    locator: SourceLocator,
+    columns: _ColumnAliases,
+) -> Tuple[BuildIssue, ...]:
+    issues = []
+    for value, code, message, logical_field, aliases in (
+        (
+            patient_id,
+            "missing_patient_identity",
+            "Patient identity is required to construct clinical objects.",
+            "patient_id",
+            columns.patient_id,
+        ),
+        (
+            accession,
+            "missing_accession_identity",
+            "Accession identity is required to construct clinical objects.",
+            "accession_number",
+            columns.accession,
+        ),
+        (
+            finding_number,
+            "missing_finding_identity",
+            "Finding identity is required to construct clinical objects.",
+            "finding_number",
+            columns.finding_number,
+        ),
+    ):
+        if value is None:
+            issues.append(
+                BuildIssue(
+                    code=code,
+                    message=message,
+                    severity=IssueSeverity.ERROR,
+                    source=locator,
+                    context={
+                        "logical_field": logical_field,
+                        "source_columns": list(aliases),
+                    },
+                )
+            )
+    return tuple(issues)
 
 
 def _required_string(row: Row, names: Tuple[str, ...], logical_name: str) -> str:
