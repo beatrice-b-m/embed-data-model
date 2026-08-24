@@ -1,9 +1,11 @@
 """Dataset and source-system adapters."""
 
 from embed_toolkit.adapters.embed import (
+    EmbedClinicalImageGraph,
     EmbedClinicalTables,
     EmbedImageTables,
     FindingImageJoin,
+    assemble_clinical_image_graph,
     build_clinical_tables,
     build_exams,
     build_image_tables,
@@ -20,12 +22,14 @@ from embed_toolkit.adapters.magview import (
 )
 
 __all__ = [
+    "EmbedClinicalImageGraph",
     "EmbedClinicalTables",
     "EmbedImageTables",
     "FindingImageJoin",
     "MagViewLocationNormalization",
     "MagViewNormalizationWarning",
     "MagViewSourceEvidence",
+    "assemble_clinical_image_graph",
     "build_clinical_tables",
     "build_exams",
     "build_image_tables",

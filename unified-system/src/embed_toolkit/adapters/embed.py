@@ -86,6 +86,50 @@ class EmbedImageTables:
 
 
 @dataclass(frozen=True)
+class EmbedClinicalImageGraph:
+    """Cross-table exam/image containment and reconciliation result."""
+
+    exams: Tuple[Exam, ...]
+    images: Tuple[MammogramImage, ...]
+    unmatched_images: Tuple[MammogramImage, ...]
+    unmatched_exams: Tuple[Exam, ...]
+    build_issues: Tuple[BuildIssue, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize images once and containment through image references."""
+
+        return {
+            "exams": [
+                {
+                    "accession_number": exam.accession_number,
+                    "patient_id": exam.patient_id,
+                    "image_references": [image.image_id for image in exam.images],
+                    "breast_sides": [
+                        {
+                            "accession_number": side.accession_number,
+                            "laterality": side.laterality.value,
+                            "image_references": [
+                                image.image_id for image in side.images
+                            ],
+                        }
+                        for laterality in (Laterality.LEFT, Laterality.RIGHT)
+                        if (side := exam.breast_sides.get(laterality)) is not None
+                    ],
+                }
+                for exam in self.exams
+            ],
+            "images": [image.to_dict() for image in self.images],
+            "unmatched_image_references": [
+                image.image_id for image in self.unmatched_images
+            ],
+            "unmatched_exam_references": [
+                exam.accession_number for exam in self.unmatched_exams
+            ],
+            "build_issues": [issue.to_dict() for issue in self.build_issues],
+        }
+
+
+@dataclass(frozen=True)
 class FindingImageJoin:
     """An intentional clinical-to-image side-aware join result."""
 
@@ -530,6 +574,108 @@ def build_image_tables(
         rois.extend(_rois_from_row(row, column_aliases, image, coordinate_frame_id))
 
     return EmbedImageTables(images=tuple(images), rois=tuple(rois))
+
+
+def assemble_clinical_image_graph(
+    clinical: EmbedClinicalTables,
+    image_tables: EmbedImageTables,
+    *,
+    build_policy: Optional[BuildPolicy] = None,
+    source_scope: Optional[str] = None,
+    source_scope_kind: SourceScopeKind = SourceScopeKind.MATERIALIZATION,
+    source_profile: str = "internal-v1c",
+    source_table: str = "image_metadata",
+) -> EmbedClinicalImageGraph:
+    """Attach images to matching exams after cross-table identity checks.
+
+    An omitted scope creates explicitly ephemeral assembly provenance. Dataset
+    scopes must be supplied by the caller. Validation is completed before any
+    attachment so strict failures do not leave a partially assembled graph.
+    """
+
+    if not isinstance(clinical, EmbedClinicalTables):
+        raise TypeError("clinical must be an EmbedClinicalTables")
+    if not isinstance(image_tables, EmbedImageTables):
+        raise TypeError("image_tables must be an EmbedImageTables")
+    policy = build_policy or BuildPolicy()
+    if not isinstance(policy, BuildPolicy):
+        raise TypeError("build_policy must be a BuildPolicy")
+    scope_kind = SourceScopeKind(source_scope_kind)
+    if source_scope is None:
+        if scope_kind is not SourceScopeKind.MATERIALIZATION:
+            raise ValueError("Dataset source scopes must be supplied explicitly")
+        resolved_source_scope = f"in-memory-assembly:{uuid.uuid4()}"
+    elif not isinstance(source_scope, str) or not source_scope.strip():
+        raise ValueError("source_scope must be a non-empty string")
+    else:
+        resolved_source_scope = source_scope
+    for name, value in (
+        ("source_profile", source_profile),
+        ("source_table", source_table),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a non-empty string")
+
+    exam_by_accession = {exam.accession_number: exam for exam in clinical.exams}
+    attachments = []
+    unmatched_images = []
+    issues = []
+    matched_accessions = set()
+
+    for image in image_tables.images:
+        accession = image.accession_number
+        exam = exam_by_accession.get(accession) if accession is not None else None
+        if exam is None:
+            unmatched_images.append(image)
+            continue
+        if (
+            image.patient_id is not None
+            and exam.patient_id is not None
+            and image.patient_id != exam.patient_id
+        ):
+            issue = BuildIssue(
+                code="conflicting_clinical_image_patient_identity",
+                message=(
+                    "Clinical and image patient identities conflict for one "
+                    "accession."
+                ),
+                severity=IssueSeverity.ERROR,
+                source=SourceLocator(
+                    scope=resolved_source_scope,
+                    scope_kind=scope_kind,
+                    source_profile=source_profile,
+                    source_table=source_table,
+                    source_key=image.image_id,
+                ),
+                context={
+                    "accession_number": accession,
+                    "clinical_patient_id": exam.patient_id,
+                    "image_patient_id": image.patient_id,
+                    "image_id": image.image_id,
+                },
+            )
+            policy.handle_issue(issue)
+            issues.append(issue)
+            unmatched_images.append(image)
+            continue
+        attachments.append((exam, image))
+        matched_accessions.add(exam.accession_number)
+
+    for exam, image in attachments:
+        exam.add_image(image)
+
+    unmatched_exams = tuple(
+        exam
+        for exam in clinical.exams
+        if exam.accession_number not in matched_accessions
+    )
+    return EmbedClinicalImageGraph(
+        exams=clinical.exams,
+        images=image_tables.images,
+        unmatched_images=tuple(unmatched_images),
+        unmatched_exams=unmatched_exams,
+        build_issues=tuple(issues),
+    )
 
 
 def join_findings_to_images(
