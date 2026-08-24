@@ -1,4 +1,4 @@
-"""Resolved procedures and unresolved source occurrences."""
+"""Resolved procedures and source-located incomplete procedure evidence."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from embed_toolkit.core.primitives import Laterality
-from embed_toolkit.core.provenance import ResolutionState, SourceOccurrence
+from embed_toolkit.core.provenance import SourceLocator
 
 
 def _to_plain(value: Any) -> Any:
@@ -63,7 +63,7 @@ class UnresolvedProcedureOccurrence:
         "laterality",
     )
 
-    occurrence: SourceOccurrence
+    source: SourceLocator
     missing_identity_fields: Tuple[str, ...]
     patient_id: Optional[str] = None
     performed_date: Optional[str] = None
@@ -71,8 +71,8 @@ class UnresolvedProcedureOccurrence:
     laterality: Laterality = Laterality.UNKNOWN
 
     def __post_init__(self) -> None:
-        if self.occurrence.resolution_state is not ResolutionState.UNRESOLVED:
-            raise ValueError("Procedure occurrence must have unresolved source state")
+        if not isinstance(self.source, SourceLocator):
+            raise TypeError("source must be a SourceLocator")
         missing = tuple(self.missing_identity_fields)
         if not missing or any(
             not isinstance(value, str) or not value.strip() for value in missing
@@ -106,7 +106,7 @@ class UnresolvedProcedureOccurrence:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "occurrence": self.occurrence.to_dict(),
+            "source": self.source.to_dict(),
             "missing_identity_fields": list(self.missing_identity_fields),
             "patient_id": self.patient_id,
             "performed_date": self.performed_date,
@@ -120,37 +120,34 @@ class Procedure:
     """One resolved procedure shared independently of finding attribution."""
 
     identity: ProcedureIdentity
-    source_occurrences: List[SourceOccurrence] = field(default_factory=list)
+    sources: List[SourceLocator] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, ProcedureIdentity):
             raise TypeError("identity must be a ProcedureIdentity")
-        occurrences = list(self.source_occurrences)
-        if any(
-            occurrence.resolution_state is not ResolutionState.RESOLVED
-            for occurrence in occurrences
-        ):
-            raise ValueError("Resolved procedures require resolved source occurrences")
-        self.source_occurrences = occurrences
+        sources = list(self.sources)
+        if any(not isinstance(source, SourceLocator) for source in sources):
+            raise TypeError("sources must contain only SourceLocator values")
+        if len(set(sources)) != len(sources):
+            raise ValueError("sources must contain unique SourceLocator values")
+        self.sources = sources
 
-    def add_source_occurrence(
+    def add_source(
         self,
-        occurrence: SourceOccurrence,
-    ) -> SourceOccurrence:
-        """Attach resolved source evidence without changing clinical identity."""
+        source: SourceLocator,
+    ) -> SourceLocator:
+        """Attach a source reference without changing clinical identity."""
 
-        if occurrence.resolution_state is not ResolutionState.RESOLVED:
-            raise ValueError("Resolved procedures require resolved source occurrences")
-        if occurrence not in self.source_occurrences:
-            self.source_occurrences.append(occurrence)
-        return occurrence
+        if not isinstance(source, SourceLocator):
+            raise TypeError("source must be a SourceLocator")
+        if source not in self.sources:
+            self.sources.append(source)
+        return source
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "identity": self.identity.to_dict(),
-            "source_occurrences": [
-                occurrence.to_dict() for occurrence in self.source_occurrences
-            ],
+            "sources": [source.to_dict() for source in self.sources],
             "metadata": _to_plain(self.metadata),
         }

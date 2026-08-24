@@ -44,10 +44,10 @@ def test_audit_retains_incomplete_procedure_without_resolved_multiplicity() -> N
     assert tables.procedures == ()
     assert tables.finding_procedure_links == ()
     assert len(tables.unresolved_procedure_occurrences) == 2
-    assert len(tables.unresolved_occurrences) == 2
+    assert len(tables.source_occurrences) == 2
     assert len(tables.build_issues) == 2
     assert [
-        item.occurrence.locator.row_ordinal
+        item.source.row_ordinal
         for item in tables.unresolved_procedure_occurrences
     ] == [0, 1]
     assert all(
@@ -81,10 +81,7 @@ def test_complete_procedure_is_shared_by_explicit_finding_links() -> None:
     assert procedure.identity.performed_date == "2020-01-02"
     assert procedure.identity.procedure_type == "core biopsy"
     assert procedure.identity.laterality is Laterality.RIGHT
-    assert [
-        occurrence.raw_values["procedure_id"]
-        for occurrence in procedure.source_occurrences
-    ] == ["SOURCE-A", "SOURCE-B"]
+    assert [source.row_ordinal for source in procedure.sources] == [0, 1]
     assert [link.finding_number for link in tables.finding_procedure_links] == [
         "1",
         "2",
@@ -123,5 +120,6 @@ def test_absent_procedure_surface_creates_no_procedure_evidence() -> None:
     assert tables.procedures == ()
     assert tables.finding_procedure_links == ()
     assert tables.unresolved_procedure_occurrences == ()
-    assert tables.unresolved_occurrences == ()
+    assert len(tables.source_occurrences) == 1
+    assert tables.source_occurrences[0].issues == ()
     assert tables.build_issues == ()

@@ -42,6 +42,7 @@ from embed_toolkit.clinical.procedures import (
     Procedure,
     ProcedureIdentity,
     UnresolvedProcedureOccurrence,
+    _to_plain,
 )
 from embed_toolkit.config.columns import EmbedColumnConfig, default_embed_columns
 from embed_toolkit.core.build_policy import BuildPolicy
@@ -89,8 +90,78 @@ class EmbedClinicalTables:
     pathology_observations: Tuple[PathologyObservation, ...]
     pathology_diagnoses: Tuple[PathologyDiagnosis, ...]
     pathology_attribution_links: Tuple[PathologyAttributionLink, ...]
-    unresolved_occurrences: Tuple[SourceOccurrence, ...]
+    source_occurrences: Tuple[SourceOccurrence, ...]
     build_issues: Tuple[BuildIssue, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize the clinical graph once, with governed identity references."""
+
+        return {
+            "patients": [
+                {
+                    "patient_id": patient.patient_id,
+                    "sex": patient.sex,
+                    "birth_year": patient.birth_year,
+                    "exam_references": [
+                        exam.accession_number for exam in patient.exams
+                    ],
+                    "metadata": _to_plain(patient.metadata),
+                }
+                for patient in self.patients
+            ],
+            "exams": [
+                {
+                    "accession_number": exam.accession_number,
+                    "patient_id": exam.patient_id,
+                    "exam_date": exam.exam_date,
+                    "description": exam.description,
+                    "finding_references": [
+                        {
+                            "accession_number": finding.accession_number,
+                            "finding_number": finding.finding_number,
+                        }
+                        for finding in exam.findings
+                    ],
+                    "breast_side_references": [
+                        {
+                            "accession_number": side.accession_number,
+                            "laterality": side.laterality.value,
+                        }
+                        for laterality in (Laterality.LEFT, Laterality.RIGHT)
+                        if (side := exam.breast_sides.get(laterality)) is not None
+                    ],
+                    "image_references": [image.image_id for image in exam.images],
+                    "metadata": _to_plain(exam.metadata),
+                }
+                for exam in self.exams
+            ],
+            "findings": [finding.to_dict() for finding in self.findings],
+            "interpretations": [
+                interpretation.to_dict() for interpretation in self.interpretations
+            ],
+            "breast_sides": [side.to_dict() for side in self.breast_sides],
+            "procedures": [procedure.to_dict() for procedure in self.procedures],
+            "finding_procedure_links": [
+                link.to_dict() for link in self.finding_procedure_links
+            ],
+            "unresolved_procedure_occurrences": [
+                occurrence.to_dict()
+                for occurrence in self.unresolved_procedure_occurrences
+            ],
+            "pathology_observations": [
+                observation.to_dict() for observation in self.pathology_observations
+            ],
+            "pathology_diagnoses": [
+                diagnosis.to_dict() for diagnosis in self.pathology_diagnoses
+            ],
+            "pathology_attribution_links": [
+                link.to_dict() for link in self.pathology_attribution_links
+            ],
+            "source_occurrences": [
+                occurrence.to_dict() for occurrence in self.source_occurrences
+            ],
+            "build_issues": [issue.to_dict() for issue in self.build_issues],
+        }
 
 
 @dataclass(frozen=True)
@@ -240,6 +311,18 @@ class _FindingAnatomyObservation:
     issues: Tuple[BuildIssue, ...]
 
 
+@dataclass
+class _ClinicalBuildState:
+    patients: dict[str, Patient]
+    exams: dict[str, Exam]
+    procedure_registry: dict[ProcedureIdentity, Procedure]
+    finding_procedure_links: list[FindingProcedureLink]
+    unresolved_procedure_occurrences: list[UnresolvedProcedureOccurrence]
+    pathology_observations: list[PathologyObservation]
+    pathology_diagnoses: list[PathologyDiagnosis]
+    pathology_attribution_links: list[PathologyAttributionLink]
+
+
 _MISSING = object()
 
 
@@ -361,8 +444,18 @@ def build_clinical_tables(
     pathology_observations: list[PathologyObservation] = []
     pathology_diagnoses: list[PathologyDiagnosis] = []
     pathology_attribution_links: list[PathologyAttributionLink] = []
-    unresolved_occurrences: dict[SourceLocator, SourceOccurrence] = {}
+    source_occurrences: list[SourceOccurrence] = []
     build_issues: list[BuildIssue] = []
+    state = _ClinicalBuildState(
+        patients=patients,
+        exams=exams,
+        procedure_registry=procedure_registry,
+        finding_procedure_links=finding_procedure_links,
+        unresolved_procedure_occurrences=unresolved_procedure_occurrences,
+        pathology_observations=pathology_observations,
+        pathology_diagnoses=pathology_diagnoses,
+        pathology_attribution_links=pathology_attribution_links,
+    )
 
     for row_ordinal, row in enumerate(rows):
         locator = SourceLocator(
@@ -372,248 +465,27 @@ def build_clinical_tables(
             source_table=source_table,
             row_ordinal=row_ordinal,
         )
-        row_observations, row_diagnosis, pathology_issues = _pathology_from_row(
+        row_issues = _build_clinical_row(
             row,
-            column_aliases,
             locator,
-        )
-        if pathology_issues:
-            pathology_occurrence = SourceOccurrence(
-                locator=locator,
-                raw_values=dict(row),
-                resolution_state=ResolutionState.UNRESOLVED,
-                issues=pathology_issues,
-            )
-            policy.review(pathology_occurrence)
-            _retain_unresolved_occurrence(
-                unresolved_occurrences,
-                pathology_occurrence,
-            )
-            build_issues.extend(pathology_issues)
-        pathology_observations.extend(row_observations)
-        if row_diagnosis is not None:
-            pathology_diagnoses.append(row_diagnosis)
-        patient_id = _string_value(_get(row, column_aliases.patient_id))
-        accession = _string_value(_get(row, column_aliases.accession))
-        finding_number = _string_value(_get(row, column_aliases.finding_number))
-        identity_issues = _clinical_identity_issues(
-            patient_id=patient_id,
-            accession=accession,
-            finding_number=finding_number,
-            locator=locator,
-            columns=column_aliases,
-        )
-        parent_identity_issues = tuple(
-            issue
-            for issue in identity_issues
-            if issue.code != "missing_finding_identity"
-        )
-        if parent_identity_issues:
-            occurrence = SourceOccurrence(
-                locator=locator,
-                raw_values=dict(row),
-                resolution_state=ResolutionState.UNRESOLVED,
-                issues=identity_issues,
-            )
-            policy.review(occurrence)
-            _retain_unresolved_occurrence(unresolved_occurrences, occurrence)
-            build_issues.extend(identity_issues)
-            continue
-
-        assert patient_id is not None
-        assert accession is not None
-        existing_exam = exams.get(accession)
-        if existing_exam is not None and existing_exam.patient_id != patient_id:
-            conflict_issue = BuildIssue(
-                code="conflicting_accession_patient_identity",
-                message="An accession cannot resolve to multiple patient identities.",
-                severity=IssueSeverity.ERROR,
-                source=locator,
-                context={
-                    "accession_number": accession,
-                    "retained_patient_id": existing_exam.patient_id,
-                    "observed_patient_id": patient_id,
-                },
-            )
-            conflict_issues = (conflict_issue,) + tuple(
-                issue
-                for issue in identity_issues
-                if issue.code == "missing_finding_identity"
-            )
-            occurrence = SourceOccurrence(
-                locator=locator,
-                raw_values=dict(row),
-                resolution_state=ResolutionState.UNRESOLVED,
-                issues=conflict_issues,
-            )
-            policy.review(occurrence)
-            _retain_unresolved_occurrence(unresolved_occurrences, occurrence)
-            build_issues.extend(conflict_issues)
-            continue
-
-        finding_occurrence = None
-        if finding_number is None:
-            finding_occurrence = SourceOccurrence(
-                locator=locator,
-                raw_values=dict(row),
-                resolution_state=ResolutionState.UNRESOLVED,
-                issues=tuple(
-                    issue
-                    for issue in identity_issues
-                    if issue.code == "missing_finding_identity"
-                ),
-            )
-            policy.review(finding_occurrence)
-
-        patient = patients.setdefault(
-            patient_id,
-            Patient(
-                patient_id=patient_id,
-                sex=_string_value(_get(row, column_aliases.sex)),
-                birth_year=_optional_int(_get(row, column_aliases.birth_year)),
-            ),
-        )
-        exam = existing_exam
-        if exam is None:
-            exam = Exam(
-                accession_number=accession,
-                patient_id=patient_id,
-                exam_date=_string_value(_get(row, column_aliases.exam_date)),
-                description=_string_value(_get(row, column_aliases.exam_description)),
-            )
-            exams[accession] = patient.add_exam(exam)
-        else:
-            patient.add_exam(exam)
-
-        if finding_occurrence is not None:
-            pathology_attribution_links.extend(
-                _pathology_attribution_links(
-                    observations=row_observations,
-                    diagnosis=row_diagnosis,
-                    targets=(
-                        ClinicalObjectReference(
-                            ClinicalObjectKind.PATIENT,
-                            (patient_id,),
-                        ),
-                        ClinicalObjectReference(
-                            ClinicalObjectKind.EXAM,
-                            (accession,),
-                        ),
-                    ),
-                    locator=locator,
-                )
-            )
-            _retain_unresolved_occurrence(
-                unresolved_occurrences,
-                finding_occurrence,
-            )
-            build_issues.extend(finding_occurrence.issues)
-            continue
-
-        assert finding_number is not None
-        side = _clinical_laterality(_get(row, column_aliases.clinical_side))
-        anatomy = _finding_anatomy_from_row(
-            row,
             column_aliases,
-            side,
-            locator,
             policy,
+            state,
         )
-        build_issues.extend(anatomy.issues)
-        row_interpretation = _interpretation_from_row(
-            row,
-            column_aliases,
-            accession,
-            finding_number,
-            locator,
+        resolution_state = (
+            ResolutionState.UNRESOLVED
+            if any(issue.severity is IssueSeverity.ERROR for issue in row_issues)
+            else ResolutionState.RESOLVED
         )
-        existing_finding = exam.finding_index.get((accession, finding_number))
-        finding = Finding(
-            accession_number=accession,
-            laterality=side,
-            finding_number=finding_number,
-            finding_type=_string_value(_get(row, column_aliases.finding_type)),
-            interpretation=row_interpretation,
-            anatomical_position=anatomy.position,
-            raw_source_fields=dict(row),
-            source_location_codes=anatomy.location_codes,
-            source_depth_codes=anatomy.depth_codes,
-            source_distance_codes=anatomy.distance_codes,
-            normalization_evidence=list(anatomy.evidence),
-            normalization_warnings=list(anatomy.warnings),
-        )
-        finding = exam.add_finding(finding)
-        if existing_finding is not None:
-            anatomy_issues = _merge_finding_anatomy(
-                existing_finding,
-                anatomy,
-                locator,
-                policy,
-            )
-            build_issues.extend(anatomy_issues)
-            merged_interpretation, interpretation_issues = _merge_interpretations(
-                existing_finding.interpretation,
-                row_interpretation,
-                locator,
-                policy,
-            )
-            finding.interpretation = merged_interpretation
-            build_issues.extend(interpretation_issues)
-        resolved_procedure, link, unresolved_procedure = _procedure_from_row(
-            row,
-            column_aliases,
-            patient_id,
-            accession,
-            finding.finding_number,
-            locator,
-            procedure_registry,
-            policy,
-        )
-        if link is not None:
-            finding_procedure_links.append(link)
-        if unresolved_procedure is not None:
-            unresolved_procedure_occurrences.append(unresolved_procedure)
-            _retain_unresolved_occurrence(
-                unresolved_occurrences,
-                unresolved_procedure.occurrence,
-            )
-            build_issues.extend(unresolved_procedure.occurrence.issues)
-        targets = [
-            ClinicalObjectReference(ClinicalObjectKind.PATIENT, (patient_id,)),
-            ClinicalObjectReference(ClinicalObjectKind.EXAM, (accession,)),
-            ClinicalObjectReference(
-                ClinicalObjectKind.FINDING,
-                (accession, finding.finding_number),
-            ),
-        ]
-        targets.extend(
-            ClinicalObjectReference(
-                ClinicalObjectKind.BREAST_SIDE,
-                (accession, laterality.value),
-            )
-            for laterality in Laterality.coerce(finding.laterality).expand()
-        )
-        if resolved_procedure is not None:
-            procedure_identity = resolved_procedure.identity
-            targets.append(
-                ClinicalObjectReference(
-                    ClinicalObjectKind.PROCEDURE,
-                    (
-                        procedure_identity.patient_id,
-                        procedure_identity.performed_date,
-                        procedure_identity.procedure_type,
-                        procedure_identity.laterality.value,
-                    ),
-                )
-            )
-        pathology_attribution_links.extend(
-            _pathology_attribution_links(
-                observations=row_observations,
-                diagnosis=row_diagnosis,
-                targets=tuple(targets),
+        source_occurrences.append(
+            SourceOccurrence(
                 locator=locator,
+                raw_values=dict(row),
+                resolution_state=resolution_state,
+                issues=row_issues,
             )
         )
+        build_issues.extend(row_issues)
 
     ordered_patients = tuple(patients.values())
     ordered_exams = tuple(exams.values())
@@ -638,9 +510,312 @@ def build_clinical_tables(
         pathology_observations=tuple(pathology_observations),
         pathology_diagnoses=tuple(pathology_diagnoses),
         pathology_attribution_links=tuple(pathology_attribution_links),
-        unresolved_occurrences=tuple(unresolved_occurrences.values()),
+        source_occurrences=tuple(source_occurrences),
         build_issues=tuple(build_issues),
     )
+
+
+def _build_clinical_row(
+    row: Row,
+    locator: SourceLocator,
+    columns: _ColumnAliases,
+    policy: BuildPolicy,
+    state: _ClinicalBuildState,
+) -> Tuple[BuildIssue, ...]:
+    """Project one row while accumulating all issues for one ledger entry."""
+
+    issues: list[BuildIssue] = []
+    row_observations, row_diagnosis, pathology_issues = _pathology_from_row(
+        row,
+        columns,
+        locator,
+    )
+    _review_row_issues(policy, pathology_issues)
+    issues.extend(pathology_issues)
+    state.pathology_observations.extend(row_observations)
+    if row_diagnosis is not None:
+        state.pathology_diagnoses.append(row_diagnosis)
+
+    patient_id = _string_value(_get(row, columns.patient_id))
+    accession = _string_value(_get(row, columns.accession))
+    finding_number = _string_value(_get(row, columns.finding_number))
+    identity_issues = _clinical_identity_issues(
+        patient_id=patient_id,
+        accession=accession,
+        finding_number=finding_number,
+        locator=locator,
+        columns=columns,
+    )
+    parent_identity_issues = tuple(
+        issue
+        for issue in identity_issues
+        if issue.code != "missing_finding_identity"
+    )
+    if parent_identity_issues:
+        _review_row_issues(policy, identity_issues)
+        issues.extend(identity_issues)
+        return tuple(issues)
+
+    assert patient_id is not None
+    assert accession is not None
+    existing_exam = state.exams.get(accession)
+    if existing_exam is not None and existing_exam.patient_id != patient_id:
+        conflict_issues = (
+            BuildIssue(
+                code="conflicting_accession_patient_identity",
+                message="An accession cannot resolve to multiple patient identities.",
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={
+                    "accession_number": accession,
+                    "retained_patient_id": existing_exam.patient_id,
+                    "observed_patient_id": patient_id,
+                },
+            ),
+        ) + tuple(
+            issue
+            for issue in identity_issues
+            if issue.code == "missing_finding_identity"
+        )
+        _review_row_issues(policy, conflict_issues)
+        issues.extend(conflict_issues)
+        return tuple(issues)
+
+    missing_finding_issues = tuple(
+        issue
+        for issue in identity_issues
+        if issue.code == "missing_finding_identity"
+    )
+    _review_row_issues(policy, missing_finding_issues)
+    issues.extend(missing_finding_issues)
+
+    patient = state.patients.setdefault(
+        patient_id,
+        Patient(
+            patient_id=patient_id,
+            sex=_string_value(_get(row, columns.sex)),
+            birth_year=_optional_int(_get(row, columns.birth_year)),
+        ),
+    )
+    exam = existing_exam
+    if exam is None:
+        exam = Exam(
+            accession_number=accession,
+            patient_id=patient_id,
+            exam_date=_string_value(_get(row, columns.exam_date)),
+            description=_string_value(_get(row, columns.exam_description)),
+        )
+        state.exams[accession] = patient.add_exam(exam)
+    else:
+        patient.add_exam(exam)
+
+    if finding_number is None:
+        (
+            resolved_procedure,
+            _,
+            unresolved_procedure,
+            procedure_issues,
+        ) = _procedure_from_row(
+            row,
+            columns,
+            patient_id,
+            accession,
+            None,
+            locator,
+            state.procedure_registry,
+            policy,
+        )
+        issues.extend(procedure_issues)
+        if unresolved_procedure is not None:
+            state.unresolved_procedure_occurrences.append(unresolved_procedure)
+        targets = [
+            ClinicalObjectReference(ClinicalObjectKind.PATIENT, (patient_id,)),
+            ClinicalObjectReference(ClinicalObjectKind.EXAM, (accession,)),
+        ]
+        if resolved_procedure is not None:
+            procedure_identity = resolved_procedure.identity
+            targets.append(
+                ClinicalObjectReference(
+                    ClinicalObjectKind.PROCEDURE,
+                    (
+                        procedure_identity.patient_id,
+                        procedure_identity.performed_date,
+                        procedure_identity.procedure_type,
+                        procedure_identity.laterality.value,
+                    ),
+                )
+            )
+        state.pathology_attribution_links.extend(
+            _pathology_attribution_links(
+                observations=row_observations,
+                diagnosis=row_diagnosis,
+                targets=tuple(targets),
+                locator=locator,
+            )
+        )
+        return tuple(issues)
+
+    side = _clinical_laterality(_get(row, columns.clinical_side))
+    anatomy = _finding_anatomy_from_row(
+        row,
+        columns,
+        side,
+        locator,
+        policy,
+    )
+    issues.extend(anatomy.issues)
+    row_interpretation = _interpretation_from_row(
+        row,
+        columns,
+        accession,
+        finding_number,
+        locator,
+    )
+    existing_finding = exam.finding_index.get((accession, finding_number))
+    finding = Finding(
+        accession_number=accession,
+        laterality=side,
+        finding_number=finding_number,
+        finding_type=_string_value(_get(row, columns.finding_type)),
+        interpretation=row_interpretation,
+        anatomical_position=anatomy.position,
+        source_location_codes=anatomy.location_codes,
+        source_depth_codes=anatomy.depth_codes,
+        source_distance_codes=anatomy.distance_codes,
+        normalization_evidence=list(anatomy.evidence),
+        normalization_warnings=list(anatomy.warnings),
+    )
+    if existing_finding is not None:
+        finding_attribute_issues = _finding_attribute_issues(
+            existing_finding,
+            finding,
+            locator,
+        )
+        _review_row_issues(policy, finding_attribute_issues)
+        issues.extend(finding_attribute_issues)
+        for issue in finding_attribute_issues:
+            attribute = issue.context["attribute"]
+            setattr(finding, attribute, getattr(existing_finding, attribute))
+    finding = exam.add_finding(finding)
+    if existing_finding is not None:
+        anatomy_issues = _merge_finding_anatomy(
+            existing_finding,
+            anatomy,
+            locator,
+            policy,
+        )
+        issues.extend(anatomy_issues)
+        merged_interpretation, interpretation_issues = _merge_interpretations(
+            existing_finding.interpretation,
+            row_interpretation,
+            locator,
+            policy,
+        )
+        finding.interpretation = merged_interpretation
+        issues.extend(interpretation_issues)
+
+    (
+        resolved_procedure,
+        link,
+        unresolved_procedure,
+        procedure_issues,
+    ) = _procedure_from_row(
+        row,
+        columns,
+        patient_id,
+        accession,
+        finding.finding_number,
+        locator,
+        state.procedure_registry,
+        policy,
+    )
+    issues.extend(procedure_issues)
+    if link is not None:
+        state.finding_procedure_links.append(link)
+    if unresolved_procedure is not None:
+        state.unresolved_procedure_occurrences.append(unresolved_procedure)
+
+    targets = [
+        ClinicalObjectReference(ClinicalObjectKind.PATIENT, (patient_id,)),
+        ClinicalObjectReference(ClinicalObjectKind.EXAM, (accession,)),
+        ClinicalObjectReference(
+            ClinicalObjectKind.FINDING,
+            (accession, finding.finding_number),
+        ),
+    ]
+    targets.extend(
+        ClinicalObjectReference(
+            ClinicalObjectKind.BREAST_SIDE,
+            (accession, laterality.value),
+        )
+        for laterality in Laterality.coerce(finding.laterality).expand()
+    )
+    if resolved_procedure is not None:
+        procedure_identity = resolved_procedure.identity
+        targets.append(
+            ClinicalObjectReference(
+                ClinicalObjectKind.PROCEDURE,
+                (
+                    procedure_identity.patient_id,
+                    procedure_identity.performed_date,
+                    procedure_identity.procedure_type,
+                    procedure_identity.laterality.value,
+                ),
+            )
+        )
+    state.pathology_attribution_links.extend(
+        _pathology_attribution_links(
+            observations=row_observations,
+            diagnosis=row_diagnosis,
+            targets=tuple(targets),
+            locator=locator,
+        )
+    )
+    return tuple(issues)
+
+
+def _review_row_issues(
+    policy: BuildPolicy,
+    issues: Iterable[BuildIssue],
+) -> None:
+    for issue in issues:
+        policy.handle_issue(issue)
+
+
+def _finding_attribute_issues(
+    retained: Finding,
+    observed: Finding,
+    locator: SourceLocator,
+) -> Tuple[BuildIssue, ...]:
+    issues = []
+    for attribute in ("laterality", "finding_type"):
+        retained_value = getattr(retained, attribute)
+        observed_value = getattr(observed, attribute)
+        if (
+            retained_value is None
+            or observed_value is None
+            or retained_value == observed_value
+        ):
+            continue
+        issues.append(
+            BuildIssue(
+                code="conflicting_finding_attribute",
+                message=(
+                    "Repeated rows contain conflicting populated Finding "
+                    f"{attribute} values."
+                ),
+                severity=IssueSeverity.ERROR,
+                source=locator,
+                context={
+                    "accession_number": retained.accession_number,
+                    "finding_number": retained.finding_number,
+                    "attribute": attribute,
+                    "retained": getattr(retained_value, "value", retained_value),
+                    "observed": getattr(observed_value, "value", observed_value),
+                },
+            )
+        )
+    return tuple(issues)
 
 
 def _interpretation_from_row(
@@ -1294,7 +1469,7 @@ def _procedure_from_row(
     columns: _ColumnAliases,
     patient_id: str,
     accession: str,
-    finding_number: str,
+    finding_number: Optional[str],
     locator: SourceLocator,
     registry: dict[ProcedureIdentity, Procedure],
     policy: BuildPolicy,
@@ -1302,6 +1477,7 @@ def _procedure_from_row(
     Optional[Procedure],
     Optional[FindingProcedureLink],
     Optional[UnresolvedProcedureOccurrence],
+    Tuple[BuildIssue, ...],
 ]:
     procedure_id = _string_value(_get(row, columns.procedure_id))
     procedure_type = _string_value(_get(row, columns.procedure_type))
@@ -1309,7 +1485,7 @@ def _procedure_from_row(
     raw_laterality = _string_value(_get(row, columns.procedure_laterality))
     procedure_laterality = Laterality.coerce(raw_laterality)
     if not any((procedure_id, procedure_type, procedure_date, raw_laterality)):
-        return None, None, None
+        return None, None, None, ()
 
     missing_identity_fields = tuple(
         field_name
@@ -1335,24 +1511,19 @@ def _procedure_from_row(
                 "source_procedure_id": procedure_id,
             },
         )
-        occurrence = SourceOccurrence(
-            locator=locator,
-            raw_values=dict(row),
-            resolution_state=ResolutionState.UNRESOLVED,
-            issues=(issue,),
-        )
-        policy.review(occurrence)
+        policy.handle_issue(issue)
         return (
             None,
             None,
             UnresolvedProcedureOccurrence(
-                occurrence=occurrence,
+                source=locator,
                 missing_identity_fields=missing_identity_fields,
                 patient_id=patient_id,
                 performed_date=procedure_date,
                 procedure_type=procedure_type,
                 laterality=procedure_laterality,
             ),
+            (issue,),
         )
 
     identity = ProcedureIdentity(
@@ -1361,23 +1532,23 @@ def _procedure_from_row(
         procedure_type=procedure_type,
         laterality=procedure_laterality,
     )
-    occurrence = SourceOccurrence(
-        locator=locator,
-        raw_values=dict(row),
-        resolution_state=ResolutionState.RESOLVED,
-    )
     procedure = registry.setdefault(identity, Procedure(identity=identity))
-    procedure.add_source_occurrence(occurrence)
+    procedure.add_source(locator)
     return (
         procedure,
-        FindingProcedureLink(
-            accession_number=accession,
-            finding_number=finding_number,
-            procedure=identity,
-            status=AttributionStatus.SOURCE_COLOCATED,
-            source=locator,
+        (
+            FindingProcedureLink(
+                accession_number=accession,
+                finding_number=finding_number,
+                procedure=identity,
+                status=AttributionStatus.SOURCE_COLOCATED,
+                source=locator,
+            )
+            if finding_number is not None
+            else None
         ),
         None,
+        (),
     )
 
 
@@ -1483,29 +1654,6 @@ def _govern_pathology_severity(
         )
         return None, tuple(issues)
     return severity, tuple(issues)
-
-
-def _retain_unresolved_occurrence(
-    occurrences: dict[SourceLocator, SourceOccurrence],
-    occurrence: SourceOccurrence,
-) -> None:
-    """Retain one unresolved occurrence per physical source locator."""
-
-    existing = occurrences.get(occurrence.locator)
-    if existing is None:
-        occurrences[occurrence.locator] = occurrence
-        return
-    if existing.raw_values != occurrence.raw_values:
-        raise ValueError("One source locator cannot represent different raw rows")
-    additional_issues = tuple(
-        issue for issue in occurrence.issues if issue not in existing.issues
-    )
-    occurrences[occurrence.locator] = SourceOccurrence(
-        locator=existing.locator,
-        raw_values=existing.raw_values,
-        resolution_state=ResolutionState.UNRESOLVED,
-        issues=existing.issues + additional_issues,
-    )
 
 
 def _pathology_attribution_links(

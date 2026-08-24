@@ -13,7 +13,7 @@ from embed_toolkit.clinical.associations import AttributionStatus
 from embed_toolkit.clinical.pathology import PathologySeverity
 from embed_toolkit.core.build_policy import BuildMode, BuildPolicy, BuildPolicyError
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
-from embed_toolkit.core.provenance import AvailabilityState
+from embed_toolkit.core.provenance import AvailabilityState, ResolutionState
 
 
 def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
@@ -62,12 +62,9 @@ def test_clinical_builder_deduplicates_findings_and_attaches_rows() -> None:
     assert finding.interpretation.recommendation_availability is (
         AvailabilityState.UNAVAILABLE
     )
-    assert [
-        procedure.source_occurrences[0].raw_values["procedure_id"]
-        for procedure in tables.procedures
-    ] == [
-        "BIO-1",
-        "LUMP-1",
+    assert [procedure.sources[0].row_ordinal for procedure in tables.procedures] == [
+        0,
+        1,
     ]
     assert [diagnosis.diagnosis for diagnosis in tables.pathology_diagnoses] == [
         "fibroadenoma",
@@ -115,23 +112,74 @@ def test_null_finding_side_is_one_bilateral_finding() -> None:
     assert set(tables.exams[0].breast_sides) == {Laterality.LEFT, Laterality.RIGHT}
 
 
-def test_repeated_finding_identity_flags_conflicting_side() -> None:
+def test_repeated_finding_conflicts_use_build_policy_and_row_ledger() -> None:
+    rows = [
+        {
+            "empi_anon": "P1",
+            "acc_anon": "ACC-1",
+            "numfind": 1,
+            "side": "L",
+            "finding_type": "mass",
+        },
+        {
+            "empi_anon": "P1",
+            "acc_anon": "ACC-1",
+            "numfind": 1,
+            "side": "R",
+            "finding_type": "calcification",
+        },
+    ]
+
+    with pytest.raises(BuildPolicyError) as exc_info:
+        build_clinical_tables(rows)
+    assert exc_info.value.issue.code == "conflicting_finding_attribute"
+    assert exc_info.value.issue.context["attribute"] == "laterality"
+
     tables = build_clinical_tables(
-        [
-            {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": 1, "side": "L"},
-            {"empi_anon": "P1", "acc_anon": "ACC-1", "numfind": 1, "side": "R"},
-        ]
+        rows,
+        build_policy=BuildPolicy(BuildMode.AUDIT),
     )
 
     assert len(tables.findings) == 1
-    assert tables.findings[0].validation_issues == [
-        {
-            "code": "conflicting_finding_attribute",
-            "attribute": "laterality",
-            "retained": "L",
-            "observed": "R",
-        }
+    assert tables.findings[0].laterality is Laterality.LEFT
+    assert tables.findings[0].finding_type == "mass"
+    assert tables.findings[0].metadata["source_row_count"] == 2
+    assert [issue.context["attribute"] for issue in tables.build_issues] == [
+        "laterality",
+        "finding_type",
     ]
+    assert tables.source_occurrences[1].resolution_state is ResolutionState.UNRESOLVED
+    assert tables.source_occurrences[1].issues == tables.build_issues
+
+
+def test_audit_conflict_retains_value_and_merges_safe_missing_attribute() -> None:
+    tables = build_clinical_tables(
+        [
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": 1,
+                "side": "L",
+            },
+            {
+                "empi_anon": "P1",
+                "acc_anon": "ACC-1",
+                "numfind": 1,
+                "side": "R",
+                "finding_type": "mass",
+            },
+        ],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+
+    finding = tables.findings[0]
+    assert finding.laterality is Laterality.LEFT
+    assert finding.finding_type == "mass"
+    assert finding.metadata["source_row_count"] == 2
+    assert [issue.context["attribute"] for issue in tables.build_issues] == [
+        "laterality"
+    ]
+    assert tables.source_occurrences[1].resolution_state is ResolutionState.UNRESOLVED
 
 
 def test_procedure_laterality_is_independent_and_null_remains_unknown() -> None:
@@ -185,7 +233,7 @@ def test_complete_procedures_are_interned_while_pathology_remains_row_grain() ->
 
     procedure = tables.procedures[0]
     assert len(tables.procedures) == 1
-    assert len(procedure.source_occurrences) == 3
+    assert len(procedure.sources) == 3
     assert len(tables.pathology_diagnoses) == 3
     assert [
         (link.accession_number, link.finding_number)

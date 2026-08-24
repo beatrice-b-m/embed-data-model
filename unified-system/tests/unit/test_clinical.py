@@ -21,12 +21,7 @@ from embed_toolkit.core.anatomy import (
     Quadrant,
 )
 from embed_toolkit.core.primitives import Laterality
-from embed_toolkit.core.provenance import (
-    ResolutionState,
-    SourceLocator,
-    SourceOccurrence,
-    SourceScopeKind,
-)
+from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 
 
 def test_finding_identity_uses_accession_and_number_with_side_as_attribute() -> None:
@@ -48,17 +43,21 @@ def test_exam_deduplicates_findings_by_stable_identity() -> None:
     assert exam.findings == [first]
 
 
-def test_exam_flags_conflicting_attributes_for_one_finding_identity() -> None:
+def test_exam_rejects_conflicting_finding_merge_atomically() -> None:
     exam = Exam("ACC-1")
     first = exam.add_finding(Finding("ACC-1", "L", 7, finding_type="mass"))
-    duplicate = exam.add_finding(Finding("ACC-1", "R", 7, finding_type="calc"))
+    observation = Finding("ACC-1", "R", 7, finding_type="calc")
 
-    assert duplicate is first
-    assert [issue["attribute"] for issue in first.validation_issues] == [
-        "laterality",
-        "finding_type",
-    ]
-    assert first.metadata["source_row_count"] == 2
+    with pytest.raises(
+        ValueError,
+        match="laterality, finding_type",
+    ):
+        exam.add_finding(observation)
+
+    assert exam.findings == [first]
+    assert first.laterality is Laterality.LEFT
+    assert first.finding_type == "mass"
+    assert "source_row_count" not in first.metadata
 
 
 def test_negative_nine_remains_a_governed_no_finding_sentinel() -> None:
@@ -93,26 +92,20 @@ def test_procedure_owns_resolved_source_evidence_not_finding_references() -> Non
         procedure_type="biopsy",
         laterality="R",
     )
-    source = SourceOccurrence(
-        locator=SourceLocator(
-            scope="materialization-1",
-            scope_kind=SourceScopeKind.MATERIALIZATION,
-            source_profile="embed_context_internal",
-            source_table="magview",
-            row_ordinal=1,
-        ),
-        raw_values={"procedure_id": "source-only-id"},
-        resolution_state=ResolutionState.RESOLVED,
+    source = SourceLocator(
+        scope="materialization-1",
+        scope_kind=SourceScopeKind.MATERIALIZATION,
+        source_profile="embed_context_internal",
+        source_table="magview",
+        row_ordinal=1,
     )
-    procedure = Procedure(identity=identity, source_occurrences=[source])
+    procedure = Procedure(identity=identity, sources=[source])
 
     assert procedure.identity is identity
-    assert procedure.source_occurrences == [source]
+    assert procedure.sources == [source]
     assert not hasattr(procedure, "finding_number")
     assert not hasattr(procedure, "finding_references")
-    assert procedure.to_dict()["source_occurrences"][0]["raw_values"] == {
-        "procedure_id": "source-only-id"
-    }
+    assert procedure.to_dict()["sources"] == [source.to_dict()]
 
 
 def test_exam_aggregates_side_views_without_procedure_containment() -> None:
@@ -142,7 +135,6 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
         laterality="left",
         finding_number=9,
         anatomical_position=position,
-        raw_source_fields={"numfind": 9, "loc": "C2"},
         source_location_codes={"loc": "C2"},
         source_depth_codes={"depth": "P"},
         descriptors={"mass": {"shape": "oval"}},
@@ -166,7 +158,6 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
     serialized = asdict(finding)
     plain = finding.to_dict()
 
-    assert serialized["raw_source_fields"] == {"numfind": 9, "loc": "C2"}
     assert serialized["source_location_codes"] == {"loc": "C2"}
     assert serialized["source_depth_codes"] == {"depth": "P"}
     assert serialized["descriptors"] == {"mass": {"shape": "oval"}}

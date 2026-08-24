@@ -90,7 +90,6 @@ class Finding:
     finding_type: Optional[str] = None
     interpretation: Optional[ImagingInterpretation] = None
     anatomical_position: Optional[AnatomicalPosition] = None
-    raw_source_fields: Dict[str, Any] = field(default_factory=dict)
     source_location_codes: Dict[str, Any] = field(default_factory=dict)
     source_depth_codes: Dict[str, Any] = field(default_factory=dict)
     source_distance_codes: Dict[str, Any] = field(default_factory=dict)
@@ -101,7 +100,6 @@ class Finding:
     normalization_warnings: List[FindingNormalizationWarning] = field(
         default_factory=list
     )
-    validation_issues: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     record_type: FindingRecordType = field(init=False)
 
@@ -146,26 +144,29 @@ class Finding:
         return ":".join((self.accession_number, self.finding_number))
 
     def merge_observation(self, observation: "Finding") -> None:
-        """Merge a repeated wide row while surfacing invariant conflicts."""
+        """Merge a compatible repeated observation atomically."""
 
+        if not isinstance(observation, Finding):
+            raise TypeError("observation must be a Finding")
+        if observation.identity != self.identity:
+            raise ValueError("Finding observations must have matching identity")
+        conflicts = tuple(
+            attribute
+            for attribute in ("laterality", "finding_type")
+            if getattr(self, attribute) is not None
+            and getattr(observation, attribute) is not None
+            and getattr(self, attribute) != getattr(observation, attribute)
+        )
+        if conflicts:
+            raise ValueError(
+                "Finding observations conflict on populated attributes: "
+                + ", ".join(conflicts)
+            )
         for attribute in ("laterality", "finding_type"):
             current = getattr(self, attribute)
             observed = getattr(observation, attribute)
             if current is None and observed is not None:
                 setattr(self, attribute, observed)
-                continue
-            if observed is None or current == observed:
-                continue
-            self.validation_issues.append(
-                {
-                    "code": "conflicting_finding_attribute",
-                    "attribute": attribute,
-                    "retained": current.value if isinstance(current, Laterality) else current,
-                    "observed": observed.value
-                    if isinstance(observed, Laterality)
-                    else observed,
-                }
-            )
         self.metadata["source_row_count"] = int(
             self.metadata.get("source_row_count", 1)
         ) + 1
@@ -185,7 +186,6 @@ class Finding:
                 else None
             ),
             "anatomical_position": _to_plain(self.anatomical_position),
-            "raw_source_fields": _to_plain(self.raw_source_fields),
             "source_location_codes": _to_plain(self.source_location_codes),
             "source_depth_codes": _to_plain(self.source_depth_codes),
             "source_distance_codes": _to_plain(self.source_distance_codes),
@@ -196,7 +196,6 @@ class Finding:
             "normalization_warnings": [
                 warning.to_dict() for warning in self.normalization_warnings
             ],
-            "validation_issues": _to_plain(self.validation_issues),
             "metadata": _to_plain(self.metadata),
             "record_type": self.record_type.value,
         }

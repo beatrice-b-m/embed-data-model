@@ -90,19 +90,21 @@ def test_finding_source_codes_normalize_quadrant_and_depth() -> None:
     assert {item.kind for item in result.evidence} == {"location", "depth"}
 
 
-def test_raw_source_fields_supply_clock_location_and_depth_codes() -> None:
+def test_explicit_raw_localization_input_supplies_clock_location_and_depth() -> None:
     finding = Finding(
         accession_number="ACC-3",
         laterality="L",
         finding_number=4,
+    )
+
+    result = FindingLocalizer().localize(
+        finding,
         raw_source_fields={
             "finding_location_code": "W",
             "finding_depth": "M",
             "clock_face": "2:00",
         },
     )
-
-    result = FindingLocalizer().localize(finding)
 
     assert result.status is ResultStatus.SUCCESS
     assert result.anatomical_position["clock_position"] == {"hour": 2}

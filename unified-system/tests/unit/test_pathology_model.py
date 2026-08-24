@@ -156,9 +156,9 @@ def test_one_physical_occurrence_merges_pathology_and_procedure_issues() -> None
         source_scope="materialization-1",
     )
 
-    assert len(tables.unresolved_occurrences) == 1
+    assert len(tables.source_occurrences) == 1
     assert [
-        issue.code for issue in tables.unresolved_occurrences[0].issues
+        issue.code for issue in tables.source_occurrences[0].issues
     ] == ["invalid_pathology_severity", "incomplete_procedure_identity"]
     assert [issue.code for issue in tables.build_issues] == [
         "invalid_pathology_severity",
@@ -167,7 +167,8 @@ def test_one_physical_occurrence_merges_pathology_and_procedure_issues() -> None
     assert len(tables.unresolved_procedure_occurrences) == 1
     assert [
         issue.code
-        for issue in tables.unresolved_procedure_occurrences[0].occurrence.issues
+        for issue in tables.source_occurrences[0].issues
+        if issue.code == "incomplete_procedure_identity"
     ] == ["incomplete_procedure_identity"]
 
 
@@ -184,9 +185,9 @@ def test_one_physical_occurrence_merges_pathology_and_finding_issues() -> None:
         source_scope="materialization-1",
     )
 
-    assert len(tables.unresolved_occurrences) == 1
+    assert len(tables.source_occurrences) == 1
     assert [
-        issue.code for issue in tables.unresolved_occurrences[0].issues
+        issue.code for issue in tables.source_occurrences[0].issues
     ] == ["invalid_pathology_severity", "missing_finding_identity"]
     assert [issue.code for issue in tables.build_issues] == [
         "invalid_pathology_severity",
@@ -203,8 +204,8 @@ def test_repeated_invalid_physical_rows_keep_distinct_locators() -> None:
         source_scope="materialization-1",
     )
 
-    assert len(tables.unresolved_occurrences) == 2
-    assert [item.locator.row_ordinal for item in tables.unresolved_occurrences] == [
+    assert len(tables.source_occurrences) == 2
+    assert [item.locator.row_ordinal for item in tables.source_occurrences] == [
         0,
         1,
     ]

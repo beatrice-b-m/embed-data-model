@@ -26,9 +26,7 @@ from embed_toolkit.clinical.procedures import (
 from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.provenance import (
     AvailabilityState,
-    ResolutionState,
     SourceLocator,
-    SourceOccurrence,
     SourceScopeKind,
 )
 
@@ -53,30 +51,21 @@ def procedure_identity() -> ProcedureIdentity:
 
 
 def test_unresolved_procedure_is_source_evidence_not_resolved_identity() -> None:
-    occurrence = SourceOccurrence(
-        locator=source(),
-        raw_values={"type": "core biopsy", "procdate_anon": None},
-        resolution_state=ResolutionState.UNRESOLVED,
-    )
     unresolved = UnresolvedProcedureOccurrence(
-        occurrence=occurrence,
+        source=source(),
         missing_identity_fields=("performed_date", "laterality"),
         patient_id="P-1",
         procedure_type="core biopsy",
     )
 
-    assert unresolved.to_dict()["occurrence"]["resolution_state"] == "unresolved"
+    assert unresolved.to_dict()["source"] == source().to_dict()
     assert unresolved.to_dict()["missing_identity_fields"] == [
         "performed_date",
         "laterality",
     ]
-    with pytest.raises(ValueError, match="unresolved source state"):
+    with pytest.raises(TypeError, match="source must be a SourceLocator"):
         UnresolvedProcedureOccurrence(
-            occurrence=SourceOccurrence(
-                locator=source(),
-                raw_values={},
-                resolution_state=ResolutionState.RESOLVED,
-            ),
+            source=object(),
             missing_identity_fields=("performed_date",),
         )
 
@@ -111,11 +100,6 @@ def test_unresolved_procedure_fields_match_candidate_values(
     candidate: dict,
     message: str,
 ) -> None:
-    occurrence = SourceOccurrence(
-        locator=source(),
-        raw_values={},
-        resolution_state=ResolutionState.UNRESOLVED,
-    )
     values = {
         "patient_id": "P-1",
         "performed_date": None,
@@ -126,7 +110,7 @@ def test_unresolved_procedure_fields_match_candidate_values(
 
     with pytest.raises(ValueError, match=message):
         UnresolvedProcedureOccurrence(
-            occurrence=occurrence,
+            source=source(),
             missing_identity_fields=missing_fields,
             **values,
         )

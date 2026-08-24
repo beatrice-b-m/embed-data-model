@@ -66,22 +66,22 @@ def test_audit_policy_retains_distinct_rows_without_synthetic_objects() -> None:
     assert tables.exams == ()
     assert tables.findings == ()
     assert tables.breast_sides == ()
-    assert len(tables.unresolved_occurrences) == 2
+    assert len(tables.source_occurrences) == 2
     assert len(tables.build_issues) == 2
-    assert tables.unresolved_occurrences[0].raw_values == unsafe
-    assert tables.unresolved_occurrences[1].raw_values == unsafe
+    assert tables.source_occurrences[0].raw_values == unsafe
+    assert tables.source_occurrences[1].raw_values == unsafe
     assert [
         occurrence.locator.row_ordinal
-        for occurrence in tables.unresolved_occurrences
+        for occurrence in tables.source_occurrences
     ] == [0, 1]
     assert (
-        tables.unresolved_occurrences[0].locator
-        != tables.unresolved_occurrences[1].locator
+        tables.source_occurrences[0].locator
+        != tables.source_occurrences[1].locator
     )
     assert all(patient.patient_id != "UNKNOWN_PATIENT" for patient in tables.patients)
 
 
-def test_missing_finding_identity_never_reaches_procedure_construction() -> None:
+def test_missing_finding_identity_still_resolves_standalone_procedure() -> None:
     tables = build_clinical_tables(
         [
             {
@@ -102,7 +102,9 @@ def test_missing_finding_identity_never_reaches_procedure_construction() -> None
     assert tables.findings == ()
     assert tables.breast_sides == ()
     assert tables.patients[0].exams == [tables.exams[0]]
-    assert tables.procedures == ()
+    assert len(tables.procedures) == 1
+    assert tables.procedures[0].sources == [tables.source_occurrences[0].locator]
+    assert tables.finding_procedure_links == ()
     assert [issue.code for issue in tables.build_issues] == [
         "missing_finding_identity"
     ]
@@ -121,14 +123,14 @@ def test_repeated_missing_findings_reuse_parent_and_retain_row_occurrences() -> 
     assert len(tables.exams) == 1
     assert tables.findings == ()
     assert tables.breast_sides == ()
-    assert len(tables.unresolved_occurrences) == 2
+    assert len(tables.source_occurrences) == 2
     assert [
         occurrence.locator.row_ordinal
-        for occurrence in tables.unresolved_occurrences
+        for occurrence in tables.source_occurrences
     ] == [0, 1]
     assert (
-        tables.unresolved_occurrences[0].locator
-        != tables.unresolved_occurrences[1].locator
+        tables.source_occurrences[0].locator
+        != tables.source_occurrences[1].locator
     )
 
 
@@ -139,7 +141,8 @@ def test_governed_negative_nine_finding_identity_is_preserved() -> None:
     )
 
     assert tables.findings[0].finding_number == "-9"
-    assert tables.unresolved_occurrences == ()
+    assert len(tables.source_occurrences) == 1
+    assert tables.source_occurrences[0].resolution_state.value == "resolved"
     assert tables.build_issues == ()
 
 
@@ -161,7 +164,8 @@ def test_accession_patient_conflict_uses_build_policy() -> None:
     )
     assert [patient.patient_id for patient in audited.patients] == ["P-1"]
     assert [finding.finding_number for finding in audited.findings] == ["1"]
-    assert len(audited.unresolved_occurrences) == 1
+    assert len(audited.source_occurrences) == 2
+    assert audited.source_occurrences[1].resolution_state.value == "unresolved"
     issue = audited.build_issues[0]
     assert issue.code == "conflicting_accession_patient_identity"
     assert issue.context == {
@@ -177,7 +181,7 @@ def test_default_scope_is_explicitly_ephemeral_materialization_provenance() -> N
         build_policy=BuildPolicy(BuildMode.AUDIT),
     )
 
-    locator = tables.unresolved_occurrences[0].locator
+    locator = tables.source_occurrences[0].locator
     assert locator.scope_kind is SourceScopeKind.MATERIALIZATION
     assert locator.scope.startswith("in-memory:")
 

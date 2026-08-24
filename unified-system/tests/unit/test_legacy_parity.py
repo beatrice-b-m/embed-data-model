@@ -167,8 +167,8 @@ def test_legacy_parity_bilateral_candidate_projection_uses_both_sides() -> None:
 def test_legacy_parity_localization_preserves_source_evidence() -> None:
     result = FindingLocalizer(source="magview-parity").localize(
         laterality="L",
-        raw_source_fields={"loc_code": "L", "depth_code": "P", "clock": "3"},
         subject_id="finding-source-evidence",
+        raw_source_fields={"loc_code": "L", "depth_code": "P", "clock": "3"},
     )
 
     assert result.status is ResultStatus.SUCCESS

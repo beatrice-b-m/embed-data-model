@@ -164,9 +164,7 @@ class _LocalizationContext:
         subject_id: Optional[str],
     ) -> "_LocalizationContext":
         if finding is not None:
-            raw_fields = dict(finding.raw_source_fields)
-            if raw_source_fields:
-                raw_fields.update(dict(raw_source_fields))
+            raw_fields = dict(raw_source_fields or {})
             return cls(
                 subject_id=subject_id or finding.finding_id,
                 laterality=finding.laterality,
