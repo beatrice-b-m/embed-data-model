@@ -89,6 +89,7 @@ def test_profile_inventories_have_exact_configured_boundaries() -> None:
         "patient_id",
         "pnl_slope",
         "roi_coords",
+        "roi_depth_derived",
         "roi_frames",
         "roi_source",
         "series_id",

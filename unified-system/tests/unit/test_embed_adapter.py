@@ -511,6 +511,86 @@ def test_dbt_roi_frames_preserve_plural_associations_and_validate_count() -> Non
         build_image_tables([{**row, "ROI_frames": [[12, 13], [21]]}])
 
 
+def test_dbt_roi_depth_derivation_flags_preserve_per_roi_provenance() -> None:
+    row = {
+        "image_id": "DBT-DERIVATION",
+        "FinalImageType": "3D",
+        "ImagesInAcquisition": 30,
+        "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
+        "ROI_frames": [[12, 13], [20]],
+        "ROI_depth_derived": [True, False],
+    }
+
+    tables = build_image_tables([row])
+
+    derived, supplied = tables.rois
+    assert derived.source_provenance.depth_frame_provenance is (
+        RoiDepthFrameProvenance.DERIVED
+    )
+    assert (
+        derived.source_provenance.derivation_method
+        == "internal-v2-roi-depth-derivation"
+    )
+    assert supplied.source_provenance.depth_frame_provenance is (
+        RoiDepthFrameProvenance.SOURCE_SUPPLIED
+    )
+    assert supplied.source_provenance.derivation_method is None
+
+
+@pytest.mark.parametrize(
+    ("flags", "issue_code"),
+    [
+        ([True], "misaligned_roi_depth_derivation_flags"),
+        ([True, 0], "invalid_roi_depth_derivation_flags"),
+    ],
+)
+def test_roi_depth_derivation_flags_validate_alignment_and_boolean_values(
+    flags: list[object],
+    issue_code: str,
+) -> None:
+    row = {
+        "image_id": "DBT-DERIVATION-INVALID",
+        "FinalImageType": "3D",
+        "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
+        "ROI_frames": [[12], [20]],
+        "ROI_depth_derived": flags,
+    }
+
+    with pytest.raises(BuildPolicyError) as exc_info:
+        build_image_tables([row])
+    assert exc_info.value.issue.code == issue_code
+
+    audited = build_image_tables(
+        [row],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+    assert audited.rois == ()
+    assert audited.build_issues[0].code == issue_code
+
+
+def test_derived_depth_without_frames_is_audited_without_false_provenance() -> None:
+    row = {
+        "image_id": "DBT-DERIVATION-NO-FRAMES",
+        "FinalImageType": "3D",
+        "ROI_coords": [[1, 2, 3, 4]],
+        "ROI_depth_derived": [True],
+    }
+
+    audited = build_image_tables(
+        [row],
+        build_policy=BuildPolicy(BuildMode.AUDIT),
+    )
+
+    assert len(audited.rois) == 1
+    assert audited.rois[0].source_provenance.depth_frame_provenance is (
+        RoiDepthFrameProvenance.UNAVAILABLE_DBT
+    )
+    assert audited.rois[0].source_provenance.derivation_method is None
+    assert audited.build_issues[0].code == (
+        "derived_roi_depth_without_interpretable_frames"
+    )
+
+
 @pytest.mark.parametrize(
     ("derived_type", "expected_modality"),
     [

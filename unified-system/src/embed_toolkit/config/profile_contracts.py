@@ -73,6 +73,7 @@ _IMAGE_FIELDS = (
     "acquisition_group_id",
     "roi_coords",
     "roi_frames",
+    "roi_depth_derived",
     "roi_source",
     "nipple_x",
     "nipple_y",
@@ -249,6 +250,10 @@ def profile_source_field_candidates(
             "XMax",
         ),
         "roi_frames": _candidates(columns.roi_frames, "ROI_frames", "roi_frames"),
+        "roi_depth_derived": _candidates(
+            columns.roi_depth_derived,
+            "roi_depth_derived",
+        ),
         "roi_source": _candidates(columns.roi_source, "roi_source", "ROI_source"),
         "nipple_x": _candidates(columns.nipple_x),
         "nipple_y": _candidates(columns.nipple_y),

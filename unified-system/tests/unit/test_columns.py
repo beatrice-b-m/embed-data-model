@@ -34,12 +34,14 @@ def test_v1c_columns_bind_known_identifiers_and_roi_frames() -> None:
     assert config.sop_instance_uid == "anon_dicom_path"
     assert config.acquisition_group_id == "acquisition_group_id"
     assert config.roi_frames == "ROI_frames"
+    assert config.roi_depth_derived == "ROI_depth_derived"
     assert config.roi_source == "PLACEHOLDER_ROI_SOURCE"
     assert config.nipple_confidence == "PLACEHOLDER_NIPPLE_CONFIDENCE"
 
     assert config.roi_columns() == (
         "ROI_coords",
         "ROI_frames",
+        "ROI_depth_derived",
         "PLACEHOLDER_ROI_SOURCE",
     )
     assert config.landmark_columns() == (

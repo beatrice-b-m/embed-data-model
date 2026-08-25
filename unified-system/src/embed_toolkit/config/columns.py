@@ -44,6 +44,7 @@ class EmbedColumnConfig:
     acquisition_group_id: str = DEFAULT_EMBED_COLUMN_NAMES["acquisition_group_id"]
     roi_coords: str = DEFAULT_EMBED_COLUMN_NAMES["roi_coords"]
     roi_frames: str = DEFAULT_EMBED_COLUMN_NAMES["roi_frames"]
+    roi_depth_derived: str = DEFAULT_EMBED_COLUMN_NAMES["roi_depth_derived"]
     roi_source: str = DEFAULT_EMBED_COLUMN_NAMES["roi_source"]
     nipple_x: str = DEFAULT_EMBED_COLUMN_NAMES["nipple_x"]
     nipple_y: str = DEFAULT_EMBED_COLUMN_NAMES["nipple_y"]
@@ -135,6 +136,7 @@ class EmbedColumnConfig:
         return self._columns_for(
             "roi_coords",
             "roi_frames",
+            "roi_depth_derived",
             "roi_source",
         )
 

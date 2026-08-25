@@ -787,6 +787,7 @@ class _ColumnAliases:
     roi_confidence: Tuple[str, ...] = ("roi_confidence", "ROI_confidence")
     roi_coordinates: Tuple[str, ...] = ()
     roi_frames: Tuple[str, ...] = ()
+    roi_depth_derived: Tuple[str, ...] = ()
     y_min: Tuple[str, ...] = ("y_min", "YMin")
     x_min: Tuple[str, ...] = ("x_min", "XMin")
     y_max: Tuple[str, ...] = ("y_max", "YMax")
@@ -820,6 +821,7 @@ class _ClinicalBuildState:
 
 _MISSING = object()
 _INVALID_EXACT_INTEGER = object()
+_INTERNAL_V2_ROI_DEPTH_DERIVATION_METHOD = "internal-v2-roi-depth-derivation"
 
 
 def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
@@ -861,6 +863,7 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
         roi_source=image["roi_source"],
         roi_coordinates=_aliases(columns.roi_coords, "roi_coordinates"),
         roi_frames=image["roi_frames"],
+        roi_depth_derived=image["roi_depth_derived"],
     )
 
 
@@ -2886,6 +2889,32 @@ def _rois_from_row(
         if not recover_frames:
             return (), tuple(issues)
 
+    derivation_flags, derivation_issue = _roi_depth_derivation_flags(
+        row,
+        columns,
+        len(coordinate_sets),
+        image,
+        row_locator,
+    )
+    if derivation_issue is not None:
+        issues.append(derivation_issue)
+        return (), tuple(issues)
+    unsupported_derived_indices = tuple(
+        index
+        for index, flag in enumerate(derivation_flags)
+        if flag is True and (not image.is_dbt or not frame_sets[index])
+    )
+    if unsupported_derived_indices:
+        issues.append(
+            _roi_build_issue(
+                row_locator,
+                image.image_id,
+                "derived_roi_depth_without_interpretable_frames",
+                "Derived ROI depth requires DBT modality and usable frame evidence.",
+                {"roi_indices": list(unsupported_derived_indices)},
+            )
+        )
+
     raw_confidence = _get(row, columns.roi_confidence)
     confidence = None
     if raw_confidence is not _MISSING and not _is_blank(raw_confidence):
@@ -2915,8 +2944,11 @@ def _rois_from_row(
             source_ordinal=index,
         )
         frame_indices = frame_sets[index]
+        depth_was_derived = derivation_flags[index] is True
         depth_frame_provenance = (
-            RoiDepthFrameProvenance.SOURCE_SUPPLIED
+            RoiDepthFrameProvenance.DERIVED
+            if image.is_dbt and frame_indices and depth_was_derived
+            else RoiDepthFrameProvenance.SOURCE_SUPPLIED
             if image.is_dbt and frame_indices
             else RoiDepthFrameProvenance.UNAVAILABLE_DBT
             if image.is_dbt
@@ -2927,6 +2959,11 @@ def _rois_from_row(
             source_count=count,
             depth_frame_provenance=depth_frame_provenance,
             frame_indices=frame_indices,
+            derivation_method=(
+                _INTERNAL_V2_ROI_DEPTH_DERIVATION_METHOD
+                if depth_frame_provenance is RoiDepthFrameProvenance.DERIVED
+                else None
+            ),
         )
         source_provenance.validate_locator(locator)
         rois.append(
@@ -3093,6 +3130,45 @@ def _roi_frame_sets(
             False,
         )
     return frame_sets, None, True
+
+
+def _roi_depth_derivation_flags(
+    row: Row,
+    columns: _ColumnAliases,
+    count: int,
+    image: MammogramImage,
+    source: SourceLocator,
+) -> Tuple[Tuple[Optional[bool], ...], Optional[BuildIssue]]:
+    raw_flags = _get(row, columns.roi_depth_derived)
+    if raw_flags is _MISSING or _is_blank(raw_flags):
+        return (None,) * count, None
+    outer = _sequence_value(raw_flags)
+    if len(outer) != count:
+        return (
+            (),
+            _roi_build_issue(
+                source,
+                image.image_id,
+                "misaligned_roi_depth_derivation_flags",
+                "ROI depth-derivation flags must align exactly with ROI coordinates.",
+                {
+                    "coordinate_count": count,
+                    "flag_collection_count": len(outer),
+                },
+            ),
+        )
+    if any(not isinstance(value, bool) for value in outer):
+        return (
+            (),
+            _roi_build_issue(
+                source,
+                image.image_id,
+                "invalid_roi_depth_derivation_flags",
+                "ROI depth-derivation flags must contain only boolean values.",
+                {"raw_value": raw_flags},
+            ),
+        )
+    return tuple(outer), None
 
 
 def _coordinate_sets(

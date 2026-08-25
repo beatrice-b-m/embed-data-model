@@ -26,6 +26,7 @@ DEFAULT_EMBED_COLUMN_NAMES = {
     "acquisition_group_id": "acquisition_group_id",
     "roi_coords": "ROI_coords",
     "roi_frames": "ROI_frames",
+    "roi_depth_derived": "ROI_depth_derived",
     "roi_source": "PLACEHOLDER_ROI_SOURCE",
     "nipple_x": "nipple_x",
     "nipple_y": "nipple_y",
