@@ -20,6 +20,12 @@ from embed_toolkit.clinical.findings import (
     FindingRecordType,
 )
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
+from embed_toolkit.clinical.histories import (
+    HistoryTimeEstimate,
+    MedicationHistoryObservation,
+    PatientHistoryObservation,
+    ProcedureHistoryObservation,
+)
 from embed_toolkit.clinical.pathology import (
     PathologyAttributionLink,
     PathologyDiagnosis,
@@ -39,18 +45,22 @@ __all__ = [
     "FindingNormalizationEvidence",
     "FindingNormalizationWarning",
     "FindingRecordType",
+    "HistoryTimeEstimate",
     "ImagingInterpretation",
+    "MedicationHistoryObservation",
     "PathologyAttributionLink",
     "PathologyDiagnosis",
     "PathologyObservation",
     "PathologySeverity",
     "Patient",
+    "PatientHistoryObservation",
     "PatientAttributeAsOfPolicy",
     "PatientAttributeName",
     "PatientAttributeObservation",
     "PatientAttributeSelection",
     "PatientObservationTimeBasis",
     "Procedure",
+    "ProcedureHistoryObservation",
     "UndatedObservationPolicy",
     "select_patient_attribute_as_of",
 ]

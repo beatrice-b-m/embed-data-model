@@ -219,6 +219,8 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert clinical.ExamAttributeName
     assert clinical.ExamAttributeObservation
     assert clinical.ImagingInterpretation
+    assert clinical.HistoryTimeEstimate
+    assert clinical.MedicationHistoryObservation
     assert clinical.PathologyObservation
     assert clinical.PathologyDiagnosis
     assert clinical.PathologyAttributionLink
@@ -226,8 +228,10 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert clinical.PatientAttributeName
     assert clinical.PatientAttributeObservation
     assert clinical.PatientAttributeSelection
+    assert clinical.PatientHistoryObservation
     assert clinical.PatientObservationTimeBasis
     assert clinical.UndatedObservationPolicy
+    assert clinical.ProcedureHistoryObservation
     assert clinical.select_patient_attribute_as_of
     assert config.EmbedColumnConfig().accession == "acc_anon"
     assert core.MassShape.LOBULATED.value == "lobulated"
