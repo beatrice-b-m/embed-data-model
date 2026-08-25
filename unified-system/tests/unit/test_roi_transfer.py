@@ -17,6 +17,7 @@ from embed_toolkit.imaging.rois import RegionOfInterest
 from embed_toolkit.workflows.roi_transfer import (
     AcquisitionKind,
     AcquisitionRelationship,
+    RelatednessBasis,
     transfer_roi,
 )
 
@@ -34,6 +35,7 @@ def image(
     accession_number: str | None = "acc-1",
     study_instance_uid: str | None = "study-1",
     series_instance_uid: str | None = None,
+    coordinate_frame_id: str | None = "group-1",
 ) -> MammogramImage:
     return MammogramImage(
         image_id=image_id,
@@ -56,6 +58,7 @@ def image(
         accession_number=accession_number,
         study_instance_uid=study_instance_uid,
         series_instance_uid=series_instance_uid,
+        coordinate_frame_id=coordinate_frame_id,
     )
 
 
@@ -108,7 +111,45 @@ def test_acquisition_relationship_identifies_supported_modalities_and_checks() -
     assert relationship.same_view
     assert relationship.same_patient
     assert relationship.related
+    assert relationship.relatedness_basis is (
+        RelatednessBasis.PROFILE_ACQUISITION_GROUP
+    )
     assert relationship.can_transfer
+
+
+@pytest.mark.parametrize("target_group", [None, "", "group-2"])
+def test_default_relatedness_requires_matching_populated_acquisition_group(
+    target_group: str | None,
+) -> None:
+    relationship = AcquisitionRelationship.from_images(
+        image("source", coordinate_frame_id="group-1"),
+        image(
+            "target",
+            coordinate_frame_id=target_group,
+            accession_number="acc-1",
+            study_instance_uid="study-1",
+            series_instance_uid="series-1",
+        ),
+    )
+
+    assert not relationship.related
+    assert relationship.relatedness_basis is RelatednessBasis.UNAVAILABLE
+    assert relationship.evidence["shared_accession"]
+    assert relationship.evidence["shared_study_uid"]
+    assert not relationship.evidence["matching_acquisition_group"]
+
+
+def test_related_override_is_labeled_as_caller_assertion() -> None:
+    relationship = AcquisitionRelationship.from_images(
+        image("source", coordinate_frame_id="group-1"),
+        image("target", coordinate_frame_id="group-2"),
+        related=True,
+    )
+
+    assert relationship.related
+    assert relationship.relatedness_basis is RelatednessBasis.CALLER_ASSERTION
+    assert not relationship.evidence["matching_acquisition_group"]
+    assert relationship.to_dict()["relatedness_basis"] == "caller_assertion"
 
 
 def test_transfer_roi_scales_between_related_same_breast_same_view_images() -> None:
@@ -264,6 +305,7 @@ def test_transfer_rejects_contradictory_relationship_and_wrong_source_image() ->
         same_breast=True,
         same_view=True,
         related=True,
+        relatedness_basis=RelatednessBasis.CALLER_ASSERTION,
         evidence={},
     )
 
@@ -288,13 +330,14 @@ def test_transfer_skips_different_patient_or_acquisition_context() -> None:
             "different-context",
             accession_number="acc-2",
             study_instance_uid="study-2",
+            coordinate_frame_id="group-2",
         ),
     )
 
     assert different_patient.status is ResultStatus.SKIPPED
     assert not different_patient.warnings[0].payload["same_patient"]
     assert different_context.status is ResultStatus.SKIPPED
-    assert not different_context.evidence[0].payload["shared_acquisition_context"]
+    assert not different_context.evidence[0].payload["matching_acquisition_group"]
 
     whitespace_patient = transfer_roi(
         roi(source),
@@ -324,6 +367,7 @@ def test_relationship_evidence_is_deeply_frozen_and_serializes_fresh() -> None:
         same_breast=True,
         same_view=True,
         related=True,
+        relatedness_basis=RelatednessBasis.CALLER_ASSERTION,
         evidence=payload,
     )
     payload["nested"][0]["value"] = 2
@@ -340,6 +384,7 @@ def test_relationship_evidence_is_deeply_frozen_and_serializes_fresh() -> None:
             same_breast=True,
             same_view=True,
             related=True,
+            relatedness_basis=RelatednessBasis.CALLER_ASSERTION,
             evidence={"invalid": float("nan")},
         )
 

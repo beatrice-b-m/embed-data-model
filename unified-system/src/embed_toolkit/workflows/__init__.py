@@ -11,12 +11,14 @@ from embed_toolkit.workflows.roi_localization import RoiLocalizer
 from embed_toolkit.workflows.roi_transfer import (
     AcquisitionKind,
     AcquisitionRelationship,
+    RelatednessBasis,
     transfer_roi,
 )
 
 __all__ = [
     "AcquisitionKind",
     "AcquisitionRelationship",
+    "RelatednessBasis",
     "FindingLocalizer",
     "FindingRoiMatcher",
     "PatchExtractionConfig",

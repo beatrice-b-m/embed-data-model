@@ -39,6 +39,15 @@ class AcquisitionKind(str, Enum):
         return cls.UNKNOWN
 
 
+class RelatednessBasis(str, Enum):
+    """Evidence basis for an acquisition-relatedness decision."""
+
+    PROFILE_ACQUISITION_GROUP = "profile_acquisition_group"
+    CALLER_ASSERTION = "caller_assertion"
+    CALLER_DENIAL = "caller_denial"
+    UNAVAILABLE = "unavailable"
+
+
 @dataclass(frozen=True)
 class AcquisitionRelationship:
     """Relationship facts used to decide whether an ROI can be transferred."""
@@ -49,11 +58,17 @@ class AcquisitionRelationship:
     same_breast: bool
     same_view: bool
     related: bool
+    relatedness_basis: RelatednessBasis
     evidence: Mapping[str, object]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_kind", AcquisitionKind(self.source_kind))
         object.__setattr__(self, "target_kind", AcquisitionKind(self.target_kind))
+        object.__setattr__(
+            self,
+            "relatedness_basis",
+            RelatednessBasis(self.relatedness_basis),
+        )
         for name in ("same_patient", "same_breast", "same_view", "related"):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be a bool")
@@ -69,6 +84,7 @@ class AcquisitionRelationship:
             "same_breast": self.same_breast,
             "same_view": self.same_view,
             "related": self.related,
+            "relatedness_basis": self.relatedness_basis.value,
             "evidence": serialize_mapping(self.evidence),
         }
 
@@ -85,11 +101,25 @@ class AcquisitionRelationship:
         same_patient = _same_populated_patient(source_image, target_image)
         same_breast = _same_unilateral_breast(source_image, target_image)
         same_view = _same_known_view(source_image, target_image)
-        shared_context = _has_shared_acquisition_context(source_image, target_image)
+        matching_acquisition_group = _has_matching_acquisition_group(
+            source_image,
+            target_image,
+        )
         if related is not None and not isinstance(related, bool):
             raise TypeError("related must be a bool")
         if related is None:
-            related = shared_context
+            related = matching_acquisition_group
+            relatedness_basis = (
+                RelatednessBasis.PROFILE_ACQUISITION_GROUP
+                if matching_acquisition_group
+                else RelatednessBasis.UNAVAILABLE
+            )
+        else:
+            relatedness_basis = (
+                RelatednessBasis.CALLER_ASSERTION
+                if related
+                else RelatednessBasis.CALLER_DENIAL
+            )
 
         return cls(
             source_kind=AcquisitionKind.from_modality(source_image.modality),
@@ -98,6 +128,7 @@ class AcquisitionRelationship:
             same_breast=same_breast,
             same_view=same_view,
             related=bool(related),
+            relatedness_basis=relatedness_basis,
             evidence={
                 "source_modality": source_image.modality.value,
                 "target_modality": target_image.modality.value,
@@ -106,7 +137,22 @@ class AcquisitionRelationship:
                 "source_view": source_image.view_position.value,
                 "target_view": target_image.view_position.value,
                 "same_patient": same_patient,
-                "shared_acquisition_context": shared_context,
+                "source_acquisition_group_id": source_image.coordinate_frame_id,
+                "target_acquisition_group_id": target_image.coordinate_frame_id,
+                "matching_acquisition_group": matching_acquisition_group,
+                "relatedness_basis": relatedness_basis.value,
+                "shared_accession": _same_populated_value(
+                    source_image.accession_number,
+                    target_image.accession_number,
+                ),
+                "shared_study_uid": _same_populated_value(
+                    source_image.study_instance_uid,
+                    target_image.study_instance_uid,
+                ),
+                "shared_series_uid": _same_populated_value(
+                    source_image.series_instance_uid,
+                    target_image.series_instance_uid,
+                ),
             },
         )
 
@@ -175,6 +221,7 @@ def transfer_roi(
             payload={
                 **observed_relationship.evidence,
                 "related": relationship.related,
+                "relatedness_basis": relationship.relatedness_basis.value,
             },
         )
     ]
@@ -335,16 +382,18 @@ def _same_known_view(
     )
 
 
-def _has_shared_acquisition_context(
+def _has_matching_acquisition_group(
     source_image: MammogramImage,
     target_image: MammogramImage,
 ) -> bool:
-    pairs: Tuple[Tuple[Optional[str], Optional[str]], ...] = (
-        (source_image.accession_number, target_image.accession_number),
-        (source_image.study_instance_uid, target_image.study_instance_uid),
-        (source_image.series_instance_uid, target_image.series_instance_uid),
+    return _same_populated_value(
+        source_image.coordinate_frame_id,
+        target_image.coordinate_frame_id,
     )
-    return any(source == target for source, target in pairs if source and target)
+
+
+def _same_populated_value(source: Optional[str], target: Optional[str]) -> bool:
+    return bool(source and target and source.strip() and target.strip() and source == target)
 
 
 def _projection_payload(
