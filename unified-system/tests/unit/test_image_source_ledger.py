@@ -115,14 +115,13 @@ def test_ledger_retains_all_ordinals_and_equal_duplicate_sources() -> None:
     assert tables.images[0].canonical_source is tables.images[0].sources[0]
 
 
-def test_missing_image_identity_follows_strict_and_audit_policy() -> None:
+def test_missing_image_identity_follows_explicit_strict_and_default_audit() -> None:
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_image_tables([row(None)])
+        build_image_tables([row(None)], build_policy=BuildPolicy.strict())
     assert exc_info.value.issue.code == "missing_image_identity"
 
     tables = build_image_tables(
         [row(" ")],
-        build_policy=BuildPolicy(BuildMode.AUDIT),
         source_scope="image-materialization",
     )
     assert tables.images == ()
@@ -152,7 +151,10 @@ def test_invalid_metadata_follows_strict_and_audit_policy(
     attribute: str,
 ) -> None:
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_image_tables([row(**values)])
+        build_image_tables(
+            [row(**values)],
+            build_policy=BuildPolicy.strict(),
+        )
     assert exc_info.value.issue.code == "invalid_image_attribute"
     assert exc_info.value.issue.context["attribute"] == attribute
 
@@ -276,6 +278,7 @@ def test_strict_duplicate_conflict_is_atomic(
         build_image_tables(
             [row(**first), row(**second)],
             source_scope="image-materialization",
+            build_policy=BuildPolicy.strict(),
         )
 
     assert exc_info.value.issue.code == "conflicting_image_attribute"
@@ -325,7 +328,11 @@ def test_modality_conflict_cannot_fill_dbt_frame_count_into_ffdm_image() -> None
     ]
 
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_image_tables(rows, source_scope="image-materialization")
+        build_image_tables(
+            rows,
+            source_scope="image-materialization",
+            build_policy=BuildPolicy.strict(),
+        )
     assert exc_info.value.issue.code == "conflicting_image_attribute"
     assert exc_info.value.issue.context["attribute"] == "modality"
 

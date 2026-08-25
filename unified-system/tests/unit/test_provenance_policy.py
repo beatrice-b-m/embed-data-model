@@ -7,7 +7,6 @@ from typing import Optional
 import pytest
 
 from embed_toolkit.core.build_policy import (
-    BuildMode,
     BuildPolicy,
     BuildPolicyError,
 )
@@ -58,14 +57,15 @@ def test_identical_missing_clinical_values_remain_distinct_occurrences() -> None
     assert first != second
 
 
-def test_build_policy_is_strict_by_default_and_audit_retains_evidence() -> None:
+def test_build_policy_is_audit_by_default_and_strict_remains_explicit() -> None:
     occurrence = unresolved_occurrence(10)
 
+    assert BuildPolicy().review(occurrence) is occurrence
     with pytest.raises(BuildPolicyError) as exc_info:
-        BuildPolicy().review(occurrence)
+        BuildPolicy.strict().review(occurrence)
 
     assert exc_info.value.issue is occurrence.issues[0]
-    assert BuildPolicy(BuildMode.AUDIT).review(occurrence) is occurrence
+    assert BuildPolicy.audit().review(occurrence) is occurrence
 
 
 def test_warning_does_not_raise_in_strict_mode() -> None:
@@ -129,7 +129,8 @@ def test_contracts_serialize_to_json_ready_values() -> None:
         ],
     }
     assert json.loads(json.dumps(serialized)) == serialized
-    assert BuildPolicy().to_dict() == {"mode": "strict"}
+    assert BuildPolicy().to_dict() == {"mode": "audit"}
+    assert BuildPolicy.strict().to_dict() == {"mode": "strict"}
     assert {state.value for state in AvailabilityState} == {
         "bound",
         "raw_only",

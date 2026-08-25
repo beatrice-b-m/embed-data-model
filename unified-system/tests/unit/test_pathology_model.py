@@ -131,7 +131,11 @@ def test_invalid_severity_uses_shared_build_policy(raw_severity: object) -> None
     row = {**clinical_row(), "path_severity": raw_severity}
 
     with pytest.raises(BuildPolicyError, match="integer from 0 through 5"):
-        build_clinical_tables([row], source_scope="materialization-1")
+        build_clinical_tables(
+            [row],
+            source_scope="materialization-1",
+            build_policy=BuildPolicy.strict(),
+        )
 
     audited = build_clinical_tables(
         [row],
@@ -217,7 +221,11 @@ def test_descriptors_without_severity_preserve_observations_and_unknown_state() 
     row = {**clinical_row(), "path1": "UNMAPPED"}
 
     with pytest.raises(BuildPolicyError, match="require a populated severity"):
-        build_clinical_tables([row], source_scope="materialization-1")
+        build_clinical_tables(
+            [row],
+            source_scope="materialization-1",
+            build_policy=BuildPolicy.strict(),
+        )
 
     audited = build_clinical_tables(
         [row],

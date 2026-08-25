@@ -209,6 +209,7 @@ def test_strict_conflict_preflight_is_atomic(
         build_clinical_tables(
             [row("1", **first), row("2", **second)],
             source_scope="exam-attribute-tests",
+            build_policy=BuildPolicy.strict(),
         )
 
     assert exc_info.value.issue.code == "conflicting_exam_attribute"

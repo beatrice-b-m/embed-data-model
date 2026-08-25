@@ -33,6 +33,7 @@ def test_strict_policy_rejects_blank_clinical_identity(
             [row],
             source_scope="clinical-release-1",
             source_scope_kind=SourceScopeKind.DATASET,
+            build_policy=BuildPolicy.strict(),
         )
 
     assert exc_info.value.issue.code == expected_code
@@ -46,7 +47,7 @@ def test_strict_policy_rejects_blank_clinical_identity(
     }
 
 
-def test_audit_policy_retains_distinct_rows_without_synthetic_objects() -> None:
+def test_default_audit_retains_distinct_rows_without_synthetic_objects() -> None:
     unsafe = {
         "empi_anon": None,
         "acc_anon": "ACC-1",
@@ -58,7 +59,6 @@ def test_audit_policy_retains_distinct_rows_without_synthetic_objects() -> None:
 
     tables = build_clinical_tables(
         [unsafe, unsafe],
-        build_policy=BuildPolicy(BuildMode.AUDIT),
         source_scope="clinical-materialization-1",
     )
 
@@ -157,7 +157,11 @@ def test_accession_patient_conflict_uses_build_policy() -> None:
     ]
 
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_clinical_tables(rows, source_scope="clinical-release-1")
+        build_clinical_tables(
+            rows,
+            source_scope="clinical-release-1",
+            build_policy=BuildPolicy.strict(),
+        )
 
     assert exc_info.value.issue.code == "conflicting_accession_patient_identity"
 

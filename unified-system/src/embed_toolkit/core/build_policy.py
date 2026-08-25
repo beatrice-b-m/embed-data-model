@@ -30,12 +30,24 @@ class BuildPolicyError(ValueError):
 
 @dataclass(frozen=True)
 class BuildPolicy:
-    """Apply consistent strict or audit handling to source evidence."""
+    """Apply fail-soft audit or explicit strict handling to source evidence."""
 
-    mode: BuildMode = BuildMode.STRICT
+    mode: BuildMode = BuildMode.AUDIT
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mode", BuildMode(self.mode))
+
+    @classmethod
+    def audit(cls) -> "BuildPolicy":
+        """Return the ordinary fail-soft construction policy."""
+
+        return cls(BuildMode.AUDIT)
+
+    @classmethod
+    def strict(cls) -> "BuildPolicy":
+        """Return the opt-in validation policy that raises on build errors."""
+
+        return cls(BuildMode.STRICT)
 
     def handle_issue(self, issue: BuildIssue) -> BuildIssue:
         """Raise for errors in strict mode; otherwise retain the issue."""

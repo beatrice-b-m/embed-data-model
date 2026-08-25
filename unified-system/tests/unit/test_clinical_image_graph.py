@@ -145,6 +145,7 @@ def test_patient_mismatch_is_atomic_under_strict_policy() -> None:
         assemble_clinical_image_graph(
             clinical,
             images,
+            build_policy=BuildPolicy.strict(),
         )
 
     assert exc_info.value.issue.code == (
@@ -154,17 +155,13 @@ def test_patient_mismatch_is_atomic_under_strict_policy() -> None:
     assert clinical.exams[0].images == []
 
 
-def test_patient_mismatch_audit_is_issue_and_unmatched_image() -> None:
+def test_patient_mismatch_default_audit_is_issue_and_unmatched_image() -> None:
     clinical = clinical_tables("ACC-1")
     images = build_image_tables(
         [image_row("mismatch", "ACC-1", patient_id="P-2")]
     )
 
-    graph = assemble_clinical_image_graph(
-        clinical,
-        images,
-        build_policy=BuildPolicy(BuildMode.AUDIT),
-    )
+    graph = assemble_clinical_image_graph(clinical, images)
 
     assert [unmatched.image for unmatched in graph.unmatched_images] == list(
         images.images
@@ -584,7 +581,11 @@ def test_strict_reassembly_failure_preserves_prior_hierarchy_atomically() -> Non
     )
 
     with pytest.raises(BuildPolicyError):
-        assemble_clinical_image_graph(clinical, failing)
+        assemble_clinical_image_graph(
+            clinical,
+            failing,
+            build_policy=BuildPolicy.strict(),
+        )
 
     exam = prior_graph.exams[0]
     assert exam.images == [prior.images[0]]
@@ -633,7 +634,11 @@ def test_later_patient_fill_conflict_uses_the_supporting_row_locator() -> None:
     )
 
     with pytest.raises(BuildPolicyError) as exc_info:
-        assemble_clinical_image_graph(clinical, images)
+        assemble_clinical_image_graph(
+            clinical,
+            images,
+            build_policy=BuildPolicy.strict(),
+        )
 
     assert exc_info.value.issue.code == (
         "conflicting_clinical_image_patient_identity"

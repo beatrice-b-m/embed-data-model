@@ -166,7 +166,7 @@ def test_repeated_finding_conflicts_use_build_policy_and_row_ledger() -> None:
     ]
 
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_clinical_tables(rows)
+        build_clinical_tables(rows, build_policy=BuildPolicy.strict())
     assert exc_info.value.issue.code == "conflicting_finding_attribute"
     assert exc_info.value.issue.context["attribute"] == "laterality"
 
@@ -349,7 +349,7 @@ def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
     assert diagnosis.validation_issues[0].code == "invalid_pathology_severity"
 
     with pytest.raises(BuildPolicyError, match="0 through 5"):
-        build_clinical_tables([invalid])
+        build_clinical_tables([invalid], build_policy=BuildPolicy.strict())
 
     missing = {**invalid, "path_severity": None, "path1": "UNKNOWN_TOKEN"}
     audited_missing = build_clinical_tables(
@@ -364,7 +364,7 @@ def test_invalid_pathology_states_support_audit_and_strict_modes() -> None:
         "descriptors_without_severity"
     )
     with pytest.raises(BuildPolicyError, match="require a populated severity"):
-        build_clinical_tables([missing])
+        build_clinical_tables([missing], build_policy=BuildPolicy.strict())
 
 
 def test_pathology_descriptors_preserve_order_duplicates_and_custom_prefix() -> None:
@@ -508,7 +508,10 @@ def test_dbt_roi_frames_preserve_plural_associations_and_validate_count() -> Non
     assert [roi.frame_indices for roi in tables.rois] == [(12, 13), (20,)]
 
     with pytest.raises(BuildPolicyError, match="below the DBT frame count"):
-        build_image_tables([{**row, "ROI_frames": [[12, 13], [21]]}])
+        build_image_tables(
+            [{**row, "ROI_frames": [[12, 13], [21]]}],
+            build_policy=BuildPolicy.strict(),
+        )
 
 
 def test_dbt_roi_depth_derivation_flags_preserve_per_roi_provenance() -> None:
@@ -557,7 +560,7 @@ def test_roi_depth_derivation_flags_validate_alignment_and_boolean_values(
     }
 
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_image_tables([row])
+        build_image_tables([row], build_policy=BuildPolicy.strict())
     assert exc_info.value.issue.code == issue_code
 
     audited = build_image_tables(
@@ -632,7 +635,10 @@ def test_roi_frame_collections_follow_strict_and_audit_policy() -> None:
         "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
     }
     with pytest.raises(BuildPolicyError, match="align exactly"):
-        build_image_tables([{**dbt_row, "ROI_frames": [[12, 13]]}])
+        build_image_tables(
+            [{**dbt_row, "ROI_frames": [[12, 13]]}],
+            build_policy=BuildPolicy.strict(),
+        )
 
     empty = build_image_tables([{**dbt_row, "ROI_frames": [[], []]}])
     assert [roi.frame_indices for roi in empty.rois] == [(), ()]
@@ -650,7 +656,7 @@ def test_roi_frame_collections_follow_strict_and_audit_policy() -> None:
         "ROI_frames": [[7, 8]],
     }
     with pytest.raises(BuildPolicyError, match="cannot carry DBT frame"):
-        build_image_tables([two_d_row])
+        build_image_tables([two_d_row], build_policy=BuildPolicy.strict())
     two_d = build_image_tables(
         [
             two_d_row
@@ -692,7 +698,11 @@ def test_fatal_roi_errors_omit_row_rois_in_audit(
     row = {"image_id": "IMG-ERROR", "ImageLateralityFinal": "L", **values}
 
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_image_tables([row], source_scope="roi-errors")
+        build_image_tables(
+            [row],
+            source_scope="roi-errors",
+            build_policy=BuildPolicy.strict(),
+        )
     assert exc_info.value.issue.code == issue_code
 
     audited = build_image_tables(
@@ -740,7 +750,11 @@ def test_multiple_roi_confidence_recovers_with_synthetic_locators_in_audit() -> 
         "roi_confidence": 2.0,
     }
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_image_tables([row], source_scope="roi-recovery")
+        build_image_tables(
+            [row],
+            source_scope="roi-recovery",
+            build_policy=BuildPolicy.strict(),
+        )
     assert exc_info.value.issue.code == "invalid_roi_confidence"
 
     audited = build_image_tables(
@@ -774,7 +788,11 @@ def test_invalid_roi_confidence_strict_error_and_audit_recovery() -> None:
         "roi_confidence": float("nan"),
     }
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_image_tables([row], source_scope="roi-confidence")
+        build_image_tables(
+            [row],
+            source_scope="roi-confidence",
+            build_policy=BuildPolicy.strict(),
+        )
     assert exc_info.value.issue.code == "invalid_roi_confidence"
 
     audited = build_image_tables(
@@ -805,6 +823,7 @@ def test_duplicate_synthetic_roi_locator_deduplicates_and_governs_conflicts() ->
         build_image_tables(
             [equal, conflicting],
             source_scope="roi-duplicates",
+            build_policy=BuildPolicy.strict(),
         )
     assert exc_info.value.issue.code == "conflicting_roi_locator"
 
@@ -858,6 +877,7 @@ def test_strict_duplicate_roi_failure_does_not_mutate_inputs_or_later_builds() -
         build_image_tables(
             [first, conflicting],
             source_scope="strict-roi-atomicity",
+            build_policy=BuildPolicy.strict(),
         )
 
     assert first == original_first

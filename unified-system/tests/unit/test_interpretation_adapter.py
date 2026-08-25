@@ -163,6 +163,7 @@ def test_strict_rejects_conflicting_interpretation_values(
         build_clinical_tables(
             [row("1", **first), row("1", **second)],
             source_scope="clinical-materialization",
+            build_policy=BuildPolicy.strict(),
         )
 
     assert exc_info.value.issue.code == "conflicting_interpretation_attribute"

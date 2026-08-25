@@ -203,7 +203,10 @@ def test_builder_rejects_invalid_birth_year_representations_strict(
     source_value: object,
 ) -> None:
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_clinical_tables([clinical_row(birth_year=source_value)])
+        build_clinical_tables(
+            [clinical_row(birth_year=source_value)],
+            build_policy=BuildPolicy.strict(),
+        )
 
     assert exc_info.value.issue.code == "invalid_patient_attribute_value"
 
@@ -229,12 +232,12 @@ def test_builder_audits_and_omits_invalid_birth_year_representations() -> None:
 def test_invalid_birth_year_and_context_date_follow_build_policy_and_ledger() -> None:
     invalid_birth = clinical_row(birth_year="1980.5", studydate_anon="2020-01-01")
     with pytest.raises(BuildPolicyError) as birth_error:
-        build_clinical_tables([invalid_birth])
+        build_clinical_tables([invalid_birth], build_policy=BuildPolicy.strict())
     assert birth_error.value.issue.code == "invalid_patient_attribute_value"
 
     invalid_date = clinical_row(sex="F", studydate_anon="not-a-date")
     with pytest.raises(BuildPolicyError) as date_error:
-        build_clinical_tables([invalid_date])
+        build_clinical_tables([invalid_date], build_policy=BuildPolicy.strict())
     assert date_error.value.issue.code == "invalid_patient_attribute_context_date"
 
     tables = build_clinical_tables(
@@ -321,7 +324,7 @@ def test_selector_resolves_duplicate_support_and_explicit_null() -> None:
     json.dumps(null_selected.to_dict())
 
 
-def test_selector_same_date_conflict_is_strict_or_audited_unresolved() -> None:
+def test_selector_same_date_conflict_is_explicit_strict_or_default_audit() -> None:
     observations = (
         observation("F", date(2020, 1, 1), 0),
         observation("X", date(2020, 1, 1), 1),
@@ -334,6 +337,7 @@ def test_selector_same_date_conflict_is_strict_or_audited_unresolved() -> None:
             patient_id="P-1",
             attribute=PatientAttributeName.SEX,
             policy=policy,
+            build_policy=BuildPolicy.strict(),
         )
     assert exc_info.value.issue.code == "conflicting_patient_attribute_as_of"
 
@@ -342,7 +346,6 @@ def test_selector_same_date_conflict_is_strict_or_audited_unresolved() -> None:
         patient_id="P-1",
         attribute=PatientAttributeName.SEX,
         policy=policy,
-        build_policy=BuildPolicy(BuildMode.AUDIT),
     )
     assert selected.resolution_state is ResolutionState.UNRESOLVED
     assert selected.selected_value is None
@@ -365,6 +368,7 @@ def test_selector_undated_reject_and_exclude_are_explicit() -> None:
             patient_id="P-1",
             attribute=PatientAttributeName.SEX,
             policy=reject,
+            build_policy=BuildPolicy.strict(),
         )
     assert exc_info.value.issue.code == "undated_patient_attribute_observation"
 

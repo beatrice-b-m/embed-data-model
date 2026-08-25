@@ -21,7 +21,11 @@ def test_strict_policy_rejects_populated_incomplete_procedure_surface() -> None:
     row = {**base_row(), "procedure_id": "SOURCE-PROC-1"}
 
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_clinical_tables([row], source_scope="materialization-1")
+        build_clinical_tables(
+            [row],
+            source_scope="materialization-1",
+            build_policy=BuildPolicy.strict(),
+        )
 
     assert exc_info.value.issue.code == "incomplete_procedure_identity"
     assert exc_info.value.issue.context["missing_identity_fields"] == [

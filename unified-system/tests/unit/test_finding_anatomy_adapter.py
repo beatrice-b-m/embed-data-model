@@ -185,6 +185,7 @@ def test_invalid_distance_strict_raises(distance: object) -> None:
         build_clinical_tables(
             [row(distance=distance)],
             source_scope="clinical-materialization",
+            build_policy=BuildPolicy.strict(),
         )
 
     assert exc_info.value.issue.code == "invalid_finding_distance"
@@ -233,7 +234,11 @@ def test_repeated_rows_fill_missing_anatomy_and_accumulate_evidence() -> None:
 def test_repeated_anatomy_conflicts_are_governed_and_retain_first_in_audit() -> None:
     rows = [row(depth="A", distance="1"), row(depth="P", distance="2")]
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_clinical_tables(rows, source_scope="clinical-materialization")
+        build_clinical_tables(
+            rows,
+            source_scope="clinical-materialization",
+            build_policy=BuildPolicy.strict(),
+        )
     assert exc_info.value.issue.code == "conflicting_finding_anatomical_value"
     assert exc_info.value.issue.context["attribute"] == "quadrant.depth"
 
@@ -271,6 +276,7 @@ def test_strict_anatomy_conflict_does_not_mutate_retained_normalization(
         build_clinical_tables(
             [row(depth="A", distance="1"), row(depth="P", distance="2")],
             source_scope="clinical-materialization",
+            build_policy=BuildPolicy.strict(),
         )
 
     retained = retained_findings[0]
