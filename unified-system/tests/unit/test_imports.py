@@ -204,12 +204,14 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
 
     assert adapters.build_clinical_tables
     assert adapters.EmbedImageTables
+    assert adapters.EmbedPatientHistoryTables
     assert adapters.ExamImageContainmentLink
     assert adapters.FindingImageCandidate
     assert adapters.PatientIdentityCheckStatus
     assert adapters.UnmatchedImage
     assert adapters.UnmatchedImageReason
     assert adapters.project_finding_image_candidates
+    assert adapters.build_patient_history_tables
     assert adapters.normalize_magview_location
     assert audit.WorkflowResult
     assert audit.export_result

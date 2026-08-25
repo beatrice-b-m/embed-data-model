@@ -16,6 +16,10 @@ from embed_toolkit.adapters.magview import (
     MagViewSourceEvidence,
     normalize_magview_location,
 )
+from embed_toolkit.adapters.embed_history import (
+    EmbedPatientHistoryTables,
+    build_patient_history_tables,
+)
 from embed_toolkit.adapters.reconciliation import (
     ExamImageContainmentLink,
     FindingImageCandidate,
@@ -28,6 +32,7 @@ __all__ = [
     "EmbedClinicalImageGraph",
     "EmbedClinicalTables",
     "EmbedImageTables",
+    "EmbedPatientHistoryTables",
     "ExamImageContainmentLink",
     "FindingImageCandidate",
     "FindingImageCandidateProjection",
@@ -40,6 +45,7 @@ __all__ = [
     "assemble_clinical_image_graph",
     "build_clinical_tables",
     "build_image_tables",
+    "build_patient_history_tables",
     "project_finding_image_candidates",
     "normalize_magview_location",
 ]
