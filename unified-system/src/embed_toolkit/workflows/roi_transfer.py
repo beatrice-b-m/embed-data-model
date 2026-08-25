@@ -179,6 +179,31 @@ def transfer_roi(
         )
     ]
 
+    if (
+        relationship.source_kind is AcquisitionKind.UNKNOWN
+        or relationship.target_kind is AcquisitionKind.UNKNOWN
+    ):
+        return _result(
+            roi,
+            source_image,
+            target_image,
+            status=ResultStatus.SKIPPED,
+            evidence=evidence,
+            warnings=[
+                AuditWarning(
+                    code="unresolved_acquisition_kind",
+                    message=(
+                        "ROI transfer requires known source and target acquisition kinds"
+                    ),
+                    severity=WarningSeverity.WARNING,
+                    payload={
+                        "source_kind": relationship.source_kind.value,
+                        "target_kind": relationship.target_kind.value,
+                    },
+                )
+            ],
+        )
+
     if not relationship.can_transfer:
         return _result(
             roi,

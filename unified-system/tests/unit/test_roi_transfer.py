@@ -86,6 +86,8 @@ def roi(
                 if frame_indices
                 else RoiDepthFrameProvenance.UNAVAILABLE_DBT
                 if source_image.is_dbt
+                else RoiDepthFrameProvenance.UNRESOLVED_MODALITY
+                if source_image.modality is ImageModality.UNKNOWN
                 else RoiDepthFrameProvenance.NOT_APPLICABLE_2D
             ),
             frame_indices=frame_indices,
@@ -122,6 +124,16 @@ def test_transfer_roi_scales_between_related_same_breast_same_view_images() -> N
     assert "locator" not in result.transferred_roi
     assert result.transform["scale"] == (0.5, 2.0)
     assert result.warnings == ()
+
+
+def test_transfer_roi_skips_unresolved_acquisition_kind() -> None:
+    source = image("src", modality=ImageModality.UNKNOWN)
+    target = image("target", modality=ImageModality.FFDM)
+
+    result = transfer_roi(roi(source), source, target)
+
+    assert result.status is ResultStatus.SKIPPED
+    assert result.warnings[0].code == "unresolved_acquisition_kind"
 
 
 def test_transfer_roi_skips_side_or_view_mismatch() -> None:

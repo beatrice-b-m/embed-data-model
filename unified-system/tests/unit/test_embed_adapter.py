@@ -683,7 +683,6 @@ def test_roi_frame_collections_follow_strict_and_audit_policy() -> None:
             },
             "roi_frame_out_of_range",
         ),
-        ({"FinalImageType": "unknown", "ROI_coords": [1, 2, 3, 4]}, "unknown_roi_image_modality"),
     ],
 )
 def test_fatal_roi_errors_omit_row_rois_in_audit(
@@ -705,6 +704,32 @@ def test_fatal_roi_errors_omit_row_rois_in_audit(
     assert audited.rois == ()
     assert audited.source_occurrences[0].resolution_state is ResolutionState.UNRESOLVED
     assert audited.build_issues[0].code == issue_code
+
+
+@pytest.mark.parametrize("derived_type", ["ROI_SS", "ROI_SSC", "other"])
+def test_unknown_modality_preserves_roi_geometry_without_frame_interpretation(
+    derived_type: str,
+) -> None:
+    tables = build_image_tables(
+        [
+            {
+                "image_id": f"IMG-{derived_type}",
+                "FinalImageType": derived_type,
+                "ROI_coords": [[1, 2, 3, 4]],
+                "ROI_frames": [[7, 8]],
+                "ROI_depth_derived": [True],
+            }
+        ]
+    )
+
+    assert tables.build_issues == ()
+    assert len(tables.rois) == 1
+    roi = tables.rois[0]
+    assert roi.coordinates == (1, 2, 4, 5)
+    assert roi.frame_indices == ()
+    assert roi.source_provenance.depth_frame_provenance is (
+        RoiDepthFrameProvenance.UNRESOLVED_MODALITY
+    )
 
 
 def test_multiple_roi_confidence_recovers_with_synthetic_locators_in_audit() -> None:

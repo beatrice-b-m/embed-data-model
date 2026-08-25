@@ -134,6 +134,7 @@ class RoiDepthFrameProvenance(str, Enum):
     SOURCE_SUPPLIED = "source_supplied"
     DERIVED = "derived"
     UNAVAILABLE_DBT = "unavailable_dbt"
+    UNRESOLVED_MODALITY = "unresolved_modality"
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,8 @@ class RoiSourceProvenance:
 
     FFDM and synthetic-2D ROIs cannot carry DBT frame indices. DBT ROIs may
     carry source-supplied or explicitly derived indices; an empty index set is
-    represented as unavailable rather than being treated as a 2D ROI.
+    represented as unavailable rather than being treated as a 2D ROI. Unknown
+    modality preserves image-local geometry without interpreting frame data.
     """
 
     modality: ImageModality
@@ -182,9 +184,15 @@ class RoiSourceProvenance:
             )
 
         if modality is ImageModality.UNKNOWN:
-            raise ValueError(
-                "ROI source provenance requires a known 2D or DBT modality"
-            )
+            if provenance is not RoiDepthFrameProvenance.UNRESOLVED_MODALITY:
+                raise ValueError(
+                    "Unknown-modality ROI provenance must be unresolved_modality"
+                )
+            if indices:
+                raise ValueError(
+                    "Unknown-modality ROI provenance cannot interpret frame indices"
+                )
+            return
         if modality is not ImageModality.DBT:
             if indices:
                 raise ValueError("2D ROI provenance cannot contain DBT frame indices")

@@ -245,6 +245,26 @@ def test_derived_dbt_frames_require_named_derivation_provenance() -> None:
         )
 
 
+def test_unknown_modality_requires_unresolved_uninterpreted_provenance() -> None:
+    provenance = RoiSourceProvenance(
+        modality=ImageModality.UNKNOWN,
+        source_count=RoiSourceCount(
+            1,
+            RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
+        ),
+        depth_frame_provenance=RoiDepthFrameProvenance.UNRESOLVED_MODALITY,
+    )
+
+    assert provenance.frame_indices == ()
+    with pytest.raises(ValueError, match="cannot interpret frame indices"):
+        RoiSourceProvenance(
+            modality=ImageModality.UNKNOWN,
+            source_count=provenance.source_count,
+            depth_frame_provenance=RoiDepthFrameProvenance.UNRESOLVED_MODALITY,
+            frame_indices=(2,),
+        )
+
+
 def test_roi_provenance_serialization_is_json_ready() -> None:
     provenance = RoiSourceProvenance(
         modality=ImageModality.DBT,

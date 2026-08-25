@@ -2867,15 +2867,6 @@ def _rois_from_row(
 
     issues: list[BuildIssue] = []
     count = RoiSourceCount(len(coordinate_sets), count_basis)
-    if image.modality is ImageModality.UNKNOWN:
-        return (), (
-            _roi_build_issue(
-                row_locator,
-                image.image_id,
-                "unknown_roi_image_modality",
-                "ROI depth/frame provenance requires a known 2D or DBT modality.",
-            ),
-        )
 
     frame_sets, frame_issue, recover_frames = _roi_frame_sets(
         row,
@@ -2902,7 +2893,9 @@ def _rois_from_row(
     unsupported_derived_indices = tuple(
         index
         for index, flag in enumerate(derivation_flags)
-        if flag is True and (not image.is_dbt or not frame_sets[index])
+        if flag is True
+        and image.modality is not ImageModality.UNKNOWN
+        and (not image.is_dbt or not frame_sets[index])
     )
     if unsupported_derived_indices:
         issues.append(
@@ -2952,6 +2945,8 @@ def _rois_from_row(
             if image.is_dbt and frame_indices
             else RoiDepthFrameProvenance.UNAVAILABLE_DBT
             if image.is_dbt
+            else RoiDepthFrameProvenance.UNRESOLVED_MODALITY
+            if image.modality is ImageModality.UNKNOWN
             else RoiDepthFrameProvenance.NOT_APPLICABLE_2D
         )
         source_provenance = RoiSourceProvenance(
@@ -3072,6 +3067,8 @@ def _roi_frame_sets(
         else ()
     )
     populated = any(_sequence_value(value) for value in outer)
+    if image.modality is ImageModality.UNKNOWN:
+        return ((),) * count, None, True
     if not image.is_dbt:
         issue = (
             _roi_build_issue(
