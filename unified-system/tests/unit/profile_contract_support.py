@@ -9,6 +9,7 @@ from embed_toolkit.config.profile_contracts import (
     ProfileContract,
     profile_source_field_candidates,
 )
+from embed_toolkit.config.field_coverage import FieldCoverageDeclaration
 from embed_toolkit.core.provenance import AvailabilityState
 
 
@@ -16,6 +17,8 @@ def contract_for_columns(
     base: ProfileContract,
     source_profile: str,
     columns: EmbedColumnConfig,
+    *,
+    additional_bound_fields: tuple[str, ...] = (),
 ) -> ProfileContract:
     """Bind a copied test contract to one exact configured physical surface."""
 
@@ -38,16 +41,38 @@ def contract_for_columns(
             source_fields=candidates[field],
         )
 
+    additional_declarations = tuple(
+        FieldCoverageDeclaration(
+            governed_field=field,
+            state=AvailabilityState.BOUND,
+            reason="The custom test profile explicitly binds this field.",
+            source_fields=candidates[field],
+        )
+        for field in additional_bound_fields
+        if field not in base.field_inventory.governed_fields
+    )
+    inventory = replace(
+        base.field_inventory,
+        governed_fields=(
+            *base.field_inventory.governed_fields,
+            *(item.governed_field for item in additional_declarations),
+        ),
+    )
     return replace(
         base,
         source_profile=source_profile,
+        field_inventory=inventory,
         capabilities=replace(base.capabilities, source_profile=source_profile),
         field_coverage=replace(
             base.field_coverage,
             source_profile=source_profile,
+            governed_fields=inventory.governed_fields,
             declarations=tuple(
                 rebound(declaration)
-                for declaration in base.field_coverage.declarations
+                for declaration in (
+                    *base.field_coverage.declarations,
+                    *additional_declarations,
+                )
             ),
         ),
     )

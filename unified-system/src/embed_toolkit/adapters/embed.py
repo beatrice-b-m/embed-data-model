@@ -824,13 +824,24 @@ _INVALID_EXACT_INTEGER = object()
 _INTERNAL_V2_ROI_DEPTH_DERIVATION_METHOD = "internal-v2-roi-depth-derivation"
 
 
-def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
+def _column_aliases(
+    config: Optional[EmbedColumnConfig],
+    *,
+    clinical_contract: Optional[ProfileContract] = None,
+) -> _ColumnAliases:
     columns = config or default_embed_columns()
     clinical = profile_source_field_candidates(columns, ProfileKind.CLINICAL)
     image = profile_source_field_candidates(columns, ProfileKind.IMAGE)
     return _ColumnAliases(
         patient_id=clinical["patient_id"],
-        birth_year=clinical["birth_year"],
+        birth_year=(
+            clinical["birth_year"]
+            if clinical_contract is not None
+            and "birth_year" in clinical_contract.field_inventory.governed_fields
+            and clinical_contract.field_coverage.declaration_for("birth_year").state
+            is AvailabilityState.BOUND
+            else ()
+        ),
         sex=clinical["sex"],
         accession=clinical["accession"],
         exam_date=clinical["study_date"],
@@ -919,7 +930,10 @@ def build_clinical_tables(
     )
     resolved_columns = columns or default_embed_columns()
     validate_contract_source_fields(resolved_profile_contract, resolved_columns)
-    column_aliases = _column_aliases(resolved_columns)
+    column_aliases = _column_aliases(
+        resolved_columns,
+        clinical_contract=resolved_profile_contract,
+    )
     patients: dict[str, Patient] = {}
     patient_attribute_observations: list[PatientAttributeObservation] = []
     exams: dict[str, Exam] = {}

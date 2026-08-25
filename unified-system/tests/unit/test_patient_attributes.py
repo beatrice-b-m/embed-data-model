@@ -77,6 +77,29 @@ def clinical_row(**values: object) -> dict[str, object]:
     }
 
 
+def build_custom_birth_year_tables(
+    rows: list[dict[str, object]],
+    *,
+    build_policy: Optional[BuildPolicy] = None,
+    columns: Optional[EmbedColumnConfig] = None,
+):
+    resolved_columns = columns or EmbedColumnConfig()
+    source_profile = "custom-birth-year-profile"
+    return build_clinical_tables(
+        rows,
+        columns=resolved_columns,
+        build_policy=build_policy,
+        source_scope="patient-attribute-tests",
+        source_profile=source_profile,
+        profile_contract=contract_for_columns(
+            INTERNAL_V2_CONTRACT,
+            source_profile,
+            resolved_columns,
+            additional_bound_fields=("birth_year",),
+        ),
+    )
+
+
 def test_patient_attribute_contracts_validate_identity_value_and_json() -> None:
     item = observation(
         1980,
@@ -124,6 +147,7 @@ def test_builder_distinguishes_absent_and_null_and_uses_alias_config() -> None:
             INTERNAL_V2_CONTRACT,
             "custom-patient-profile",
             columns,
+            additional_bound_fields=("birth_year",),
         ),
     )
 
@@ -145,7 +169,7 @@ def test_builder_distinguishes_absent_and_null_and_uses_alias_config() -> None:
     assert not hasattr(patient, "birth_year")
 
 
-def test_builder_retains_changing_values_as_distinct_source_observations() -> None:
+def test_internal_v2_omits_birth_year_but_retains_raw_values() -> None:
     tables = build_clinical_tables(
         [
             clinical_row(sex="F", birth_year=1980, studydate_anon="2020-01-01"),
@@ -165,9 +189,7 @@ def test_builder_retains_changing_values_as_distinct_source_observations() -> No
     ]
     assert values == [
         (PatientAttributeName.SEX, "F"),
-        (PatientAttributeName.BIRTH_YEAR, 1980),
         (PatientAttributeName.SEX, "X"),
-        (PatientAttributeName.BIRTH_YEAR, 1981),
     ]
     ordinals = [
         item.source.row_ordinal
@@ -175,19 +197,18 @@ def test_builder_retains_changing_values_as_distinct_source_observations() -> No
     ]
     assert ordinals == [
         0,
-        0,
-        1,
         1,
     ]
+    assert tables.source_occurrences[0].raw_values["birth_year"] == 1980
+    assert tables.source_occurrences[1].raw_values["birth_year"] == 1981
 
 
 @pytest.mark.parametrize("source_value", [1980, 1980.0, "1980"])
 def test_builder_normalizes_exact_birth_year_representations(
     source_value: object,
 ) -> None:
-    tables = build_clinical_tables(
-        [clinical_row(birth_year=source_value)],
-        source_scope="patient-attribute-tests",
+    tables = build_custom_birth_year_tables(
+        [clinical_row(birth_year=source_value)]
     )
 
     assert len(tables.patient_attribute_observations) == 1
@@ -203,7 +224,7 @@ def test_builder_rejects_invalid_birth_year_representations_strict(
     source_value: object,
 ) -> None:
     with pytest.raises(BuildPolicyError) as exc_info:
-        build_clinical_tables(
+        build_custom_birth_year_tables(
             [clinical_row(birth_year=source_value)],
             build_policy=BuildPolicy.strict(),
         )
@@ -213,10 +234,9 @@ def test_builder_rejects_invalid_birth_year_representations_strict(
 
 def test_builder_audits_and_omits_invalid_birth_year_representations() -> None:
     invalid_values = (1980.5, float("nan"), float("inf"), True, "not-a-year")
-    tables = build_clinical_tables(
+    tables = build_custom_birth_year_tables(
         [clinical_row(birth_year=value) for value in invalid_values],
         build_policy=BuildPolicy(BuildMode.AUDIT),
-        source_scope="patient-attribute-tests",
     )
 
     assert tables.patient_attribute_observations == ()
@@ -232,7 +252,10 @@ def test_builder_audits_and_omits_invalid_birth_year_representations() -> None:
 def test_invalid_birth_year_and_context_date_follow_build_policy_and_ledger() -> None:
     invalid_birth = clinical_row(birth_year="1980.5", studydate_anon="2020-01-01")
     with pytest.raises(BuildPolicyError) as birth_error:
-        build_clinical_tables([invalid_birth], build_policy=BuildPolicy.strict())
+        build_custom_birth_year_tables(
+            [invalid_birth],
+            build_policy=BuildPolicy.strict(),
+        )
     assert birth_error.value.issue.code == "invalid_patient_attribute_value"
 
     invalid_date = clinical_row(sex="F", studydate_anon="not-a-date")
@@ -240,10 +263,9 @@ def test_invalid_birth_year_and_context_date_follow_build_policy_and_ledger() ->
         build_clinical_tables([invalid_date], build_policy=BuildPolicy.strict())
     assert date_error.value.issue.code == "invalid_patient_attribute_context_date"
 
-    tables = build_clinical_tables(
+    tables = build_custom_birth_year_tables(
         [clinical_row(sex="F", birth_year="1980.5", studydate_anon="not-a-date")],
         build_policy=BuildPolicy(BuildMode.AUDIT),
-        source_scope="patient-attribute-tests",
     )
     retained = [
         (item.attribute, item.value, item.context_date)

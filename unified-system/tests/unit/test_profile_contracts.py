@@ -50,7 +50,6 @@ def test_repository_inventory_is_repo_scoped_and_externally_unresolved() -> None
 def test_profile_inventories_have_exact_configured_boundaries() -> None:
     assert INTERNAL_V2_FIELD_INVENTORY.governed_fields == (
         "accession",
-        "birth_year",
         "cohort_id",
         "exam_description",
         "finding_assessment",
@@ -163,10 +162,7 @@ def test_built_in_profiles_expose_only_evidenced_capability_boundaries() -> None
         INTERNAL_V1C_CONTRACT.field_coverage.declaration_for("nipple_x").state
         is AvailabilityState.RAW_ONLY
     )
-    assert (
-        INTERNAL_V2_CONTRACT.field_coverage.declaration_for("birth_year").state
-        is AvailabilityState.UNAVAILABLE
-    )
+    assert "birth_year" not in INTERNAL_V2_CONTRACT.field_inventory.governed_fields
 
 
 def test_contract_rejects_incomplete_boundaries_and_false_source_claims() -> None:
@@ -326,7 +322,6 @@ def test_custom_builder_accepts_state_appropriate_empty_source_claims() -> None:
         columns,
     )
     no_source_states = {
-        "birth_year": AvailabilityState.UNAVAILABLE,
         "cohort_id": AvailabilityState.UNMODELED,
         "sex": AvailabilityState.UNSUPPORTED,
     }

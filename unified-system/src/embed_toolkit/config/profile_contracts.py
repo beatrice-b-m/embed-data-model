@@ -34,7 +34,6 @@ class ProfileKind(str, Enum):
 
 _CLINICAL_FIELDS = (
     "patient_id",
-    "birth_year",
     "sex",
     "cohort_id",
     "accession",
@@ -81,8 +80,8 @@ _IMAGE_FIELDS = (
     "pnl_slope",
 )
 
-_PROFILE_FIELDS = {
-    ProfileKind.CLINICAL: tuple(sorted(_CLINICAL_FIELDS)),
+_PROFILE_CONFIG_FIELDS = {
+    ProfileKind.CLINICAL: tuple(sorted((*_CLINICAL_FIELDS, "birth_year"))),
     ProfileKind.IMAGE: tuple(sorted(_IMAGE_FIELDS)),
 }
 
@@ -338,10 +337,16 @@ class ProfileContract:
             raise ValueError(
                 "Field coverage boundary must exactly match the profile field inventory"
             )
-        if self.field_inventory.governed_fields != _PROFILE_FIELDS[self.kind]:
+        unsupported_fields = tuple(
+            sorted(
+                set(self.field_inventory.governed_fields)
+                - set(_PROFILE_CONFIG_FIELDS[self.kind])
+            )
+        )
+        if unsupported_fields:
             raise ValueError(
-                f"{self.kind.value.capitalize()} profile field inventory must exactly "
-                "match its configured EmbedColumnConfig boundary"
+                f"{self.kind.value.capitalize()} profile field inventory contains "
+                f"unsupported configured fields: {unsupported_fields}"
             )
         for declaration in self.field_coverage.declarations:
             if declaration.state in {
@@ -614,10 +619,7 @@ INTERNAL_V2_CONTRACT = ProfileContract(
     field_coverage=_field_coverage(
         INTERNAL_V2_PROFILE,
         _CLINICAL_FIELDS,
-        {
-            "birth_year": AvailabilityState.UNAVAILABLE,
-            "cohort_id": AvailabilityState.RAW_ONLY,
-        },
+        {"cohort_id": AvailabilityState.RAW_ONLY},
         profile_source_field_candidates(
             default_embed_columns(),
             ProfileKind.CLINICAL,

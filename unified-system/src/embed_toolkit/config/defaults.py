@@ -2,9 +2,8 @@
 
 DEFAULT_EMBED_COLUMN_NAMES = {
     "patient_id": "empi_anon",
-    # Internal V2 exposes an anonymized birth date, not a governed birth-year
-    # occurrence. Keep this configurable placeholder for custom profiles while
-    # the built-in Internal V2 contract marks it unavailable.
+    # Custom profiles may bind a governed birth-year occurrence. Internal V2
+    # deliberately omits this semantic field from its profile inventory.
     "birth_year": "birth_year",
     "sex": "GENDER_DESC",
     "cohort_id": "cohort_num",
