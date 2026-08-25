@@ -1,245 +1,285 @@
-# Internal V2 dataset-profile conformance review
+# Internal V2 framework and dataset-profile reassessment
 
-Date: 2026-08-24  
-Reference: `embed_context_internal` MCP, profile `internal-v2`  
+Date: 2026-08-25
+Reference: `embed_context_internal` MCP, profile `internal-v2`
 Scope: current runtime implementation under `unified-system/`
 
-## Executive assessment
+## Intended framework boundary
 
-The toolkit is substantially conformant for its declared core clinical graph:
-patient and exam identity, accession-plus-finding-number identity, repeated
-wide-row evidence, synthetic contralateral-negative findings, independent
-finding and biopsy laterality, procedure identity, row-grain pathology,
-distinct temporal meanings, exam/image containment, and inclusive ROI geometry
-are modeled with appropriate provenance and conflict handling.
+This toolkit is a minimal, lightweight object framework. It translates the
+EMBED clinical and imaging hierarchy into reusable Python objects and preserves
+enough source meaning for project-specific analysis to be built on top. It is
+not intended to select cohorts, prescribe scientific policies, discard
+unwanted-but-valid source records, or limit analysts to relationships supplied
+directly by EMBED.
 
-It is not fully conformant to the dataset profile. Three high-severity gaps can
-change the meaning or permitted use of V1c image/ROI data: cross-image ROI
-transfer invents a default correspondence, DBT depth derivation is mislabeled,
-and annotation-only screen captures are not gated from ordinary image use.
-There are also medium-severity gaps in ROI collection validation, contract
-enforcement, and representation of the V1c-versus-clinical-V2 coverage boundary.
+The appropriate review criteria are therefore:
 
-The correct overall characterization is **strong core clinical conformance,
-partial image/ROI conformance, and intentionally partial field breadth**. The
-toolkit should not yet be treated as a lossless implementation of the full
-`internal-v2` profile or as a safe source of default cross-image ROI
-correspondence.
+1. **Preserve source meaning.** Core profile features and their provenance
+   should not be silently lost or misclassified.
+2. **Expose capability and missingness.** Objects should remain representable
+   when optional workflow attributes are absent, and workflows should skip,
+   abstain, or return structured limitations where possible.
+3. **Keep analysis policy explicit.** Project-specific matching, transfer,
+   filtering, and aggregation are legitimate extensions when labeled as
+   derived behavior rather than EMBED-supplied truth.
+4. **Avoid unnecessary rejection.** Redundant helper fields need not control
+   construction when primary source evidence is usable.
 
-## Findings
+Under these criteria, the toolkit's architecture is well aligned with its core
+intention. The original review overstated several intentional analytical
+extensions as dataset-conformance defects.
 
-### High: ROI transfer invents cross-image correspondence by default
+## Actual findings
 
-`AcquisitionRelationship.from_images()` sets `related=True` when two images
-share any populated accession, study UID, or series UID. `transfer_roi()` then
-returns a successful projected ROI whenever patient, breast, and view also
-match.
+### High: V1c DBT depth-derivation provenance is lost
 
-The MCP's `internal-v2.roi-context` states that V1c represents no ROI
-correspondence across images. It also states that `acquisition_group_id` is not
-an ROI-correspondence representation. The implementation is more permissive
-still: it does not require the acquisition-group identifier and treats a shared
-accession alone as relationship evidence.
+The MCP represents `ROI_depth_derived` as a boolean collection aligned with
+`ROI_coords` and `ROI_frames`. A true entry means an in-house model inferred
+that ROI's DBT z/depth placement after radiologist-origin 2D coordinates were
+transferred.
 
-Impact: an ROI can be transferred to another same-accession image and reported
-as a successful result even though the dataset supplies no source
-correspondence. The `approximate_transfer` information warning does not undo
-the successful relationship assertion.
+The toolkit has a suitable `RoiDepthFrameProvenance.DERIVED` state, but the
+column is not configured or read. Every DBT ROI with frame indices is labeled
+`SOURCE_SUPPLIED`.
 
-Evidence:
-
-- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:75-119`
-- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:158-275`
-- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:313-322`
-- MCP claims `internal-v2.roi-context#roi-cross-image-correspondence-absent`
-  and `internal-v2.v1c-metadata-context#acquisition-grouping`
-
-Recommended resolution: require an explicit caller-supplied relationship or
-explicit inference policy. Do not derive clinical ROI correspondence from
-accession, study, series, or acquisition-group co-membership. If geometric
-projection remains supported, label it as analyst-defined and keep its result
-distinct from a relationship-backed transfer.
-
-### High: model-derived DBT depth is mislabeled as source supplied
-
-The profile represents `ROI_depth_derived` as a boolean collection aligned
-one-for-one with `ROI_coords` and `ROI_frames`. A true flag means an in-house
-model inferred the DBT z/depth coordinates after transfer of radiologist-origin
-2D coordinates.
-
-The column configuration has no depth-derivation field. During ROI construction,
-every DBT ROI with frame indices receives
-`RoiDepthFrameProvenance.SOURCE_SUPPLIED`; the `DERIVED` state is never selected
-from V1c input.
-
-Impact: downstream audit output reverses a clinically relevant provenance
-distinction and can present model-inferred depth as source-supplied depth.
+This is a source-fidelity defect rather than a missing analytical policy. It
+can cause scientists to treat model-derived depth as source-supplied depth.
 
 Evidence:
 
-- `unified-system/src/embed_toolkit/config/defaults.py:12-30`
-- `unified-system/src/embed_toolkit/config/columns.py:15-66`
 - `unified-system/src/embed_toolkit/adapters/embed.py:2831-2934`
 - `unified-system/src/embed_toolkit/imaging/roi_provenance.py:130-226`
 - MCP feature `internal-v2.roi.depth_derivation_flag_collection`
 
-Recommended resolution: bind `ROI_depth_derived`, parse it as a collection
-aligned to coordinates and frames, select `DERIVED` for true entries, and
-record a named derivation method such as the profile's in-house DBT depth model.
+Minimal resolution: bind `ROI_depth_derived`, preserve one aligned flag per
+ROI, and select `DERIVED` with a named derivation method when true. Alignment
+with the coordinate collection is necessary here because the flag changes the
+meaning of each constructed ROI; this does not require making `num_ROI`
+authoritative.
 
-### High: annotation-only image classes can enter ordinary image workflows
+### High: source construction is strict by default rather than fail-soft
 
-The MCP distinguishes source DICOM modality, source image type, and the
-pipeline-derived `FinalImageType`. `ROI_SS` and `ROI_SSC` are secondary
-screen-capture artifacts retained solely to extract and transfer annotations;
-they are explicitly not intended for other image analyses.
+Both source builders instantiate `BuildPolicy()` when the caller supplies no
+policy, and `BuildPolicy` defaults to `STRICT`. Any error-severity build issue
+then raises immediately. The existing `AUDIT` path already embodies the desired
+framework behavior: it retains source occurrences, records structured issues,
+and constructs the safe objects it can.
 
-The toolkit maps `FinalImageType` into a field called `image_modality` and a
-source-neutral enum containing only 2D, DBT, synthetic 2D, and unknown.
-`ROI_SS`, `ROI_SSC`, and the residual `other` class therefore become unknown
-`MammogramImage` instances, but are still retained and eligible for ordinary
-exam containment and image-facing workflows.
+This default is not an MCP mismatch, but it conflicts with the stated core
+intention that incomplete or unsuitable objects fail softly and remain
+available for inspection and filtering.
 
-Impact: annotation-transfer artifacts or non-mammographic rows can be treated
-as ordinary mammograms. The model also loses the actual source `Modality`
-distinction while presenting a derived acquisition class as modality.
+Evidence:
+
+- `unified-system/src/embed_toolkit/core/build_policy.py:16-45`
+- `unified-system/src/embed_toolkit/adapters/embed.py:871-969`
+- `unified-system/src/embed_toolkit/adapters/embed.py:1983-2149`
+
+Minimal resolution: make audit/fail-soft construction the public default, or
+provide clearly named fail-soft entry points while reserving strict mode for
+explicit validation jobs. Identity-free rows still must not manufacture domain
+objects; they can remain source occurrences with issues, as audit mode already
+does.
+
+### Medium: derived image type is not preserved as its own feature
+
+The MCP distinguishes source DICOM `Modality`, source DICOM image type, and the
+pipeline-derived `FinalImageType`. The latter includes `2D`, `3D`, `cview`,
+`ROI_SS`, `ROI_SSC`, and `other`.
+
+The toolkit maps `FinalImageType` into `MammogramImage.modality`, whose enum
+represents only 2D, DBT, synthetic 2D, and unknown. Consequently `ROI_SS`,
+`ROI_SSC`, and `other` lose their specific type on the domain object, although
+the raw row remains in `SourceOccurrence`.
+
+The appropriate resolution is not to discard these images. Their specific
+derived type should be preserved so analysts can include or filter them. Source
+modality and derived acquisition/image type should remain distinct attributes.
 
 Evidence:
 
 - `unified-system/src/embed_toolkit/config/defaults.py:19-24`
 - `unified-system/src/embed_toolkit/core/primitives.py:95-119`
+- `unified-system/src/embed_toolkit/imaging/images.py:18-38`
 - `unified-system/src/embed_toolkit/adapters/embed.py:2152-2246`
-- `unified-system/src/embed_toolkit/adapters/embed.py:2411-2527`
 - MCP feature `internal-v2.image.derived_image_type`
-- MCP claims `internal-v2.v1c-metadata-context#image-type-distinctions` and
-  `#roi-screen-capture-purpose`
+- MCP claim `internal-v2.v1c-metadata-context#image-type-distinctions`
 
-Recommended resolution: represent source modality and derived image type as
-separate fields. Give annotation-only classes an explicit type and exclude them
-from general image analysis by default while retaining them as provenance for
-ROI extraction.
+Minimal resolution: add a source-preserving derived-image-type attribute with
+an open vocabulary or raw fallback. Keep the existing acquisition-kind helper
+if workflows benefit from it. Offer predicates or ordinary filterable values;
+do not embed a default exclusion policy.
 
-### Medium: tandem ROI collection and declared-count invariants are incomplete
+### Medium: unknown acquisition type prevents otherwise usable ROI geometry
 
-The profile requires `num_ROI`, `ROI_coords`, `ROI_frames`, and
-`ROI_depth_derived` to agree. Empty collections represent zero ROIs. The adapter
-derives the ROI count solely from parsed coordinates and validates only the
-coordinate/frame relationship for DBT. It neither reads `num_ROI` nor validates
-the depth-derivation collection.
+ROI geometry itself is image-local and can remain useful even when acquisition
+type or DBT depth semantics are unresolved. The adapter currently returns an
+error when an image has coordinates but `ImageModality.UNKNOWN`, and
+`RoiSourceProvenance` rejects unknown modality entirely. Under the default
+strict policy this aborts the build; under audit it retains the image and raw
+row but drops the ROI object.
 
-Impact: malformed V1c rows can build successfully when the declared ROI count
-or depth-flag length disagrees with the coordinate collection. The resulting
-`RoiSourceCount` is marked as coordinate-derived even when the source provides
-an explicit count.
-
-Evidence:
-
-- `unified-system/src/embed_toolkit/adapters/embed.py:2831-2934`
-- `unified-system/src/embed_toolkit/adapters/embed.py:3012-3122`
-- `unified-system/src/embed_toolkit/imaging/roi_provenance.py:102-127`
-- MCP features `internal-v2.image.region_of_interest_count`,
-  `internal-v2.roi.coordinate_collection`,
-  `internal-v2.roi.frame_index_collection`, and
-  `internal-v2.roi.depth_derivation_flag_collection`
-
-Recommended resolution: bind all four physical columns, validate their tandem
-cardinality, preserve zero explicitly, and use `SOURCE_DECLARED` count basis
-when `num_ROI` is valid.
-
-### Medium: built-in profile contracts describe states but do not gate ingestion
-
-The built-in clinical contract marks `birth_year` unavailable because Internal
-V2 exposes an anonymized birth date rather than a governed birth-year
-occurrence. Nevertheless the Internal V2 builder accepts a generic `birth_year`
-alias and creates a birth-year observation. More generally, built-in contracts
-accept generic compatibility aliases such as `patient_id`, `AccessionNumber`,
-`assessment`, and `procedure_date` even when those names are not physical
-bindings in `magview_all_cohorts_PACS_v2_anon`.
-
-Impact: data can be projected under the authoritative `internal-v2` identity
-from fields that the contract marks unavailable or that are not exact profile
-bindings. The serialized contract can therefore disagree with the objects in
-the same build result.
+This is more opinionated than the intended framework boundary. Missing
+modality should disable modality-dependent workflows or frame interpretation,
+not necessarily prevent representation of valid coordinates.
 
 Evidence:
 
-- `unified-system/src/embed_toolkit/config/profile_contracts.py:92-252`
+- `unified-system/src/embed_toolkit/adapters/embed.py:2853-2863`
+- `unified-system/src/embed_toolkit/imaging/roi_provenance.py:184-206`
+
+Minimal resolution: permit image-local ROI geometry with unresolved modality
+and unresolved/not-interpreted depth provenance. Workflows requiring known 2D,
+DBT, or frame semantics should expose that requirement and skip clearly when it
+is unmet.
+
+### Medium: `birth_year` contradicts the built-in Internal V2 contract
+
+The built-in clinical field inventory includes `birth_year` while its own
+coverage declaration marks the field unavailable. The builder nevertheless
+accepts a generic `birth_year` alias and creates normalized observations under
+the `internal-v2` contract.
+
+Internal V2 supplies an anonymized birth date subject to the patient-specific
+date shift, not a governed birth-year feature suitable for this object surface.
+This field should not be part of the built-in profile.
+
+Evidence:
+
+- `unified-system/src/embed_toolkit/config/profile_contracts.py:35-56`
 - `unified-system/src/embed_toolkit/config/profile_contracts.py:599-616`
-- `unified-system/src/embed_toolkit/adapters/embed.py:822-860`
 - `unified-system/src/embed_toolkit/adapters/embed.py:1291-1359`
 - `unified-system/tests/unit/test_patient_attributes.py:148-195`
-- MCP table binding `internal-v2:magview_all_cohorts_PACS_v2_anon`
 
-Recommended resolution: use exact physical bindings for built-in profiles and
-reserve aliases for explicit custom contracts. Make field-coverage state an
-ingestion gate so unavailable/unmodeled fields cannot produce normalized
-objects under that contract.
+Minimal resolution: remove `birth_year` from the built-in Internal V2 field
+inventory, defaults, adapter projection, and tests. Generic or project-specific
+profiles may add a birth-year observation through their own explicit contract
+if they genuinely supply one.
 
-### Medium: unmatched clinical exams lose the V1c coverage meaning
+## Intentional behavior that is not a defect
 
-The profile says V1c covers the EMBEDv1 exam/patient set and is narrower than
-clinical V2. A clinical V2 exam without a V1c row is outside current extraction
-coverage; it is not thereby an exam without images.
+### Finding-to-ROI matching
 
-The graph exposes every clinical exam without a containment link as an
-`unmatched_exam`, with no reason or coverage state. It does not preserve whether
-the exam belongs to EMBEDv1/V1c scope, so consumers cannot distinguish an
-outside-coverage exam from an in-scope reconciliation failure.
+The MCP says V1c supplies no explicit ROI-to-finding link and no reliable
+individual attribution when several findings exist on one accession side. It
+does not prohibit project-specific inference.
 
-Impact: `unmatched_exam_references` is easy to misuse as a no-image cohort or
-image-availability indicator, exactly the inference prohibited by the profile.
+`FindingRoiMatcher` appropriately treats matching as an algorithm: it scopes
+inputs to one accession and unilateral side, records algorithm/configuration
+versions and evidence, and returns inferred, ambiguous, or abstained states.
+It does not rewrite the source clinical graph as if EMBED supplied the link.
+
+This is a good example of the intended extensible framework design.
+
+### ROI transfer and the meaning of `related`
+
+`AcquisitionRelationship.related` is not an assertion that two ROIs correspond.
+It is one boolean input to the workflow's image-pair eligibility decision:
+
+```text
+can_transfer = related AND same_patient AND same_breast AND same_view
+```
+
+When the caller does not supply it, `from_images()` sets it from shared image
+context: a common accession, study UID, or series UID. A successful result means
+the requested geometric scaling operation was performed for an eligible image
+pair; it does not create an EMBED-supplied cross-image ROI identity.
 
 Evidence:
 
-- `unified-system/src/embed_toolkit/adapters/embed.py:466-473`
-- `unified-system/src/embed_toolkit/adapters/embed.py:643-649`
-- `unified-system/src/embed_toolkit/adapters/embed.py:2529-2543`
-- MCP claim `internal-v2.v1c-metadata-context#coverage-is-not-image-absence`
-- MCP guardrail
-  `internal-v2.guardrail.absent-image-metadata-is-not-image-absence`
+- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:42-123`
+- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:126-205`
 
-Recommended resolution: replace the bare unmatched-exam collection with an
-explicit reconciliation/coverage record. At minimum distinguish outside V1c
-scope, expected in-scope but absent metadata, and other linkage failures, and
-document that none is direct evidence of image absence.
+The behavior is a legitimate analytical default. The name is somewhat opaque,
+so a small clarification would help: document it as a heuristic image-context
+eligibility flag and expose whether its value was caller-supplied or inferred.
+That is an API clarity improvement, not a dataset-conformance defect.
 
-## Conformant strengths
+### `num_ROI` is not authoritative
 
-- Clinical V2 and image V1c are correctly treated as two kind-specific artifacts
-  under one `internal-v2` profile identity.
-- Patient and exam identifiers are release-scoped, and conflicting accession to
-  patient associations are rejected rather than split into multiple valid exams.
-- Finding identity is `(accession, finding number)`; laterality is an attribute,
-  repeated physical rows preserve source evidence, and conflicts are surfaced.
-- Finding number `-9` is explicitly classified as a synthetic contralateral
-  negative instead of an ordinary finding.
-- Null finding side projects bilaterally, while null biopsy side remains unknown.
-- Complete procedures use the maintained patient/date/type/biopsy-side tuple;
-  incomplete tuples remain unresolved occurrences rather than distinct resolved
-  procedures.
-- Pathology descriptor occurrences remain row/slot scoped; severity is limited
-  to 0 through 5; invalid 6 and descriptor-without-severity states are surfaced.
-- Exam, procedure, and provisional pathology-report dates remain separately
-  named and are not fallback-coalesced.
-- Image identity is derived from the `anon_dicom_path` filename, cross-table
-  patient identity is checked, and missing image identity is an error.
-- ROI coordinates are converted correctly from inclusive source maxima to
-  half-open internal bounds, plural DBT frames are retained, and frame bounds
-  are checked when frame count is represented.
-- Finding/image joins are exposed as candidates rather than sourced attribution;
-  multi-finding ROI matching is explicitly labeled inferred/ambiguous/abstained.
-- Episode, report, risk, specimen, and external-catalog completeness limitations
-  are declared rather than speculatively modeled.
+`num_ROI` is a redundant convenience/count field. The coordinate collection is
+the primary evidence that an image has represented ROIs, and the adapter derives
+objects from those coordinates. Rejecting useful ROI geometry because the
+helper count disagrees would conflict with the framework's preservation-first
+goal.
 
-## Verification
+No mandatory validation or construction change is recommended. The raw value
+is already retained in the source occurrence. A project that cares about data
+quality can compare the helper count with constructed ROIs as an optional audit
+or filtering operation.
+
+The aligned `ROI_depth_derived` flags are different: they alter per-ROI
+provenance and therefore must be read when the ROI is constructed.
+
+### Unmatched exams are valid clinical objects
+
+An exam without an attached V1c image row remains useful clinical data. The
+graph correctly preserves such exams rather than discarding them. The name
+`unmatched_exams` describes graph reconciliation state; it need not imply that
+the exam had no images clinically.
+
+No exclusion or richer coverage taxonomy is required in the minimal core. A
+short documentation guardrail stating that unmatched means "no link in these
+inputs" would be sufficient if misuse becomes a concern.
+
+### Compatibility aliases and partial field breadth
+
+Accepting configurable aliases is consistent with a reusable parent framework.
+Aliases should not be restricted to exact physical column names when projects
+may adapt preprocessed tables or custom profiles. The actual issue is the
+specific `birth_year` contradiction under the built-in profile, not aliasing as
+a general mechanism.
+
+Similarly, the toolkit need not normalize every MCP-cataloged column. Its
+repository field inventories explicitly limit their completeness claims, and
+raw source occurrences preserve unmodeled input. Project-specific subclasses or
+adapters can add breadth without expanding the core.
+
+## Strengths under the revised criteria
+
+- Clinical V2 and image V1c use distinct kind-specific contracts under one
+  `internal-v2` profile identity.
+- Missing identifiers do not become shared synthetic objects; audit mode keeps
+  unresolvable rows as provenance-bearing source occurrences.
+- Finding identity, `-9` classification, repeated-row multiplicity, and
+  laterality-role distinctions conform to the profile.
+- Complete and incomplete procedures, pathology descriptor occurrences,
+  severity, and distinct temporal meanings are modeled without manufacturing
+  specimen or outcome truth.
+- Optional image attributes use `None` or explicit unknown enum states, and
+  image/clinical reconciliation preserves unmatched objects.
+- ROI coordinates are normalized correctly, plural DBT frame evidence is
+  retained, and workflow results carry structured evidence and warnings.
+- Finding/image projections are candidates, while finding/ROI attribution is
+  visibly algorithmic rather than source-supplied.
+- Raw source rows and build issues remain available for project-specific audits
+  and filters.
+
+## Revised priority
+
+The minimal remediation set is:
+
+1. Preserve and apply `ROI_depth_derived` per ROI.
+2. Make fail-soft/audit construction the ordinary public path.
+3. Preserve the full derived image-type value, including `ROI_SS`, `ROI_SSC`,
+   and `other`, without default filtering.
+4. Allow coordinate-only ROI representation when modality-dependent semantics
+   are unresolved.
+5. Remove `birth_year` from the built-in Internal V2 surface.
+
+`num_ROI` enforcement, automatic image-type exclusion, mandatory V1c coverage
+classification, and removal of analytical matching/transfer workflows are not
+recommended.
+
+## Verification basis
 
 - Queried the MCP through `discover`, then followed profile contexts, features,
   guardrails, coverage records, physical tables, and semantic relationships.
-- Inspected the runtime configuration, adapters, clinical/image/ROI objects,
-  reconciliation graph, ROI transfer and finding/ROI matching workflows, and
-  their unit tests.
-- Ran the complete suite from `unified-system/`: **459 tests passed**.
+- Inspected the runtime configuration, build policy, adapters, clinical/image/ROI
+  objects, reconciliation graph, ROI transfer and finding/ROI matching workflows,
+  and their unit tests.
+- The complete suite passed during the original review: **459 tests passed**.
 
-Passing tests do not negate the findings above: the current tests encode the
-implemented contract but do not cover the omitted or misclassified MCP profile
-semantics identified in this review.
+This reassessment changes the review criteria and issue classification; it does
+not claim that the implementation remediations above have already been made.
