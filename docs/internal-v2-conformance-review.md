@@ -58,6 +58,44 @@ with the coordinate collection is necessary here because the flag changes the
 meaning of each constructed ROI; this does not require making `num_ROI`
 authoritative.
 
+### High: ROI-transfer relatedness ignores the acquisition group
+
+For Emory data, a populated matching `acquisition_group_id` is the available
+metadata guarantee that two images were captured within the same acquisition
+and are spatially aligned for ROI transfer. A shared accession, study UID,
+series UID, protocol, view, or combination of those attributes does not
+establish that relationship.
+
+The adapter correctly maps `acquisition_group_id` into
+`MammogramImage.coordinate_frame_id`, but the default relationship inference
+does not inspect that attribute. Instead, `_has_shared_acquisition_context()`
+returns true when any of accession number, study UID, or series UID matches.
+`AcquisitionRelationship.from_images()` assigns that result to `related`, and
+`can_transfer` can consequently authorize transfer between different
+acquisition groups.
+
+The unit tests encode the same overly broad rule: their image factory has no
+coordinate/acquisition-group argument, supplies the same accession and study
+UID by default, and asserts that the resulting images are related and
+transferable.
+
+Evidence:
+
+- `unified-system/src/embed_toolkit/adapters/embed.py:846-859`
+- `unified-system/src/embed_toolkit/adapters/embed.py:2204-2224`
+- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:75-119`
+- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:313-322`
+- `unified-system/tests/unit/test_roi_transfer.py:24-59`
+- `unified-system/tests/unit/test_roi_transfer.py:97-119`
+
+Minimal resolution: infer `related=True` only when both images have the same
+populated `coordinate_frame_id` sourced from `acquisition_group_id`. Patient,
+breast, and view can remain additional transfer preconditions, while accession,
+study, and series identifiers can remain descriptive evidence but must not
+establish relatedness. If a caller-supplied override remains available for a
+project-specific algorithm, label it explicitly as a caller assertion and
+distinguish it from profile-guaranteed acquisition-group eligibility.
+
 ### High: source construction is strict by default rather than fail-soft
 
 Both source builders instantiate `BuildPolicy()` when the caller supplies no
@@ -172,29 +210,20 @@ It does not rewrite the source clinical graph as if EMBED supplied the link.
 
 This is a good example of the intended extensible framework design.
 
-### ROI transfer and the meaning of `related`
+### ROI transfer as an extension workflow
 
-`AcquisitionRelationship.related` is not an assertion that two ROIs correspond.
-It is one boolean input to the workflow's image-pair eligibility decision:
+ROI transfer is a legitimate analytical workflow for this extensible toolkit;
+the framework does not need to remove it merely because EMBED does not supply a
+cross-image ROI identity. The workflow also appropriately treats same patient,
+breast, and view as explicit conditions and returns a structured skipped result
+when its eligibility predicate is false.
 
-```text
-can_transfer = related AND same_patient AND same_breast AND same_view
-```
-
-When the caller does not supply it, `from_images()` sets it from shared image
-context: a common accession, study UID, or series UID. A successful result means
-the requested geometric scaling operation was performed for an eligible image
-pair; it does not create an EMBED-supplied cross-image ROI identity.
-
-Evidence:
-
-- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:42-123`
-- `unified-system/src/embed_toolkit/workflows/roi_transfer.py:126-205`
-
-The behavior is a legitimate analytical default. The name is somewhat opaque,
-so a small clarification would help: document it as a heuristic image-context
-eligibility flag and expose whether its value was caller-supplied or inferred.
-That is an API clarity improvement, not a dataset-conformance defect.
+That architectural legitimacy does not make every default eligibility rule
+valid. The current inference of `related` from accession, study, or series
+equality is the high-priority defect described above. Default relatedness must
+come from the acquisition group. Any more permissive project algorithm should
+be an explicit extension with its own evidence, rather than being presented as
+the profile-backed guarantee.
 
 ### `num_ROI` is not authoritative
 
@@ -261,16 +290,19 @@ adapters can add breadth without expanding the core.
 The minimal remediation set is:
 
 1. Preserve and apply `ROI_depth_derived` per ROI.
-2. Make fail-soft/audit construction the ordinary public path.
-3. Preserve the full derived image-type value, including `ROI_SS`, `ROI_SSC`,
+2. Infer ROI-transfer relatedness only from a populated matching
+   `acquisition_group_id`, with any project override explicitly identified.
+3. Make fail-soft/audit construction the ordinary public path.
+4. Preserve the full derived image-type value, including `ROI_SS`, `ROI_SSC`,
    and `other`, without default filtering.
-4. Allow coordinate-only ROI representation when modality-dependent semantics
+5. Allow coordinate-only ROI representation when modality-dependent semantics
    are unresolved.
-5. Remove `birth_year` from the built-in Internal V2 surface.
+6. Remove `birth_year` from the built-in Internal V2 surface.
 
 `num_ROI` enforcement, automatic image-type exclusion, mandatory V1c coverage
 classification, and removal of analytical matching/transfer workflows are not
-recommended.
+recommended. The ROI-transfer workflow should be retained with its default
+relatedness inference corrected.
 
 ## Verification basis
 
