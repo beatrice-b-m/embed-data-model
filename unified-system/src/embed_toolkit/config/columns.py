@@ -38,6 +38,7 @@ class EmbedColumnConfig:
     image_width: str = DEFAULT_EMBED_COLUMN_NAMES["image_width"]
     image_frames: str = DEFAULT_EMBED_COLUMN_NAMES["image_frames"]
     image_modality: str = DEFAULT_EMBED_COLUMN_NAMES["image_modality"]
+    derived_image_type: str = DEFAULT_EMBED_COLUMN_NAMES["derived_image_type"]
     series_id: str = DEFAULT_EMBED_COLUMN_NAMES["series_id"]
     sop_instance_uid: str = DEFAULT_EMBED_COLUMN_NAMES["sop_instance_uid"]
     acquisition_group_id: str = DEFAULT_EMBED_COLUMN_NAMES["acquisition_group_id"]
@@ -122,6 +123,7 @@ class EmbedColumnConfig:
             "image_width",
             "image_frames",
             "image_modality",
+            "derived_image_type",
             "series_id",
             "sop_instance_uid",
             "acquisition_group_id",

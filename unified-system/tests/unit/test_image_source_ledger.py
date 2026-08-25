@@ -340,7 +340,8 @@ def test_modality_conflict_cannot_fill_dbt_frame_count_into_ffdm_image() -> None
     assert image.width == 100
     assert len(image.sources) == 2
     assert [issue.context["attribute"] for issue in tables.build_issues] == [
-        "modality"
+        "modality",
+        "derived_image_type",
     ]
     assert tables.source_occurrences[1].resolution_state is ResolutionState.UNRESOLVED
 

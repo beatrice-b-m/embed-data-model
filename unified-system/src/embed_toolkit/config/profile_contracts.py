@@ -67,6 +67,7 @@ _IMAGE_FIELDS = (
     "image_width",
     "image_frames",
     "image_modality",
+    "derived_image_type",
     "series_id",
     "sop_instance_uid",
     "acquisition_group_id",
@@ -216,6 +217,10 @@ def profile_source_field_candidates(
             columns.image_modality,
             "ImageType",
             "modality",
+        ),
+        "derived_image_type": _candidates(
+            columns.derived_image_type,
+            "derived_image_type",
         ),
         "series_id": _candidates(
             columns.series_id,

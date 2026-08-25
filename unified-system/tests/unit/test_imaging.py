@@ -78,6 +78,8 @@ def test_mammogram_image_coerces_identity_and_shape() -> None:
         height=2048,
         width=1536,
         frame_count=72,
+        source_modality=" MG ",
+        derived_image_type="3D",
         patient_id="P-1",
         study_instance_uid="study",
         series_instance_uid="series",
@@ -89,6 +91,9 @@ def test_mammogram_image_coerces_identity_and_shape() -> None:
     assert image.modality is ImageModality.DBT
     assert image.is_dbt
     assert image.image_shape == (2048, 1536)
+    assert image.source_modality == "MG"
+    assert image.derived_image_type == "3D"
+    assert image.to_dict()["derived_image_type"] == "3D"
     assert image.identity == ("img-1", "sop", "series", "study")
     assert image.to_dict()["patient_id"] == "P-1"
 

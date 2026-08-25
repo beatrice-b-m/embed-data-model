@@ -123,6 +123,8 @@ _IMAGE_INVARIANT_ATTRIBUTES = (
     "laterality",
     "view_position",
     "modality",
+    "source_modality",
+    "derived_image_type",
     "height",
     "width",
     "frame_count",
@@ -772,6 +774,7 @@ class _ColumnAliases:
     image_side: Tuple[str, ...] = ()
     view_position: Tuple[str, ...] = ()
     modality: Tuple[str, ...] = ()
+    derived_image_type: Tuple[str, ...] = ()
     height: Tuple[str, ...] = ()
     width: Tuple[str, ...] = ()
     frame_count: Tuple[str, ...] = ()
@@ -847,6 +850,7 @@ def _column_aliases(config: Optional[EmbedColumnConfig]) -> _ColumnAliases:
         image_side=image["image_laterality"],
         view_position=image["image_view"],
         modality=image["image_modality"],
+        derived_image_type=image["derived_image_type"],
         height=image["image_height"],
         width=image["image_width"],
         frame_count=image["image_frames"],
@@ -2157,7 +2161,11 @@ def _image_from_row(
     *,
     derived_sop_instance_uid: Optional[str] = None,
 ) -> Tuple[Optional[MammogramImage], Tuple[BuildIssue, ...]]:
-    modality = ImageModality.coerce(_get(row, columns.modality))
+    source_modality = _string_value(_get(row, columns.modality))
+    derived_image_type = _string_value(_get(row, columns.derived_image_type))
+    modality = ImageModality.coerce(derived_image_type)
+    if modality is ImageModality.UNKNOWN:
+        modality = ImageModality.coerce(source_modality)
     issues = []
     parsed_integers = {}
     for attribute, aliases in (
@@ -2209,6 +2217,8 @@ def _image_from_row(
         "laterality": Laterality.coerce(_get(row, columns.image_side)),
         "view_position": ViewPosition.coerce(_get(row, columns.view_position)),
         "modality": modality,
+        "source_modality": source_modality,
+        "derived_image_type": derived_image_type,
         "height": parsed_integers["height"],
         "width": parsed_integers["width"],
         "frame_count": parsed_integers["frame_count"],
@@ -2366,6 +2376,8 @@ def _known_image_attribute(attribute: str, value: Any) -> bool:
         return value is not ViewPosition.UNKNOWN
     if attribute == "modality":
         return value is not ImageModality.UNKNOWN
+    if attribute == "derived_image_type":
+        return value.strip().upper() not in {"UNKNOWN", "UNK", "N/A", "NA"}
     if attribute == "patient_orientation":
         return value.exact
     return True

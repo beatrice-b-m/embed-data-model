@@ -511,6 +511,40 @@ def test_dbt_roi_frames_preserve_plural_associations_and_validate_count() -> Non
         build_image_tables([{**row, "ROI_frames": [[12, 13], [21]]}])
 
 
+@pytest.mark.parametrize(
+    ("derived_type", "expected_modality"),
+    [
+        ("2D", ImageModality.FFDM),
+        ("3D", ImageModality.DBT),
+        ("cview", ImageModality.S2D),
+        ("ROI_SS", ImageModality.UNKNOWN),
+        ("ROI_SSC", ImageModality.UNKNOWN),
+        ("other", ImageModality.UNKNOWN),
+        ("future-pipeline-type", ImageModality.UNKNOWN),
+    ],
+)
+def test_image_builder_preserves_open_derived_image_type(
+    derived_type: str,
+    expected_modality: ImageModality,
+) -> None:
+    tables = build_image_tables(
+        [
+            {
+                "image_id": f"image-{derived_type}",
+                "Modality": "MG",
+                "FinalImageType": derived_type,
+            }
+        ]
+    )
+
+    image = tables.images[0]
+    assert image.source_modality == "MG"
+    assert image.derived_image_type == derived_type
+    assert image.modality is expected_modality
+    assert image.to_dict()["source_modality"] == "MG"
+    assert image.to_dict()["derived_image_type"] == derived_type
+
+
 def test_roi_frame_collections_follow_strict_and_audit_policy() -> None:
     dbt_row = {
         "image_id": "DBT-1",

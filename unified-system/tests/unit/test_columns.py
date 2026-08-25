@@ -15,6 +15,8 @@ def test_default_embed_columns_match_documented_embed_names() -> None:
     assert config.exam_description == "desc"
     assert config.image_path == "anon_dicom_path"
     assert config.image_laterality == "ImageLateralityFinal"
+    assert config.image_modality == "Modality"
+    assert config.derived_image_type == "FinalImageType"
     assert config.roi_coords == "ROI_coords"
     assert config.nipple_x == "nipple_x"
     assert config.nipple_y == "nipple_y"

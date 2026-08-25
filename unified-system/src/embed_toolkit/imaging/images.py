@@ -24,6 +24,8 @@ class MammogramImage:
     view_position: ViewPosition
     sources: List[SourceLocator]
     modality: ImageModality = ImageModality.UNKNOWN
+    source_modality: Optional[str] = None
+    derived_image_type: Optional[str] = None
     height: Optional[int] = None
     width: Optional[int] = None
     frame_count: Optional[int] = None
@@ -58,6 +60,12 @@ class MammogramImage:
         self.laterality = Laterality.coerce(self.laterality)
         self.view_position = ViewPosition.coerce(self.view_position)
         self.modality = ImageModality.coerce(self.modality)
+        for attribute in ("source_modality", "derived_image_type"):
+            value = getattr(self, attribute)
+            if value is not None:
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{attribute} must be a non-empty string or None")
+                setattr(self, attribute, value.strip())
         if self.patient_orientation is not None:
             self.patient_orientation = PatientOrientation.coerce(
                 self.patient_orientation
@@ -172,6 +180,8 @@ class MammogramImage:
             "laterality": self.laterality.value,
             "view_position": self.view_position.value,
             "modality": self.modality.value,
+            "source_modality": self.source_modality,
+            "derived_image_type": self.derived_image_type,
             "height": self.height,
             "width": self.width,
             "frame_count": self.frame_count,

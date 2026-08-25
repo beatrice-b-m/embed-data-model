@@ -73,6 +73,7 @@ def test_profile_inventories_have_exact_configured_boundaries() -> None:
     assert INTERNAL_V1C_FIELD_INVENTORY.governed_fields == (
         "accession",
         "acquisition_group_id",
+        "derived_image_type",
         "image_frames",
         "image_height",
         "image_id",
