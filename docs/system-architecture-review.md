@@ -3,7 +3,7 @@
 Date: 2026-08-25
 
 Editable Lucid chart:
-[WIP EMBED Toolkit — System Architecture (Reviewed)](https://lucid.app/lucidchart/2c86cdcd-d12c-4da7-aa55-7aa703a588ff/edit)
+[WIP EMBED Toolkit — System Architecture (Expanded Review)](https://lucid.app/lucidchart/5717732a-8d25-40e8-97df-fa1a657eaa6b/edit)
 
 ## Scope
 
@@ -14,12 +14,16 @@ or infrastructure definition in the retained runtime tree. The files under
 `temp/` are auxiliary reference code and are not included by the package
 configuration.
 
-The Lucid document has two pages:
+The Lucid document has three pages:
 
 1. **Runtime architecture** shows the governed data flow from source rows to
    domain graphs, research workflows, and inspectable results.
 2. **Dependency topology** shows the main package-level imports and highlights
    structural concentration and boundary pressure.
+3. **Source, ingestion, objects & assembly** removes workflows and downstream
+   outputs to show the source surfaces, governed builders, build products,
+   object graphs, evidence ledger, reconciliation decisions, and assembled
+   clinical/image graph in greater detail.
 
 ## Runtime topology
 
