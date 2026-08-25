@@ -3,6 +3,7 @@
 Date: 2026-08-25
 Source review: `docs/internal-v2-conformance-review.md`
 Implementation scope: `unified-system/`
+Status: completed on 2026-08-25
 
 ## Assessment
 
@@ -23,6 +24,24 @@ of the remediation scope.
 The current suite is a clean baseline (`459 passed` on 2026-08-25), but several
 tests encode the behavior being corrected. Those tests must be changed rather
 than used as compatibility requirements.
+
+## Resolution record
+
+All six findings have been resolved. The post-remediation suite contains 478
+tests and passes in full.
+
+| Finding | Resolution commit | Primary verification |
+| --- | --- | --- |
+| Derived image type is collapsed into modality | `1382603` | `test_image_builder_preserves_open_derived_image_type` |
+| DBT depth-derivation provenance is lost | `edb38e9` | `test_dbt_roi_depth_derivation_flags_preserve_per_roi_provenance`; flag validation tests |
+| Unknown acquisition type drops usable ROI geometry | `ed9c849` | `test_unknown_modality_preserves_roi_geometry_without_frame_interpretation`; unresolved transfer test |
+| ROI-transfer relatedness ignores acquisition group | `80ea89e` | `test_default_relatedness_requires_matching_populated_acquisition_group`; caller-assertion test |
+| Source construction defaults to strict | `a2942e7` | default-audit tests for clinical/image builders, graph assembly, and temporal selection |
+| `birth_year` contradicts the Internal V2 contract | `2290c84` | `test_internal_v2_omits_birth_year_but_retains_raw_values`; custom birth-year profile tests |
+
+The implementation retained the review's non-findings: `num_ROI` is not
+authoritative, no image type is automatically excluded, analytical matching
+and transfer workflows remain available, and unmatched exams are not rejected.
 
 ## Resolution principles
 
