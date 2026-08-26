@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from embed_toolkit.adapters.embed import build_clinical_tables, build_image_tables
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.core.primitives import Laterality, ViewPosition
@@ -119,27 +118,3 @@ def test_exam_serialization_owns_objects_once_and_sides_use_references() -> None
     assert finding is exam.breast_sides[Laterality.LEFT].findings[0]
     assert left_image is exam.breast_sides[Laterality.LEFT].images[0]
     json.dumps(serialized)
-
-
-def test_table_builders_create_persistent_sides_and_bind_image_patient() -> None:
-    clinical = build_clinical_tables(
-        [{"empi_anon": "P-1", "acc_anon": "ACC-1", "numfind": "1"}],
-        source_scope="clinical-1",
-    )
-    images = build_image_tables(
-        [
-            {
-                "image_id": "left-cc",
-                "empi_anon": "P-1",
-                "acc_anon": "ACC-1",
-                "ImageLateralityFinal": "L",
-                "ViewPosition": "CC",
-            }
-        ]
-    )
-
-    exam = clinical.exams[0]
-    assert exam.breast_sides[Laterality.LEFT] is exam.breast_sides[Laterality.LEFT]
-    assert set(exam.breast_sides) == {Laterality.LEFT, Laterality.RIGHT}
-    assert images.images[0].patient_id == "P-1"
-    assert exam.images == []

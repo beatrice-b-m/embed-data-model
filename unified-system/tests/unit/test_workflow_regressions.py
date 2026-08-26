@@ -2,14 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from embed_toolkit.adapters.embed import (
-    assemble_clinical_image_graph,
-    build_clinical_tables,
-    build_image_tables,
-    project_finding_image_candidates,
-)
 from embed_toolkit.audit.results import ResultStatus
-from embed_toolkit.clinical.associations import AttributionStatus
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.alignment import Alignment, AlignmentDirection
@@ -135,59 +128,6 @@ def test_clock_mapping_is_laterality_aware_before_matching() -> None:
         "si": "central",
         "depth": "posterior",
     }
-
-
-def test_bilateral_candidate_projection_uses_both_sides() -> None:
-    clinical = build_clinical_tables(
-        [
-            {"empi_anon": "P1", "acc_anon": "ACC-EXPAND", "numfind": "B", "side": "B"},
-            {"empi_anon": "P1", "acc_anon": "ACC-EXPAND", "numfind": "U"},
-        ]
-    )
-    images = build_image_tables(
-        [
-            {
-                "image_id": "left-cc",
-                "acc_anon": "ACC-EXPAND",
-                "ImageLateralityFinal": "L",
-                "ViewPosition": "CC",
-            },
-            {
-                "image_id": "right-cc",
-                "acc_anon": "ACC-EXPAND",
-                "ImageLateralityFinal": "R",
-                "ViewPosition": "CC",
-            },
-            {
-                "image_id": "other-left-cc",
-                "acc_anon": "ACC-OTHER",
-                "ImageLateralityFinal": "L",
-                "ViewPosition": "CC",
-            },
-        ]
-    )
-
-    projections = project_finding_image_candidates(
-        assemble_clinical_image_graph(clinical, images)
-    )
-    candidate_image_ids = {
-        projection.finding.finding_id: [
-            candidate.image.image_id for candidate in projection.candidates
-        ]
-        for projection in projections
-    }
-
-    assert [finding.laterality for finding in clinical.findings] == [
-        Laterality.BILATERAL,
-        Laterality.BILATERAL,
-    ]
-    assert candidate_image_ids == {
-        "ACC-EXPAND:B": ["left-cc", "right-cc"],
-        "ACC-EXPAND:U": ["left-cc", "right-cc"],
-    }
-    assert all(
-        projection.status is AttributionStatus.CANDIDATE for projection in projections
-    )
 
 
 def test_localization_preserves_source_evidence() -> None:

@@ -13,12 +13,11 @@ from typing import Optional
 
 
 PUBLIC_NAMESPACE_MODULES = [
-    "embed_toolkit.adapters",
     "embed_toolkit.audit",
     "embed_toolkit.clinical",
-    "embed_toolkit.config",
     "embed_toolkit.core",
     "embed_toolkit.imaging",
+    "embed_toolkit.sources.embed",
     "embed_toolkit.visualization",
     "embed_toolkit.workflows",
 ]
@@ -189,10 +188,9 @@ def test_all_unified_modules_import_without_legacy_runtime_dependencies() -> Non
 
 def test_foundation_exports_are_available_from_namespaces() -> None:
     with new_src_imports():
-        adapters = importlib.import_module("embed_toolkit.adapters")
+        package = importlib.import_module("embed_toolkit")
         audit = importlib.import_module("embed_toolkit.audit")
         clinical = importlib.import_module("embed_toolkit.clinical")
-        config = importlib.import_module("embed_toolkit.config")
         core = importlib.import_module("embed_toolkit.core")
         provenance = importlib.import_module("embed_toolkit.core.provenance")
         imaging = importlib.import_module("embed_toolkit.imaging")
@@ -202,17 +200,8 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         visualization = importlib.import_module("embed_toolkit.visualization")
         workflows = importlib.import_module("embed_toolkit.workflows")
 
-    assert adapters.build_clinical_tables
-    assert adapters.EmbedImageTables
-    assert adapters.EmbedPatientHistoryTables
-    assert adapters.ExamImageContainmentLink
-    assert adapters.FindingImageCandidate
-    assert adapters.PatientIdentityCheckStatus
-    assert adapters.UnmatchedImage
-    assert adapters.UnmatchedImageReason
-    assert adapters.project_finding_image_candidates
-    assert adapters.build_patient_history_tables
-    assert adapters.normalize_magview_location
+    assert package.DatasetGraph
+    assert package.load_embed
     assert audit.WorkflowResult
     assert audit.export_result
     assert clinical.Finding
@@ -235,7 +224,6 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert clinical.UndatedObservationPolicy
     assert clinical.ProcedureHistoryObservation
     assert clinical.select_patient_attribute_as_of
-    assert config.EmbedColumnConfig().accession == "acc_anon"
     assert core.MassShape.LOBULATED.value == "lobulated"
     assert imaging.Alignment.reference().is_reference
     assert imaging.MammogramImage
