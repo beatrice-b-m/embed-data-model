@@ -19,12 +19,23 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "exam_description": "desc",
             }
         ),
+        "findings": MappingProxyType(
+            {
+                "accession": "acc_anon",
+                "finding_number": "numfind",
+                "laterality": "side",
+                "finding_type": None,
+                "assessment": "asses",
+                "recommendation": "recc",
+            }
+        ),
     }
 )
 
 _REQUIRED = {
     "patients": frozenset({"patient_id"}),
     "exams": frozenset({"accession"}),
+    "findings": frozenset({"accession", "finding_number"}),
 }
 
 

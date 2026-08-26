@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from embed_toolkit.core.provenance import AvailabilityState, SourceLocator
+from embed_toolkit.core.source import SourceRef
 
 
 @dataclass(frozen=True)
@@ -14,7 +15,7 @@ class ImagingInterpretation:
 
     accession_number: str
     finding_number: str
-    sources: Tuple[SourceLocator, ...]
+    sources: Tuple[object, ...]
     assessment: Optional[str] = None
     assessment_availability: AvailabilityState = AvailabilityState.BOUND
     recommendation: Optional[str] = None
@@ -28,8 +29,10 @@ class ImagingInterpretation:
         sources = tuple(self.sources)
         if not sources:
             raise ValueError("sources must contain at least one SourceLocator")
-        if any(not isinstance(source, SourceLocator) for source in sources):
-            raise TypeError("sources must contain only SourceLocator values")
+        if any(
+            not isinstance(source, (SourceLocator, SourceRef)) for source in sources
+        ):
+            raise TypeError("sources must contain SourceRef or SourceLocator values")
         if len(set(sources)) != len(sources):
             raise ValueError("sources must contain unique SourceLocator values")
         object.__setattr__(self, "sources", sources)

@@ -8,6 +8,7 @@ import pytest
 from embed_toolkit import DatasetGraph, LoadError, load_embed
 from embed_toolkit.adapters.tables import iter_records
 from embed_toolkit.core.source import CanonicalKey, SourceRef
+from embed_toolkit.core.primitives import Laterality
 
 
 def test_source_keys_are_typed_and_round_trip() -> None:
@@ -247,3 +248,96 @@ def test_graph_root_collections_are_read_only_views() -> None:
     assert isinstance(report.graph.patients, tuple)
     with pytest.raises(AttributeError):
         report.graph.patients.append(report.graph.patients[0])
+
+
+def test_finding_table_loads_alone_and_establishes_exam_ownership() -> None:
+    report = load_embed(
+        findings=pd.DataFrame(
+            {
+                "acc_anon": ["A-1", "A-1"],
+                "numfind": [1, 2],
+                "side": ["L", "B"],
+                "asses": ["4", "2"],
+                "recc": ["biopsy", "routine"],
+            },
+            index=[31, 32],
+        ),
+        source_scope="release-1",
+    )
+
+    exam = report.graph.exam("A-1")
+    assert exam is not None
+    assert report.graph.patients == ()
+    assert exam.findings == list(report.graph.findings)
+    assert [
+        finding.finding_number
+        for finding in exam.breast_sides[Laterality.LEFT].findings
+    ] == [
+        "1",
+        "2",
+    ]
+    assert [
+        finding.finding_number
+        for finding in exam.breast_sides[Laterality.RIGHT].findings
+    ] == [
+        "2"
+    ]
+    assert report.graph.finding("A-1", "1").interpretation.assessment == "4"
+    assert report.issues == ()
+
+
+def test_finding_identity_does_not_depend_on_side_or_interpretation() -> None:
+    report = load_embed(
+        findings=[{"acc_anon": "A-1", "numfind": "7"}],
+        columns={
+            "findings": {
+                "laterality": None,
+                "assessment": None,
+                "recommendation": None,
+            }
+        },
+    )
+
+    finding = report.graph.finding("A-1", "7")
+    assert finding is not None
+    assert finding.laterality.value == "UNKNOWN"
+    assert finding.interpretation is None
+    assert report.issues == ()
+
+
+def test_finding_conflicts_are_order_independent_and_leave_field_unresolved() -> None:
+    report = load_embed(
+        findings=pd.DataFrame(
+            {
+                "acc_anon": ["A-1", "A-1"],
+                "numfind": [1, 1],
+                "side": ["L", "R"],
+            },
+            index=[1, 2],
+        ),
+        source_scope="release-1",
+    )
+
+    finding = report.graph.finding("A-1", "1")
+    assert finding.laterality.value == "UNKNOWN"
+    assert [issue.code for issue in report.issues] == ["conflicting_finding_field"]
+    assert report.graph.exam("A-1").breast_sides == {}
+
+
+def test_finding_load_enriches_existing_canonical_exam_and_patient() -> None:
+    graph = DatasetGraph(source_scope="release-1")
+    load_embed(
+        patients=[{"empi_anon": "P-1"}],
+        exams=[{"acc_anon": "A-1", "empi_anon": "P-1"}],
+        into=graph,
+    )
+    exam = graph.exam("A-1")
+
+    load_embed(
+        findings=[{"acc_anon": "A-1", "numfind": "1", "side": "R"}],
+        into=graph,
+    )
+
+    assert graph.exam("A-1") is exam
+    assert graph.patient("P-1").exams == [exam]
+    assert exam.findings == [graph.finding("A-1", "1")]

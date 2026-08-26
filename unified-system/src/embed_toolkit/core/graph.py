@@ -10,7 +10,10 @@ from typing import Any, DefaultDict, Dict, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from embed_toolkit.clinical.exams import Exam
+from embed_toolkit.clinical.findings import Finding
+from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.patients import Patient
+from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.source import Issue, IssueSeverity, SourceRef
 
 
@@ -52,11 +55,15 @@ class DatasetGraph:
         )
         self._patients: Dict[str, Patient] = {}
         self._exams: Dict[str, Exam] = {}
+        self._findings: Dict[Tuple[str, str], Finding] = {}
         self._contributions: Dict[Tuple[SourceRef, str, str], _Contribution] = {}
         self._issues: list[Issue] = []
         self._issue_fingerprints: set[Tuple[Any, ...]] = set()
         self._exam_observations: DefaultDict[
             str, DefaultDict[str, Dict[SourceRef, Any]]
+        ] = defaultdict(lambda: defaultdict(dict))
+        self._finding_observations: DefaultDict[
+            Tuple[str, str], DefaultDict[str, Dict[SourceRef, Any]]
         ] = defaultdict(lambda: defaultdict(dict))
 
     @property
@@ -85,11 +92,20 @@ class DatasetGraph:
 
         return tuple(self._issues)
 
+    @property
+    def findings(self) -> Tuple[Finding, ...]:
+        """Return findings ordered by accession and finding number."""
+
+        return tuple(self._findings[key] for key in sorted(self._findings))
+
     def patient(self, patient_id: str) -> Optional[Patient]:
         return self._patients.get(patient_id)
 
     def exam(self, accession: str) -> Optional[Exam]:
         return self._exams.get(accession)
+
+    def finding(self, accession: str, finding_number: str) -> Optional[Finding]:
+        return self._findings.get((accession, str(finding_number)))
 
     def transaction(self, mode: str = "audit") -> "GraphTransaction":
         """Open the only supported mutation surface for this graph."""
@@ -117,6 +133,54 @@ class DatasetGraph:
             if patient is not None:
                 patient.add_exam(exam)
 
+    def _resolve_finding(self, identity: Tuple[str, str]) -> None:
+        finding = self._findings[identity]
+        observations = self._finding_observations[identity]
+        laterality = _one_value_or_none(
+            value
+            for value in observations["laterality"].values()
+            if value is not Laterality.UNKNOWN
+        )
+        finding.laterality = laterality or Laterality.UNKNOWN
+        finding.finding_type = _one_value_or_none(
+            observations["finding_type"].values()
+        )
+        assessment = _one_value_or_none(observations["assessment"].values())
+        recommendation = _one_value_or_none(
+            observations["recommendation"].values()
+        )
+        evidence = tuple(
+            sorted(
+                set(observations["laterality"]) | set(observations["assessment"])
+                | set(observations["recommendation"]),
+                key=lambda source: repr(source.to_dict()),
+            )
+        )
+        finding.interpretation = (
+            ImagingInterpretation(
+                accession_number=identity[0],
+                finding_number=identity[1],
+                sources=evidence,
+                assessment=assessment,
+                recommendation=recommendation,
+            )
+            if evidence and (assessment is not None or recommendation is not None)
+            else None
+        )
+
+        exam = self._exams[identity[0]]
+        exam.findings[:] = [item for item in exam.findings if item.identity != identity]
+        for side in exam.breast_sides.values():
+            side.findings[:] = [item for item in side.findings if item.identity != identity]
+        exam.findings.append(finding)
+        for side_value in finding.laterality.expand():
+            exam.ensure_side(side_value).add_finding(finding)
+        exam.breast_sides = {
+            side: owned
+            for side, owned in exam.breast_sides.items()
+            if owned.findings or owned.images
+        }
+
 
 class GraphTransaction(AbstractContextManager["GraphTransaction"]):
     """Invocation-scoped staging area with strict rollback semantics."""
@@ -131,6 +195,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         self._pending: Dict[Tuple[SourceRef, str, str], _Contribution] = {}
         self._patient_nodes: Dict[str, Patient] = {}
         self._exam_nodes: Dict[str, Exam] = {}
+        self._finding_nodes: Dict[Tuple[str, str], Finding] = {}
         self._closed = False
 
     def __enter__(self) -> "GraphTransaction":
@@ -260,6 +325,96 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             exam = self._exam_nodes.setdefault(accession, Exam(accession))
         return exam
 
+    def upsert_finding(
+        self,
+        accession: str,
+        finding_number: str,
+        source: SourceRef,
+        *,
+        laterality: Laterality = Laterality.UNKNOWN,
+        finding_type: Optional[str] = None,
+        assessment: Optional[str] = None,
+        recommendation: Optional[str] = None,
+        values: Optional[Mapping[str, Any]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> Finding:
+        """Stage one finding observation and its accession-owned identity."""
+
+        _require_open(self)
+        _require_identifier(accession, "accession")
+        _require_identifier(finding_number, "finding_number")
+        side = Laterality.coerce(laterality)
+        identity = (accession, finding_number)
+        normalized = values or {
+            "accession": accession,
+            "finding_number": finding_number,
+            "laterality": side.value,
+            "finding_type": finding_type,
+            "assessment": assessment,
+            "recommendation": recommendation,
+        }
+        contribution = _Contribution(
+            source=source,
+            concept="finding",
+            slot="",
+            entity_id="\x1f".join(identity),
+            payload=_freeze(normalized),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph.finding(*identity) or Finding(accession, side, finding_number)
+
+        for field, value in (
+            ("laterality", side if side is not Laterality.UNKNOWN else None),
+            ("finding_type", finding_type),
+            ("assessment", assessment),
+            ("recommendation", recommendation),
+        ):
+            observed = self._observed_finding_values(identity, field)
+            if value is not None and observed - {value}:
+                self.add_issue(
+                    Issue(
+                        code="conflicting_finding_field",
+                        message=f"one finding has conflicting populated values for {field}",
+                        source=source,
+                        context={
+                            "accession": accession,
+                            "finding_number": finding_number,
+                            "field": field,
+                            "observed_values": sorted(str(item) for item in observed | {value}),
+                        },
+                    )
+                )
+
+        self._exam_nodes.setdefault(accession, self.graph.exam(accession) or Exam(accession))
+        finding = self.graph.finding(*identity)
+        if finding is None:
+            finding = self._finding_nodes.setdefault(
+                identity, Finding(accession, side, finding_number)
+            )
+        return finding
+
+    def _observed_finding_values(
+        self, identity: Tuple[str, str], field: str
+    ) -> set[Any]:
+        values = {
+            value
+            for value in self.graph._finding_observations[identity][field].values()
+            if value is not None and value is not Laterality.UNKNOWN
+        }
+        for contribution in self._pending.values():
+            if contribution.concept != "finding":
+                continue
+            if tuple(contribution.entity_id.split("\x1f", 1)) != identity:
+                continue
+            payload = dict(_thaw_mapping(contribution.payload))
+            value = payload.get(field)
+            if field == "laterality" and value is not None:
+                value = Laterality.coerce(value)
+            if value is not None and value is not Laterality.UNKNOWN:
+                values.add(value)
+        return values
+
     def _observed_exam_values(self, accession: str, field: str) -> set[Any]:
         values = {
             value
@@ -306,10 +461,24 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             graph._patients.setdefault(patient_id, patient)
         for accession, exam in self._exam_nodes.items():
             graph._exams.setdefault(accession, exam)
+        for identity, finding in self._finding_nodes.items():
+            graph._findings.setdefault(identity, finding)
 
         touched_exams: set[str] = set()
+        touched_findings: set[Tuple[str, str]] = set()
         for address, contribution in self._pending.items():
             graph._contributions[address] = contribution
+            if contribution.concept == "finding":
+                identity = tuple(contribution.entity_id.split("\x1f", 1))
+                values = dict(_thaw_mapping(contribution.payload))
+                observations = graph._finding_observations[identity]
+                observations["laterality"][contribution.source] = Laterality.coerce(
+                    values.get("laterality")
+                )
+                for field in ("finding_type", "assessment", "recommendation"):
+                    observations[field][contribution.source] = values.get(field)
+                touched_findings.add(identity)
+                continue
             if contribution.concept != "exam":
                 continue
             values = dict(_thaw_mapping(contribution.payload))
@@ -329,6 +498,13 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         )
         for accession in touched_exams:
             graph._resolve_exam(accession)
+        for identity in touched_findings:
+            graph._resolve_finding(identity)
+        for accession in {identity[0] for identity in touched_findings}:
+            exam = graph._exams[accession]
+            exam.findings.sort(key=lambda finding: finding.identity)
+            for side in exam.breast_sides.values():
+                side.findings.sort(key=lambda finding: finding.identity)
         for issue in self.issues:
             graph._record_issue(issue)
 

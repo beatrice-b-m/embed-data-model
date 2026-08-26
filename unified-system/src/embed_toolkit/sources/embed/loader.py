@@ -13,6 +13,7 @@ from embed_toolkit.adapters.tables import (
     iter_records,
 )
 from embed_toolkit.core.graph import DatasetGraph
+from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.source import Issue, SourceRef
 from embed_toolkit.sources.embed.columns import resolve_columns
 
@@ -33,6 +34,7 @@ def load_embed(
     *,
     patients: Any = None,
     exams: Any = None,
+    findings: Any = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
@@ -41,7 +43,7 @@ def load_embed(
     mode: str = "audit",
     retain_raw: bool = False,
 ) -> LoadReport:
-    """Load any supplied EMBED Patient and Exam tables into one graph.
+    """Load any supplied EMBED clinical grain tables into one graph.
 
     Tables may be pandas DataFrames or iterables of row mappings. Every table
     is optional, and an exam is safe to load without either a patient table or
@@ -98,6 +100,14 @@ def load_embed(
             columns=column_maps["exams"],
             retain_raw=retain_raw,
         )
+        _load_findings(
+            findings,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["findings"],
+            columns=column_maps["findings"],
+            retain_raw=retain_raw,
+        )
 
     return LoadReport(
         graph=graph,
@@ -112,6 +122,7 @@ def _resolve_source_keys(
     resolved: dict[str, Optional[SourceKeySelector]] = {
         "patients": None,
         "exams": None,
+        "findings": None,
     }
     if source_keys is None:
         return resolved
@@ -225,6 +236,75 @@ def _load_exams(
             patient_id=patient_id,
             exam_date=exam_date,
             description=description,
+            values=values,
+            metadata=_evidence(record.mapping, retain_raw),
+        )
+
+
+def _load_findings(
+    table: Any,
+    *,
+    transaction: Any,
+    source_scope: str,
+    source_key: Optional[SourceKeySelector],
+    columns: Mapping[str, Optional[str]],
+    retain_raw: bool,
+) -> None:
+    accession_column = columns["accession"]
+    number_column = columns["finding_number"]
+    assert accession_column is not None and number_column is not None
+    for record in _table_records(table, source_key, "findings", transaction):
+        source = _record_source(record, source_scope, "findings")
+        if not _add_table_issues(record, source, transaction):
+            continue
+        raw_accession = record.mapping.get(accession_column)
+        accession = _normalize_identifier(raw_accession)
+        if accession is None:
+            transaction.add_issue(
+                _identity_issue("accession", raw_accession, source, accession_column)
+            )
+            continue
+        raw_number = record.mapping.get(number_column)
+        finding_number = _normalize_identifier(raw_number)
+        if finding_number is None:
+            transaction.add_issue(
+                _identity_issue("finding_number", raw_number, source, number_column)
+            )
+            continue
+
+        laterality_column = columns["laterality"]
+        raw_laterality = (
+            record.mapping.get(laterality_column)
+            if laterality_column is not None
+            else None
+        )
+        laterality = Laterality.coerce(_plain_scalar(raw_laterality))
+        if not _is_missing(raw_laterality) and laterality is Laterality.UNKNOWN:
+            transaction.add_issue(
+                Issue(
+                    code="unsupported_finding_laterality",
+                    message="finding laterality was retained as unknown",
+                    severity="warning",
+                    source=source,
+                    context={"column": laterality_column, "value": raw_laterality},
+                )
+            )
+        values = {
+            "accession": accession,
+            "finding_number": finding_number,
+            "laterality": laterality.value,
+            "finding_type": _mapped_text(record.mapping, columns["finding_type"]),
+            "assessment": _mapped_text(record.mapping, columns["assessment"]),
+            "recommendation": _mapped_text(record.mapping, columns["recommendation"]),
+        }
+        transaction.upsert_finding(
+            accession,
+            finding_number,
+            source,
+            laterality=laterality,
+            finding_type=values["finding_type"],
+            assessment=values["assessment"],
+            recommendation=values["recommendation"],
             values=values,
             metadata=_evidence(record.mapping, retain_raw),
         )
