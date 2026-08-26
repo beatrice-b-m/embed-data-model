@@ -30,6 +30,7 @@ from embed_toolkit.sources.embed.procedures_pathology import (
 
 
 SourceKeySelector = Union[str, Callable[[Mapping[str, Any]], Any]]
+_MAGVIEW_SOURCE_KEY = object()
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ def load_embed(
     procedure_history: Any = None,
     procedures: Any = None,
     pathology: Any = None,
+    magview: Any = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
@@ -151,6 +153,14 @@ def load_embed(
             columns=column_maps["hormone_history"],
             retain_raw=retain_raw,
         )
+        _load_magview(
+            magview,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["magview"],
+            column_maps=column_maps,
+            retain_raw=retain_raw,
+        )
         _load_procedures(
             procedures,
             transaction=transaction,
@@ -198,6 +208,7 @@ def _resolve_source_keys(
         "procedure_history": None,
         "procedures": None,
         "pathology": None,
+        "magview": None,
     }
     if source_keys is None:
         return resolved
@@ -218,6 +229,84 @@ def _resolve_source_keys(
     return resolved
 
 
+def _load_magview(
+    table: Any,
+    *,
+    transaction: Any,
+    source_scope: str,
+    source_key: Optional[SourceKeySelector],
+    column_maps: Mapping[str, Mapping[str, Optional[str]]],
+    retain_raw: bool,
+) -> None:
+    """Project one normalized wide row stream through existing grain loaders."""
+
+    projected: dict[str, list[Mapping[Any, Any]]] = {
+        "patients": [],
+        "exams": [],
+        "findings": [],
+        "procedures": [],
+        "pathology": [],
+    }
+    for record in _table_records(table, source_key, "magview", transaction):
+        source = _record_source(record, source_scope, "magview")
+        if not _add_table_issues(record, source, transaction):
+            continue
+        row = dict(record.mapping)
+        row[_MAGVIEW_SOURCE_KEY] = record.source_key
+        if _has_semantic_value(row, column_maps["patients"], "patient_id"):
+            projected["patients"].append(row)
+        if _has_semantic_value(row, column_maps["exams"], "accession"):
+            projected["exams"].append(row)
+        if _has_semantic_value(row, column_maps["findings"], "finding_number"):
+            projected["findings"].append(row)
+        if any(
+            _has_semantic_value(row, column_maps["procedures"], semantic)
+            for semantic in ("performed_date", "procedure_type", "laterality")
+        ):
+            projected["procedures"].append(row)
+        if any(
+            _has_semantic_value(row, column_maps["pathology"], semantic)
+            for semantic in (
+                "diagnosis",
+                "result_category",
+                "malignant",
+                "severity",
+                "report_documented_date",
+                *(f"descriptor_{index}" for index in range(1, 11)),
+            )
+        ):
+            projected["pathology"].append(row)
+
+    def selector(row: Mapping[Any, Any]) -> Any:
+        return row[_MAGVIEW_SOURCE_KEY]
+
+    common = {
+        "transaction": transaction,
+        "source_scope": source_scope,
+        "source_key": selector,
+        "retain_raw": retain_raw,
+        "source_table": "magview",
+    }
+    _load_patients(projected["patients"], columns=column_maps["patients"], **common)
+    _load_exams(projected["exams"], columns=column_maps["exams"], **common)
+    _load_findings(projected["findings"], columns=column_maps["findings"], **common)
+    _load_procedures(
+        projected["procedures"], columns=column_maps["procedures"], **common
+    )
+    _load_pathology(
+        projected["pathology"], columns=column_maps["pathology"], **common
+    )
+
+
+def _has_semantic_value(
+    row: Mapping[Any, Any],
+    columns: Mapping[str, Optional[str]],
+    semantic: str,
+) -> bool:
+    column = columns[semantic]
+    return column is not None and not _is_missing(row.get(column))
+
+
 def _load_patients(
     table: Any,
     *,
@@ -226,11 +315,12 @@ def _load_patients(
     source_key: Optional[SourceKeySelector],
     columns: Mapping[str, Optional[str]],
     retain_raw: bool,
+    source_table: str = "patients",
 ) -> None:
     patient_column = columns["patient_id"]
     assert patient_column is not None
-    for record in _table_records(table, source_key, "patients", transaction):
-        source = _record_source(record, source_scope, "patients")
+    for record in _table_records(table, source_key, source_table, transaction):
+        source = _record_source(record, source_scope, source_table)
         if not _add_table_issues(record, source, transaction):
             continue
         raw_identifier = record.mapping.get(patient_column)
@@ -257,11 +347,12 @@ def _load_exams(
     source_key: Optional[SourceKeySelector],
     columns: Mapping[str, Optional[str]],
     retain_raw: bool,
+    source_table: str = "exams",
 ) -> None:
     accession_column = columns["accession"]
     assert accession_column is not None
-    for record in _table_records(table, source_key, "exams", transaction):
-        source = _record_source(record, source_scope, "exams")
+    for record in _table_records(table, source_key, source_table, transaction):
+        source = _record_source(record, source_scope, source_table)
         if not _add_table_issues(record, source, transaction):
             continue
         raw_accession = record.mapping.get(accession_column)
@@ -324,12 +415,13 @@ def _load_findings(
     source_key: Optional[SourceKeySelector],
     columns: Mapping[str, Optional[str]],
     retain_raw: bool,
+    source_table: str = "findings",
 ) -> None:
     accession_column = columns["accession"]
     number_column = columns["finding_number"]
     assert accession_column is not None and number_column is not None
-    for record in _table_records(table, source_key, "findings", transaction):
-        source = _record_source(record, source_scope, "findings")
+    for record in _table_records(table, source_key, source_table, transaction):
+        source = _record_source(record, source_scope, source_table)
         if not _add_table_issues(record, source, transaction):
             continue
         raw_accession = record.mapping.get(accession_column)
@@ -639,9 +731,10 @@ def _load_procedures(
     source_key: Optional[SourceKeySelector],
     columns: Mapping[str, Optional[str]],
     retain_raw: bool,
+    source_table: str = "procedures",
 ) -> None:
-    for record in _table_records(table, source_key, "procedures", transaction):
-        source = _record_source(record, source_scope, "procedures")
+    for record in _table_records(table, source_key, source_table, transaction):
+        source = _record_source(record, source_scope, source_table)
         if not _add_table_issues(record, source, transaction):
             continue
         patient_id = _mapped_identifier(record.mapping, columns["patient_id"])
@@ -694,9 +787,10 @@ def _load_pathology(
     source_key: Optional[SourceKeySelector],
     columns: Mapping[str, Optional[str]],
     retain_raw: bool,
+    source_table: str = "pathology",
 ) -> None:
-    for record in _table_records(table, source_key, "pathology", transaction):
-        source = _record_source(record, source_scope, "pathology")
+    for record in _table_records(table, source_key, source_table, transaction):
+        source = _record_source(record, source_scope, source_table)
         if not _add_table_issues(record, source, transaction):
             continue
         diagnosis, observations, issues = normalize_pathology(
@@ -1071,7 +1165,13 @@ def _evidence(
     retain_raw: bool,
 ) -> Optional[Mapping[str, Any]]:
     if retain_raw:
-        return {"raw": dict(row)}
+        return {
+            "raw": {
+                key: value
+                for key, value in row.items()
+                if key is not _MAGVIEW_SOURCE_KEY
+            }
+        }
     # Normalized consumed fields are already retained by ``values``. Avoid a
     # second copy unless the caller explicitly requests the complete row.
     return None

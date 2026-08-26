@@ -772,3 +772,78 @@ def test_pathology_attribution_resolves_incrementally_without_losing_evidence() 
     assert graph.pathology_observations[0] is observation
     assert len(graph.links) == 8
     assert graph.unresolved_references == ()
+
+
+def test_wide_magview_projects_supported_grains_through_one_graph() -> None:
+    report = load_embed(
+        magview=pd.DataFrame(
+            {
+                "row_id": ["mv-1"],
+                "empi_anon": ["P-1"],
+                "acc_anon": ["A-1"],
+                "numfind": ["1"],
+                "side": ["L"],
+                "asses": ["4"],
+                "recc": ["biopsy"],
+                "procdate_anon": ["2020-01-02"],
+                "type": ["biopsy"],
+                "bside": ["L"],
+                "path_severity": [4],
+                "path1": ["carcinoma"],
+            }
+        ),
+        source_keys={"magview": "row_id"},
+        source_scope="release-1",
+    )
+
+    patient = report.graph.patient("P-1")
+    exam = report.graph.exam("A-1")
+    finding = report.graph.finding("A-1", "1")
+    assert patient.exams == [exam]
+    assert exam.findings == [finding]
+    assert finding.interpretation.assessment == "4"
+    assert len(report.graph.procedures) == 1
+    assert len(report.graph.pathology_diagnoses) == 1
+    assert len(report.graph.pathology_observations) == 1
+    assert all(
+        source.source_table == "magview"
+        for source in (
+            *finding.interpretation.sources,
+            *report.graph.procedures[0].sources,
+        )
+    )
+    assert report.issues == ()
+
+
+def test_wide_magview_does_not_require_child_grains_or_reiterate_input() -> None:
+    def rows():
+        yield {"empi_anon": "P-1", "acc_anon": "A-1"}
+        yield {"empi_anon": "P-2"}
+
+    report = load_embed(magview=rows(), source_scope="release-1")
+
+    assert [patient.patient_id for patient in report.graph.patients] == ["P-1", "P-2"]
+    assert [exam.accession_number for exam in report.graph.exams] == ["A-1"]
+    assert report.graph.findings == ()
+    assert report.graph.procedures == ()
+    assert report.graph.pathology_diagnoses == ()
+    assert report.issues == ()
+
+
+def test_explicit_and_wide_tables_contribute_distinct_source_evidence() -> None:
+    report = load_embed(
+        findings=[
+            {"acc_anon": "A-1", "numfind": "1", "side": "R", "asses": "3"}
+        ],
+        magview=[
+            {"acc_anon": "A-1", "numfind": "1", "side": "R", "asses": "3"}
+        ],
+        source_scope="release-1",
+    )
+
+    finding = report.graph.finding("A-1", "1")
+    assert {source.source_table for source in finding.interpretation.sources} == {
+        "findings",
+        "magview",
+    }
+    assert report.issues == ()
