@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from embed_toolkit.core.provenance import SourceLocator
 from embed_toolkit.core.source import SourceRef
@@ -14,6 +14,9 @@ from embed_toolkit.core.primitives import (
     ViewPosition,
 )
 from embed_toolkit.imaging.landmarks import BreastGeometry, ImageLandmark
+
+if TYPE_CHECKING:
+    from embed_toolkit.imaging.rois import RegionOfInterest
 
 
 @dataclass
@@ -39,6 +42,7 @@ class MammogramImage:
     coordinate_frame_id: Optional[str] = None
     landmarks: Tuple[ImageLandmark, ...] = field(default_factory=tuple)
     attribute_sources: Dict[str, object] = field(default_factory=dict)
+    rois: List["RegionOfInterest"] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not isinstance(self.image_id, str) or not self.image_id.strip():
@@ -91,6 +95,9 @@ class MammogramImage:
             else landmark.owned_by(self.image_id)
             for landmark in self.landmarks
         )
+        self.rois = list(self.rois)
+        if any(roi.image_id != self.image_id for roi in self.rois):
+            raise ValueError("ROI image_id must match MammogramImage")
 
     @property
     def identity(self) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
@@ -141,6 +148,15 @@ class MammogramImage:
         owned = landmark.owned_by(self.image_id)
         self.landmarks = (*self.landmarks, owned)
         return owned
+
+    def add_roi(self, roi: "RegionOfInterest") -> "RegionOfInterest":
+        if roi.image_id != self.image_id:
+            raise ValueError("ROI image_id must match MammogramImage")
+        for existing in self.rois:
+            if existing.identity == roi.identity:
+                return existing
+        self.rois.append(roi)
+        return roi
 
     def with_landmark(self, landmark: ImageLandmark) -> "MammogramImage":
         """Return a copy with an additional image-owned landmark."""
@@ -212,4 +228,5 @@ class MammogramImage:
                 }
                 for landmark in self.landmarks
             ],
+            "roi_references": [roi.identity[1] for roi in self.rois],
         }

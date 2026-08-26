@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
+import json
 from math import isfinite
 from numbers import Integral, Real
 from typing import Any, Callable, Iterator, Mapping, Optional, Union
@@ -36,6 +38,7 @@ def load_embed(
     exams: Any = None,
     findings: Any = None,
     images: Any = None,
+    rois: Any = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
@@ -117,6 +120,14 @@ def load_embed(
             columns=column_maps["images"],
             retain_raw=retain_raw,
         )
+        _load_rois(
+            rois,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["rois"],
+            columns=column_maps["rois"],
+            retain_raw=retain_raw,
+        )
 
     return LoadReport(
         graph=graph,
@@ -133,6 +144,7 @@ def _resolve_source_keys(
         "exams": None,
         "findings": None,
         "images": None,
+        "rois": None,
     }
     if source_keys is None:
         return resolved
@@ -426,6 +438,99 @@ def _load_images(
         )
 
 
+def _load_rois(
+    table: Any,
+    *,
+    transaction: Any,
+    source_scope: str,
+    source_key: Optional[SourceKeySelector],
+    columns: Mapping[str, Optional[str]],
+    retain_raw: bool,
+) -> None:
+    image_column = columns["image_id"]
+    coordinates_column = columns["coordinates"]
+    assert image_column is not None and coordinates_column is not None
+    for record in _table_records(table, source_key, "rois", transaction):
+        source = _record_source(record, source_scope, "rois")
+        if not _add_table_issues(record, source, transaction):
+            continue
+        raw_image_id = record.mapping.get(image_column)
+        image_id = _normalize_identifier(raw_image_id)
+        if image_id is None:
+            transaction.add_issue(
+                _identity_issue("image_id", raw_image_id, source, image_column)
+            )
+            continue
+        roi_key = _mapped_identifier(record.mapping, columns["roi_key"])
+        if roi_key is None:
+            roi_key = json.dumps(
+                source.key.to_dict(), sort_keys=True, separators=(",", ":")
+            )
+        raw_coordinates = record.mapping.get(coordinates_column)
+        source_coordinates = _coordinate_tuple(raw_coordinates)
+        if source_coordinates is None:
+            transaction.add_issue(
+                Issue(
+                    code="invalid_roi_coordinates",
+                    message="ROI coordinates must contain four finite ordered values",
+                    severity="error",
+                    source=source,
+                    context={
+                        "column": coordinates_column,
+                        "value": raw_coordinates,
+                    },
+                )
+            )
+            continue
+        y_min, x_min, y_max, x_max = source_coordinates
+        coordinates = (y_min, x_min, y_max + 1.0, x_max + 1.0)
+        frame_indices = _nonnegative_int_tuple(
+            _mapped_value(record.mapping, columns["frame_indices"])
+        )
+        if frame_indices is None:
+            transaction.add_issue(
+                Issue(
+                    code="invalid_roi_frames",
+                    message="ROI frame indices must be unique non-negative integers",
+                    severity="error",
+                    source=source,
+                )
+            )
+            frame_indices = ()
+        confidence = _optional_confidence(
+            _mapped_value(record.mapping, columns["confidence"])
+        )
+        values = {
+            "image_id": image_id,
+            "roi_key": roi_key,
+            "coordinates": coordinates,
+            "frame_indices": frame_indices,
+            "annotation_source": _mapped_text(
+                record.mapping, columns["annotation_source"]
+            ),
+            "confidence": confidence,
+            "coordinate_frame_id": _mapped_text(
+                record.mapping, columns["coordinate_frame_id"]
+            ),
+            "source_coordinates": source_coordinates,
+            "source_coordinate_convention": "inclusive_maxima",
+        }
+        transaction.upsert_roi(
+            image_id,
+            roi_key,
+            source,
+            coordinates=coordinates,
+            frame_indices=frame_indices,
+            annotation_source=values["annotation_source"],
+            confidence=confidence,
+            coordinate_frame_id=values["coordinate_frame_id"],
+            source_coordinates=source_coordinates,
+            source_coordinate_convention="inclusive_maxima",
+            values=values,
+            metadata=_evidence(record.mapping, retain_raw),
+        )
+
+
 def _record_source(
     record: TableRecord, source_scope: str, source_table: str
 ) -> Optional[SourceRef]:
@@ -583,6 +688,66 @@ def _mapped_positive_int(
         )
         return None
     return normalized
+
+
+def _literal_sequence(value: Any) -> Any:
+    value = _plain_scalar(value)
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+        try:
+            return ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return None
+    return value
+
+
+def _coordinate_tuple(value: Any) -> Optional[tuple[float, float, float, float]]:
+    value = _literal_sequence(value)
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return None
+    try:
+        coordinates = tuple(float(item) for item in value)
+    except (TypeError, ValueError):
+        return None
+    if not all(isfinite(item) for item in coordinates):
+        return None
+    if coordinates[2] < coordinates[0] or coordinates[3] < coordinates[1]:
+        return None
+    return coordinates
+
+
+def _nonnegative_int_tuple(value: Any) -> Optional[tuple[int, ...]]:
+    if value is None:
+        return ()
+    value = _literal_sequence(value)
+    if not isinstance(value, (list, tuple)):
+        value = (value,)
+    normalized: list[int] = []
+    for item in value:
+        item = _plain_scalar(item)
+        if isinstance(item, bool):
+            return None
+        if isinstance(item, Integral):
+            integer = int(item)
+        elif isinstance(item, Real) and float(item).is_integer():
+            integer = int(item)
+        else:
+            return None
+        if integer < 0:
+            return None
+        normalized.append(integer)
+    if len(set(normalized)) != len(normalized):
+        return None
+    return tuple(normalized)
+
+
+def _optional_confidence(value: Any) -> Optional[float]:
+    if value is None or isinstance(value, bool) or not isinstance(value, Real):
+        return None
+    normalized = float(value)
+    return normalized if isfinite(normalized) and 0.0 <= normalized <= 1.0 else None
 
 
 def _plain_scalar(value: Any) -> Any:

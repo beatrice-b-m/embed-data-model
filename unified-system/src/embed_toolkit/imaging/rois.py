@@ -4,13 +4,38 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 from embed_toolkit.core.provenance import SourceLocator
+from embed_toolkit.core.source import SourceRef
 from embed_toolkit.imaging.roi_provenance import RoiLocator, RoiSourceProvenance
 
 
 CoordinateBox = Tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
+class Box:
+    """Plain half-open image geometry without source or audit machinery."""
+
+    y_min: float
+    x_min: float
+    y_stop: float
+    x_stop: float
+
+    def __post_init__(self) -> None:
+        values = tuple(float(value) for value in self.as_tuple())
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("Box coordinates must be finite")
+        if values[2] < values[0] or values[3] < values[1]:
+            raise ValueError("Box stop coordinates must not precede minima")
+        for attribute, value in zip(
+            ("y_min", "x_min", "y_stop", "x_stop"), values
+        ):
+            object.__setattr__(self, attribute, value)
+
+    def as_tuple(self) -> CoordinateBox:
+        return self.y_min, self.x_min, self.y_stop, self.x_stop
 
 
 @dataclass(frozen=True)
@@ -22,16 +47,18 @@ class RegionOfInterest:
     neither ``image_id`` nor a generated string is an ROI identity.
     """
 
-    coordinates: CoordinateBox
-    locator: RoiLocator
+    coordinates: Union[CoordinateBox, Box]
     image_id: str
-    source_provenance: RoiSourceProvenance
-    sources: Tuple[SourceLocator, ...]
+    roi_key: Optional[str] = None
+    locator: Optional[RoiLocator] = None
+    source_provenance: Optional[RoiSourceProvenance] = None
+    sources: Tuple[object, ...] = ()
     annotation_source: Optional[str] = None
     confidence: Optional[float] = None
     coordinate_frame_id: Optional[str] = None
     source_coordinates: Optional[CoordinateBox] = None
     source_coordinate_convention: Optional[str] = None
+    source_frame_indices: Tuple[int, ...] = ()
 
     @classmethod
     def from_embed_coordinates(
@@ -52,28 +79,46 @@ class RegionOfInterest:
         )
 
     def __post_init__(self) -> None:
-        if not isinstance(self.locator, RoiLocator):
-            raise TypeError("locator must be a RoiLocator")
         if not isinstance(self.image_id, str) or not self.image_id.strip():
             raise ValueError("image_id must be a non-empty string")
-        if not isinstance(self.source_provenance, RoiSourceProvenance):
-            raise TypeError("source_provenance must be a RoiSourceProvenance")
-        self.source_provenance.validate_locator(self.locator)
+        if self.roi_key is not None and (
+            not isinstance(self.roi_key, str) or not self.roi_key.strip()
+        ):
+            raise ValueError("roi_key must be a non-empty string when supplied")
+        if self.locator is None and self.roi_key is None:
+            raise ValueError("ROI requires an image-scoped roi_key or locator")
+        if self.locator is not None:
+            if not isinstance(self.locator, RoiLocator):
+                raise TypeError("locator must be a RoiLocator")
+            if not isinstance(self.source_provenance, RoiSourceProvenance):
+                raise TypeError(
+                    "source_provenance must accompany a governed RoiLocator"
+                )
+            self.source_provenance.validate_locator(self.locator)
+        elif self.source_provenance is not None and not isinstance(
+            self.source_provenance, RoiSourceProvenance
+        ):
+            raise TypeError("source_provenance must be RoiSourceProvenance or None")
 
         sources = tuple(self.sources)
-        if not sources:
-            raise ValueError("sources must contain at least one SourceLocator")
-        if any(not isinstance(source, SourceLocator) for source in sources):
-            raise TypeError("sources must contain only SourceLocator values")
+        if any(
+            not isinstance(source, (SourceLocator, SourceRef)) for source in sources
+        ):
+            raise TypeError("sources must contain SourceRef or SourceLocator values")
         if len(set(sources)) != len(sources):
             raise ValueError("sources must contain unique SourceLocator values")
-        locator_source = self.locator.image_locator
-        if locator_source not in sources:
+        locator_source = self.locator.image_locator if self.locator is not None else None
+        if locator_source is not None and locator_source not in sources:
             raise ValueError("locator image scope must occur in ROI sources")
 
-        if len(self.coordinates) != 4:
+        coordinates = (
+            self.coordinates.as_tuple()
+            if isinstance(self.coordinates, Box)
+            else self.coordinates
+        )
+        if len(coordinates) != 4:
             raise ValueError("ROI coordinates must contain four values")
-        y_min, x_min, y_stop, x_stop = tuple(float(value) for value in self.coordinates)
+        y_min, x_min, y_stop, x_stop = tuple(float(value) for value in coordinates)
         if not all(math.isfinite(value) for value in (y_min, x_min, y_stop, x_stop)):
             raise ValueError("ROI coordinates must be finite")
         if y_stop < y_min or x_stop < x_min:
@@ -85,6 +130,15 @@ class RegionOfInterest:
             object.__setattr__(self, "confidence", confidence)
         object.__setattr__(self, "coordinates", (y_min, x_min, y_stop, x_stop))
         object.__setattr__(self, "sources", sources)
+        frame_indices = tuple(self.source_frame_indices)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in frame_indices
+        ):
+            raise ValueError("source_frame_indices must be non-negative integers")
+        if len(set(frame_indices)) != len(frame_indices):
+            raise ValueError("source_frame_indices cannot contain duplicates")
+        object.__setattr__(self, "source_frame_indices", frame_indices)
         if self.source_coordinates is not None:
             source_coordinates = tuple(
                 float(value) for value in self.source_coordinates
@@ -99,13 +153,31 @@ class RegionOfInterest:
     def frame_indices(self) -> Tuple[int, ...]:
         """Return governed DBT depth placement from source provenance."""
 
-        return self.source_provenance.frame_indices
+        return (
+            self.source_provenance.frame_indices
+            if self.source_provenance is not None
+            else self.source_frame_indices
+        )
 
-    def with_source(self, source: SourceLocator) -> "RegionOfInterest":
+    @property
+    def identity(self) -> Tuple[str, str]:
+        """Return image-scoped identity for manual and ingested ROIs."""
+
+        if self.roi_key is not None:
+            return self.image_id, self.roi_key
+        assert self.locator is not None
+        locator_key = (
+            self.locator.source_value
+            if self.locator.source_value is not None
+            else str(self.locator.source_ordinal)
+        )
+        return self.image_id, locator_key
+
+    def with_source(self, source: object) -> "RegionOfInterest":
         """Return this ROI with an additional physical evidence occurrence."""
 
-        if not isinstance(source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
         if source in self.sources:
             return self
         return replace(self, sources=(*self.sources, source))
@@ -288,9 +360,14 @@ class RegionOfInterest:
         """Return a flat JSON-ready ROI representation."""
 
         return {
-            "locator": self.locator.to_dict(),
+            "roi_key": self.roi_key,
+            "locator": self.locator.to_dict() if self.locator is not None else None,
             "image_id": self.image_id,
-            "source_provenance": self.source_provenance.to_dict(),
+            "source_provenance": (
+                self.source_provenance.to_dict()
+                if self.source_provenance is not None
+                else None
+            ),
             "source_references": [source.to_dict() for source in self.sources],
             "coordinates": list(self.coordinates),
             "annotation_source": self.annotation_source,
@@ -302,4 +379,5 @@ class RegionOfInterest:
                 else None
             ),
             "source_coordinate_convention": self.source_coordinate_convention,
+            "frame_indices": list(self.frame_indices),
         }

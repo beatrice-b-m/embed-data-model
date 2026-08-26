@@ -21,6 +21,7 @@ from embed_toolkit.core.source import (
     UnresolvedReference,
 )
 from embed_toolkit.imaging.images import MammogramImage
+from embed_toolkit.imaging.rois import CoordinateBox, RegionOfInterest
 
 
 class LoadError(ValueError):
@@ -63,6 +64,7 @@ class DatasetGraph:
         self._exams: Dict[str, Exam] = {}
         self._findings: Dict[Tuple[str, str], Finding] = {}
         self._images: Dict[str, MammogramImage] = {}
+        self._rois: Dict[Tuple[str, str], RegionOfInterest] = {}
         self._contributions: Dict[Tuple[SourceRef, str, str], _Contribution] = {}
         self._issues: list[Issue] = []
         self._issue_fingerprints: set[Tuple[Any, ...]] = set()
@@ -74,6 +76,9 @@ class DatasetGraph:
         ] = defaultdict(lambda: defaultdict(dict))
         self._image_observations: DefaultDict[
             str, DefaultDict[str, Dict[SourceRef, Any]]
+        ] = defaultdict(lambda: defaultdict(dict))
+        self._roi_observations: DefaultDict[
+            Tuple[str, str], DefaultDict[str, Dict[SourceRef, Any]]
         ] = defaultdict(lambda: defaultdict(dict))
         self._unresolved_references: Tuple[UnresolvedReference, ...] = ()
 
@@ -119,6 +124,12 @@ class DatasetGraph:
     def unresolved_references(self) -> Tuple[UnresolvedReference, ...]:
         return self._unresolved_references
 
+    @property
+    def rois(self) -> Tuple[RegionOfInterest, ...]:
+        """Return resolved ROI observations ordered by image and ROI key."""
+
+        return tuple(self._rois[key] for key in sorted(self._rois))
+
     def patient(self, patient_id: str) -> Optional[Patient]:
         return self._patients.get(patient_id)
 
@@ -130,6 +141,9 @@ class DatasetGraph:
 
     def image(self, image_id: str) -> Optional[MammogramImage]:
         return self._images.get(image_id)
+
+    def roi(self, image_id: str, roi_key: str) -> Optional[RegionOfInterest]:
+        return self._rois.get((image_id, str(roi_key)))
 
     def transaction(self, mode: str = "audit") -> "GraphTransaction":
         """Open the only supported mutation surface for this graph."""
@@ -302,6 +316,79 @@ class DatasetGraph:
             )
         )
 
+    def _resolve_rois(self) -> None:
+        unresolved = set(self._unresolved_references)
+        for image in self._images.values():
+            image.rois.clear()
+        for identity in sorted(self._roi_observations):
+            observations = self._roi_observations[identity]
+            coordinate_values = set(observations["coordinates"].values())
+            if len(coordinate_values) != 1:
+                self._rois.pop(identity, None)
+                unresolved.add(
+                    UnresolvedReference(
+                        "roi",
+                        "\x1f".join(identity),
+                        "geometry",
+                        identity[1],
+                        "conflicting_values",
+                    )
+                )
+                continue
+            coordinates = next(iter(coordinate_values))
+            sources = tuple(
+                sorted(
+                    set().union(*(set(values) for values in observations.values())),
+                    key=lambda source: repr(source.to_dict()),
+                )
+            )
+            candidate = RegionOfInterest(
+                coordinates=coordinates,
+                image_id=identity[0],
+                roi_key=identity[1],
+                sources=sources,
+                annotation_source=_one_value_or_none(
+                    observations["annotation_source"].values()
+                ),
+                confidence=_one_value_or_none(observations["confidence"].values()),
+                coordinate_frame_id=_one_value_or_none(
+                    observations["coordinate_frame_id"].values()
+                ),
+                source_coordinates=_one_value_or_none(
+                    observations["source_coordinates"].values()
+                ),
+                source_coordinate_convention=_one_value_or_none(
+                    observations["source_coordinate_convention"].values()
+                ),
+                source_frame_indices=(
+                    _one_value_or_none(observations["frame_indices"].values()) or ()
+                ),
+            )
+            current = self._rois.get(identity)
+            roi = current if current == candidate else candidate
+            self._rois[identity] = roi
+            image = self._images.get(identity[0])
+            if image is None:
+                unresolved.add(
+                    UnresolvedReference(
+                        "roi", "\x1f".join(identity), "image", identity[0], "missing_target"
+                    )
+                )
+            else:
+                image.add_roi(roi)
+        self._unresolved_references = tuple(
+            sorted(
+                unresolved,
+                key=lambda item: (
+                    item.source_kind,
+                    item.source_id,
+                    item.target_kind,
+                    item.target_id,
+                    item.reason,
+                ),
+            )
+        )
+
 
 class GraphTransaction(AbstractContextManager["GraphTransaction"]):
     """Invocation-scoped staging area with strict rollback semantics."""
@@ -318,6 +405,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         self._exam_nodes: Dict[str, Exam] = {}
         self._finding_nodes: Dict[Tuple[str, str], Finding] = {}
         self._image_nodes: Dict[str, MammogramImage] = {}
+        self._roi_nodes: Dict[Tuple[str, str], RegionOfInterest] = {}
         self._closed = False
 
     def __enter__(self) -> "GraphTransaction":
@@ -650,6 +738,109 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 values.add(value)
         return values
 
+    def upsert_roi(
+        self,
+        image_id: str,
+        roi_key: str,
+        source: SourceRef,
+        *,
+        coordinates: CoordinateBox,
+        frame_indices: Tuple[int, ...] = (),
+        annotation_source: Optional[str] = None,
+        confidence: Optional[float] = None,
+        coordinate_frame_id: Optional[str] = None,
+        source_coordinates: Optional[CoordinateBox] = None,
+        source_coordinate_convention: Optional[str] = None,
+        values: Optional[Mapping[str, Any]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> RegionOfInterest:
+        """Stage one image-scoped ROI without requiring its image to exist."""
+
+        _require_open(self)
+        _require_identifier(image_id, "image_id")
+        _require_identifier(roi_key, "roi_key")
+        identity = (image_id, roi_key)
+        normalized = values or {
+            "image_id": image_id,
+            "roi_key": roi_key,
+            "coordinates": tuple(coordinates),
+            "frame_indices": tuple(frame_indices),
+            "annotation_source": annotation_source,
+            "confidence": confidence,
+            "coordinate_frame_id": coordinate_frame_id,
+            "source_coordinates": source_coordinates,
+            "source_coordinate_convention": source_coordinate_convention,
+        }
+        contribution = _Contribution(
+            source=source,
+            concept="roi",
+            slot=roi_key,
+            entity_id="\x1f".join(identity),
+            payload=_freeze(normalized),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph.roi(*identity) or RegionOfInterest(
+                coordinates=coordinates,
+                image_id=image_id,
+                roi_key=roi_key,
+                sources=(source,),
+            )
+        for field, value in normalized.items():
+            if field in {"image_id", "roi_key"} or value is None:
+                continue
+            observed = self._observed_roi_values(identity, field)
+            comparison = tuple(value) if isinstance(value, (list, tuple)) else value
+            if observed - {comparison}:
+                self.add_issue(
+                    Issue(
+                        code="conflicting_roi_field",
+                        message=f"one ROI has conflicting populated values for {field}",
+                        source=source,
+                        context={
+                            "image_id": image_id,
+                            "roi_key": roi_key,
+                            "field": field,
+                        },
+                    )
+                )
+        roi = self.graph.roi(*identity)
+        if roi is None:
+            roi = self._roi_nodes.setdefault(
+                identity,
+                RegionOfInterest(
+                    coordinates=coordinates,
+                    image_id=image_id,
+                    roi_key=roi_key,
+                    sources=(source,),
+                    annotation_source=annotation_source,
+                    confidence=confidence,
+                    coordinate_frame_id=coordinate_frame_id,
+                    source_coordinates=source_coordinates,
+                    source_coordinate_convention=source_coordinate_convention,
+                    source_frame_indices=tuple(frame_indices),
+                ),
+            )
+        return roi
+
+    def _observed_roi_values(
+        self, identity: Tuple[str, str], field: str
+    ) -> set[Any]:
+        values = {
+            tuple(value) if isinstance(value, (list, tuple)) else value
+            for value in self.graph._roi_observations[identity][field].values()
+            if value is not None
+        }
+        for contribution in self._pending.values():
+            if contribution.concept != "roi":
+                continue
+            if tuple(contribution.entity_id.split("\x1f", 1)) != identity:
+                continue
+            value = dict(_thaw_mapping(contribution.payload)).get(field)
+            if value is not None:
+                values.add(tuple(value) if isinstance(value, (list, tuple)) else value)
+        return values
+
     def _observed_exam_values(self, accession: str, field: str) -> set[Any]:
         values = {
             value
@@ -700,6 +891,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             graph._findings.setdefault(identity, finding)
         for image_id, image in self._image_nodes.items():
             graph._images.setdefault(image_id, image)
+        for identity, roi in self._roi_nodes.items():
+            graph._rois.setdefault(identity, roi)
 
         touched_exams: set[str] = set()
         touched_findings: set[Tuple[str, str]] = set()
@@ -730,6 +923,15 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                         value = ImageModality.coerce(value)
                     observations[field][contribution.source] = value
                 continue
+            if contribution.concept == "roi":
+                identity = tuple(contribution.entity_id.split("\x1f", 1))
+                values = dict(_thaw_mapping(contribution.payload))
+                observations = graph._roi_observations[identity]
+                for field, value in values.items():
+                    if field in {"image_id", "roi_key"}:
+                        continue
+                    observations[field][contribution.source] = value
+                continue
             if contribution.concept != "exam":
                 continue
             values = dict(_thaw_mapping(contribution.payload))
@@ -757,6 +959,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             for side in exam.breast_sides.values():
                 side.findings.sort(key=lambda finding: finding.identity)
         graph._resolve_images()
+        graph._resolve_rois()
         for issue in self.issues:
             graph._record_issue(issue)
 

@@ -47,6 +47,17 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "coordinate_frame_id": None,
             }
         ),
+        "rois": MappingProxyType(
+            {
+                "image_id": "anon_dicom_path",
+                "roi_key": None,
+                "coordinates": "ROI_coords",
+                "frame_indices": "ROI_frames",
+                "annotation_source": None,
+                "confidence": None,
+                "coordinate_frame_id": None,
+            }
+        ),
     }
 )
 
@@ -55,6 +66,7 @@ _REQUIRED = {
     "exams": frozenset({"accession"}),
     "findings": frozenset({"accession", "finding_number"}),
     "images": frozenset({"image_id"}),
+    "rois": frozenset({"image_id", "coordinates"}),
 }
 
 

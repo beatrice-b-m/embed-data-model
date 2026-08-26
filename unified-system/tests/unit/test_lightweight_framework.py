@@ -5,7 +5,14 @@ from datetime import date, datetime
 import pandas as pd
 import pytest
 
-from embed_toolkit import DatasetGraph, LoadError, MammogramImage, load_embed
+from embed_toolkit import (
+    Box,
+    DatasetGraph,
+    LoadError,
+    MammogramImage,
+    RegionOfInterest,
+    load_embed,
+)
 from embed_toolkit.adapters.tables import iter_records
 from embed_toolkit.core.source import CanonicalKey, SourceRef
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
@@ -438,3 +445,89 @@ def test_manual_image_construction_does_not_require_audit_provenance() -> None:
     assert image.sources == []
     with pytest.raises(ValueError, match="no source evidence"):
         _ = image.canonical_source
+
+
+def test_roi_table_loads_alone_with_image_scoped_identity() -> None:
+    report = load_embed(
+        rois=pd.DataFrame(
+            {
+                "anon_dicom_path": ["images/1.dcm"],
+                "ROI_coords": ["[10, 20, 19, 29]"],
+                "ROI_frames": ["[4, 5]"],
+            },
+            index=[44],
+        ),
+        source_scope="release-1",
+    )
+
+    roi = report.graph.rois[0]
+    assert roi.image_id == "images/1.dcm"
+    assert roi.coordinates == (10.0, 20.0, 20.0, 30.0)
+    assert roi.source_coordinates == (10.0, 20.0, 19.0, 29.0)
+    assert roi.frame_indices == (4, 5)
+    assert report.graph.images == ()
+    assert [reference.target_kind for reference in report.graph.unresolved_references] == [
+        "image"
+    ]
+
+
+def test_later_image_load_resolves_roi_without_replacing_canonical_roi() -> None:
+    graph = DatasetGraph(source_scope="release-1")
+    load_embed(
+        rois=[
+            {
+                "anon_dicom_path": "images/1.dcm",
+                "roi_id": "box-1",
+                "ROI_coords": [1, 2, 3, 4],
+            }
+        ],
+        columns={"rois": {"roi_key": "roi_id"}},
+        into=graph,
+    )
+    roi = graph.roi("images/1.dcm", "box-1")
+
+    load_embed(
+        images=[{"anon_dicom_path": "images/1.dcm"}],
+        into=graph,
+    )
+
+    image = graph.image("images/1.dcm")
+    assert graph.roi("images/1.dcm", "box-1") is roi
+    assert image.rois == [roi]
+    assert graph.unresolved_references == ()
+
+
+def test_conflicting_roi_geometry_is_visible_without_resolved_convenience() -> None:
+    report = load_embed(
+        rois=pd.DataFrame(
+            {
+                "anon_dicom_path": ["images/1.dcm", "images/1.dcm"],
+                "roi_id": ["box-1", "box-1"],
+                "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
+            },
+            index=[1, 2],
+        ),
+        columns={"rois": {"roi_key": "roi_id"}},
+        source_scope="release-1",
+    )
+
+    assert report.graph.roi("images/1.dcm", "box-1") is None
+    assert "conflicting_roi_field" in [issue.code for issue in report.issues]
+    assert any(
+        reference.reason == "conflicting_values"
+        for reference in report.graph.unresolved_references
+    )
+
+
+def test_manual_box_and_roi_do_not_require_source_provenance() -> None:
+    box = Box(1, 2, 11, 22)
+    roi = RegionOfInterest(
+        coordinates=box,
+        image_id="manual-image",
+        roi_key="manual-roi",
+    )
+
+    assert roi.identity == ("manual-image", "manual-roi")
+    assert roi.coordinates == box.as_tuple()
+    assert roi.sources == ()
+    assert roi.area == 200.0

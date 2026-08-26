@@ -7,7 +7,7 @@ from embed_toolkit.imaging.landmarks import (
     ImageLandmark,
     LandmarkType,
 )
-from embed_toolkit.imaging.rois import RegionOfInterest
+from embed_toolkit.imaging.rois import Box, RegionOfInterest
 from embed_toolkit.imaging.roi_groups import RoiGroup, singleton_roi_groups
 
 __all__ = [
@@ -17,6 +17,7 @@ __all__ = [
     "ImageLandmark",
     "LandmarkType",
     "MammogramImage",
+    "Box",
     "RegionOfInterest",
     "RoiGroup",
     "singleton_roi_groups",
