@@ -24,7 +24,7 @@ def test_built_wheel_imports_and_loads_outside_source_tree(tmp_path: Path) -> No
     wheel = next(wheel_dir.glob("*.whl"))
 
     environment = tmp_path / "environment"
-    venv.EnvBuilder(with_pip=True).create(environment)
+    venv.EnvBuilder(with_pip=True, system_site_packages=True).create(environment)
     scripts = "Scripts" if os.name == "nt" else "bin"
     python = environment / scripts / ("python.exe" if os.name == "nt" else "python")
     subprocess.run(
@@ -53,6 +53,14 @@ assert "site-packages" in Path(__import__("embed_toolkit").__file__).as_posix()
     subprocess.run(
         [str(python), "-c", code],
         cwd=tmp_path,
+        env=clean_environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [str(python), "-m", "examples.researcher_journeys"],
+        cwd=build_root,
         env=clean_environment,
         check=True,
         capture_output=True,
