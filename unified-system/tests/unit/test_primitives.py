@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from embed_toolkit.core import (
+from embed_toolkit.core.primitives import (
     FovHorizontalFlip,
     FovRotation,
     ImageModality,
@@ -116,4 +116,3 @@ def test_fov_horizontal_flip_coerce(
     expected: FovHorizontalFlip,
 ) -> None:
     assert FovHorizontalFlip.coerce(value) is expected
-

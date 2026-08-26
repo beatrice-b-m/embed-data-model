@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from embed_toolkit.core import (
+from embed_toolkit.core.anatomy import (
     ClockFacePosition,
     ContinuousAnatomicalPosition,
     DepthThird,
-    Laterality,
     MedialLateralAxis,
     Quadrant,
     SuperiorInferiorAxis,
 )
+from embed_toolkit.core.primitives import Laterality
 
 
 @pytest.mark.parametrize(
@@ -122,4 +122,3 @@ def test_continuous_position_quantizes_to_discrete_quadrant(
     ).to_quadrant()
 
     assert (quadrant.ml, quadrant.si, quadrant.depth) == expected
-

@@ -206,41 +206,34 @@ def test_all_unified_modules_import_without_legacy_runtime_dependencies() -> Non
                 )
 
 
-def test_foundation_exports_are_available_from_namespaces() -> None:
+def test_specialist_symbols_are_available_from_focused_modules() -> None:
     with new_src_imports():
         package = importlib.import_module("embed_toolkit")
-        clinical = importlib.import_module("embed_toolkit.clinical")
-        core = importlib.import_module("embed_toolkit.core")
+        attributes = importlib.import_module("embed_toolkit.clinical.attributes")
+        findings = importlib.import_module("embed_toolkit.clinical.findings")
+        histories = importlib.import_module("embed_toolkit.clinical.histories")
+        pathology = importlib.import_module("embed_toolkit.clinical.pathology")
+        birads = importlib.import_module("embed_toolkit.core.birads")
+        primitives = importlib.import_module("embed_toolkit.core.primitives")
         provenance = importlib.import_module("embed_toolkit.core.provenance")
-        imaging = importlib.import_module("embed_toolkit.imaging")
+        images = importlib.import_module("embed_toolkit.imaging.images")
+        rois = importlib.import_module("embed_toolkit.imaging.rois")
         roi_provenance = importlib.import_module(
             "embed_toolkit.imaging.roi_provenance"
         )
 
     assert package.DatasetGraph
     assert package.load_embed
-    assert clinical.Finding
-    assert clinical.FindingNormalizationEvidence
-    assert clinical.FindingNormalizationWarning
-    assert clinical.ExamAttributeName
-    assert clinical.ExamAttributeObservation
-    assert clinical.ImagingInterpretation
-    assert clinical.HistoryTimeEstimate
-    assert clinical.MedicationHistoryObservation
-    assert clinical.PathologyObservation
-    assert clinical.PathologyDiagnosis
-    assert clinical.PathologyAttributionLink
-    assert clinical.PatientAttributeAsOfPolicy
-    assert clinical.PatientAttributeName
-    assert clinical.PatientAttributeObservation
-    assert clinical.PatientAttributeSelection
-    assert clinical.PatientHistoryObservation
-    assert clinical.PatientObservationTimeBasis
-    assert clinical.UndatedObservationPolicy
-    assert clinical.ProcedureHistoryObservation
-    assert clinical.select_patient_attribute_as_of
-    assert core.MassShape.LOBULATED.value == "lobulated"
-    assert imaging.MammogramImage
+    assert findings.Finding
+    assert findings.FindingNormalizationEvidence
+    assert histories.HistoryTimeEstimate
+    assert histories.MedicationHistoryObservation
+    assert pathology.PathologyObservation
+    assert pathology.PathologyDiagnosis
+    assert attributes.ExamAttributeObservation
+    assert attributes.PatientAttributeObservation
+    assert birads.MassShape.LOBULATED.value == "lobulated"
+    assert images.MammogramImage
     image_source = provenance.SourceLocator(
         scope="import-smoke",
         scope_kind=provenance.SourceScopeKind.MATERIALIZATION,
@@ -249,7 +242,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         row_ordinal=0,
     )
     roi_source = roi_provenance.RoiSourceProvenance(
-        modality=core.ImageModality.FFDM,
+        modality=primitives.ImageModality.FFDM,
         source_count=roi_provenance.RoiSourceCount(
             1,
             roi_provenance.RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
@@ -258,7 +251,7 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
             roi_provenance.RoiDepthFrameProvenance.NOT_APPLICABLE_2D
         ),
     )
-    assert imaging.RegionOfInterest(
+    assert rois.RegionOfInterest(
         (0, 0, 1, 1),
         locator=roi_provenance.RoiLocator.synthetic(
             image_locator=image_source,
