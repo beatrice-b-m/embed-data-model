@@ -53,6 +53,20 @@ for patient in report.graph.patients:
 Other optional inputs are `findings`, `hormone_history`, `procedure_history`,
 `procedures`, `pathology`, and the wide `magview` convenience table.
 
+The common wide MagView plus image-metadata path is equally direct:
+
+```python
+report = load_embed(
+    magview=magview_df.loc[selected_findings],
+    images=image_metadata_df.loc[selected_images],
+    source_scope="analysis-cohort-7",
+    identity_namespace="embed-release-2",
+)
+
+for issue in report.issues:
+    print(issue.code, issue.source)
+```
+
 ## Enrich one graph incrementally
 
 Loads can arrive in any order. Use `into=` to preserve canonical object
