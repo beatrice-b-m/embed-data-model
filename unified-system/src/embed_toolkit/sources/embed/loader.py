@@ -11,7 +11,7 @@ from math import isfinite
 from numbers import Integral, Real
 from typing import Any, Callable, Iterator, Mapping, Optional, Union
 
-from embed_toolkit.adapters.tables import (
+from embed_toolkit.core.tables import (
     TableNormalizationError,
     TableRecord,
     iter_records,
@@ -31,7 +31,7 @@ from embed_toolkit.sources.embed.histories import (
     normalize_medication_history,
     normalize_procedure_history,
 )
-from embed_toolkit.adapters.magview import normalize_magview_location
+from embed_toolkit.sources.embed.magview import normalize_magview_location
 from embed_toolkit.sources.embed.procedures_pathology import (
     normalize_pathology,
     normalize_procedure,

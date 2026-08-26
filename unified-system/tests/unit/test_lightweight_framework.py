@@ -13,7 +13,7 @@ from embed_toolkit import (
     RegionOfInterest,
     load_embed,
 )
-from embed_toolkit.adapters.tables import iter_records
+from embed_toolkit.core.tables import iter_records
 from embed_toolkit.clinical.attributes import (
     PatientAttributeAsOfPolicy,
     PatientAttributeName,
