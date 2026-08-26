@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from embed_toolkit.adapters.magview import normalize_magview_location
+from embed_toolkit.sources.embed.magview import normalize_magview_location
 from embed_toolkit.core.anatomy import (
     AnatomicalLocationCategory,
     DepthThird,

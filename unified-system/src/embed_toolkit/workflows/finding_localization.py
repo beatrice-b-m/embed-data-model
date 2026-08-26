@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
-from embed_toolkit.adapters.magview import normalize_magview_location
+from embed_toolkit.sources.embed.magview import normalize_magview_location
 from embed_toolkit.audit.evidence import AuditWarning, Evidence
 from embed_toolkit.audit.results import LocalizationResult, ResultStatus
 from embed_toolkit.clinical.findings import Finding
