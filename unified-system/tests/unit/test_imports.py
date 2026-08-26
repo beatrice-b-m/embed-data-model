@@ -255,7 +255,4 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         sources=(image_source,),
     ).area == 1
     assert visualization.build_mammogram_render_plan
-    assert workflows.FindingLocalizer
-    assert workflows.FindingRoiMatcher
-    assert workflows.RoiLocalizer
     assert workflows.extract_patch

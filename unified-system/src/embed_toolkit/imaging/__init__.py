@@ -8,7 +8,6 @@ from embed_toolkit.imaging.landmarks import (
     LandmarkType,
 )
 from embed_toolkit.imaging.rois import Box, RegionOfInterest
-from embed_toolkit.imaging.roi_groups import RoiGroup, singleton_roi_groups
 
 __all__ = [
     "Alignment",
@@ -19,6 +18,4 @@ __all__ = [
     "MammogramImage",
     "Box",
     "RegionOfInterest",
-    "RoiGroup",
-    "singleton_roi_groups",
 ]
