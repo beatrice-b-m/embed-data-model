@@ -11,7 +11,6 @@ from embed_toolkit.clinical.attributes import (
     UndatedObservationPolicy,
     select_patient_attribute_as_of,
 )
-from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import (
     Finding,
@@ -37,7 +36,6 @@ from embed_toolkit.clinical.procedures import Procedure
 
 __all__ = [
     "BreastSide",
-    "Cohort",
     "Exam",
     "ExamAttributeName",
     "ExamAttributeObservation",

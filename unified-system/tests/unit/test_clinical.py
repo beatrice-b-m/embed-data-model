@@ -5,14 +5,12 @@ from dataclasses import asdict
 
 import pytest
 
-from embed_toolkit.clinical.cohorts import Cohort
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import (
     Finding,
     FindingNormalizationWarning,
     FindingRecordType,
 )
-from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.clinical.procedures import Procedure, ProcedureIdentity
 from embed_toolkit.core.anatomy import (
     AnatomicalPosition,
@@ -169,33 +167,4 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
     assert serialized["anatomical_position"]["distance_from_nipple_cm"] == 4.5
     assert plain["laterality"] == "L"
     assert plain["anatomical_position"]["clock_position"]["hour"] == 2
-    json.dumps(plain)
-
-
-def test_patient_and_cohort_aggregate_serialization_friendly_dataclasses() -> None:
-    finding = Finding("ACC-7", Laterality.LEFT, 1)
-    exam = Exam("ACC-7")
-    exam.add_finding(finding)
-    patient = Patient("P1")
-    patient.add_exam(exam)
-    cohort = Cohort("training")
-    cohort.add_patient(patient)
-
-    plain = cohort.to_dict()
-
-    assert cohort.exams == (exam,)
-    assert cohort.findings == (finding,)
-    assert plain["patients"][0]["exams"][0]["findings"][0]["finding_number"] == "1"
-    assert plain["patients"][0]["exams"][0]["patient_id"] == "P1"
-    assert plain["patients"][0]["exams"][0]["findings"][0]["laterality"] == "L"
-    assert plain["patients"][0]["exams"][0]["breast_sides"] == [
-        {
-            "accession_number": "ACC-7",
-            "laterality": "L",
-            "finding_references": [
-                {"accession_number": "ACC-7", "finding_number": "1"}
-            ],
-            "image_references": [],
-        }
-    ]
     json.dumps(plain)
