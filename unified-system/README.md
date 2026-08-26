@@ -1,10 +1,11 @@
 # Unified EMBED Toolkit
 
 This directory contains the repository's only retained runtime implementation.
-The governing implementation contract is the
-[clinical object model resolution plan](../docs/clinical-object-model-resolution-plan.md),
-with current verification and resolution evidence in the addendum at the top
-of the [clinical object model evaluation](../docs/clinical-object-model-evaluation.md).
+The governing recovery contract is the
+[lightweight framework architecture review](../docs/lightweight-framework-architecture-review.md).
+The canonical graph migration is being delivered as vertical slices; the
+Patient/Exam and table-normalization slice described in Phase 2 is available
+through the package root.
 
 The [unified-system plan](../docs/unified-system-plan.md) is a historical
 architecture plan. It explains the system's origin but does not supersede the
@@ -17,8 +18,46 @@ Install or run tools from this directory so imports resolve to
 `unified-system/src/embed_toolkit`.
 
 ```bash
-python -m pytest
+uv run pytest
 ```
+
+## Load patients and exams
+
+`load_embed` accepts pandas DataFrames directly without making pandas a runtime
+dependency. Every table is optional, filtered DataFrame indices are retained as
+source keys, and per-table column overrides are partial:
+
+```python
+from embed_toolkit import load_embed
+
+report = load_embed(
+    patients=patient_df,
+    exams=exam_df,
+    source_scope="curation-2026-08",
+    identity_namespace="embed-release-2",
+    columns={"patients": {"patient_id": "custom_patient_id"}},
+)
+
+patient = report.graph.patient("P-456")
+exam = report.graph.exam("ACC-123")
+
+for issue in report.issues:
+    print(issue.code, issue.source)
+```
+
+The same graph can be enriched in any order. Image-derived and other grains
+will move onto this transaction surface in later vertical slices:
+
+```python
+from embed_toolkit import DatasetGraph, load_embed
+
+graph = DatasetGraph(identity_namespace="embed-release-2")
+load_embed(exams=exam_df, into=graph)
+load_embed(patients=patient_df, into=graph)
+```
+
+Ordinary audit mode commits independently safe rows and reports rejected rows.
+Use `mode="strict"` when any error should roll back the entire invocation.
 
 ## Construction policy
 
