@@ -247,6 +247,38 @@ class Issue:
         }
 
 
+@dataclass(frozen=True)
+class UnresolvedReference:
+    """A relationship whose target is absent or conflicts with canonical state."""
+
+    source_kind: str
+    source_id: str
+    target_kind: str
+    target_id: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        for attribute in (
+            "source_kind",
+            "source_id",
+            "target_kind",
+            "target_id",
+            "reason",
+        ):
+            value = getattr(self, attribute)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{attribute} must be a non-empty string")
+
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "source_kind": self.source_kind,
+            "source_id": self.source_id,
+            "target_kind": self.target_kind,
+            "target_id": self.target_id,
+            "reason": self.reason,
+        }
+
+
 def _freeze_value(value: Any) -> Tuple[Any, ...]:
     if isinstance(value, Mapping):
         return (

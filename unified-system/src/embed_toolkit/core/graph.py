@@ -13,8 +13,14 @@ from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.patients import Patient
-from embed_toolkit.core.primitives import Laterality
-from embed_toolkit.core.source import Issue, IssueSeverity, SourceRef
+from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.source import (
+    Issue,
+    IssueSeverity,
+    SourceRef,
+    UnresolvedReference,
+)
+from embed_toolkit.imaging.images import MammogramImage
 
 
 class LoadError(ValueError):
@@ -56,6 +62,7 @@ class DatasetGraph:
         self._patients: Dict[str, Patient] = {}
         self._exams: Dict[str, Exam] = {}
         self._findings: Dict[Tuple[str, str], Finding] = {}
+        self._images: Dict[str, MammogramImage] = {}
         self._contributions: Dict[Tuple[SourceRef, str, str], _Contribution] = {}
         self._issues: list[Issue] = []
         self._issue_fingerprints: set[Tuple[Any, ...]] = set()
@@ -65,6 +72,10 @@ class DatasetGraph:
         self._finding_observations: DefaultDict[
             Tuple[str, str], DefaultDict[str, Dict[SourceRef, Any]]
         ] = defaultdict(lambda: defaultdict(dict))
+        self._image_observations: DefaultDict[
+            str, DefaultDict[str, Dict[SourceRef, Any]]
+        ] = defaultdict(lambda: defaultdict(dict))
+        self._unresolved_references: Tuple[UnresolvedReference, ...] = ()
 
     @property
     def identity_namespace(self) -> str:
@@ -98,6 +109,16 @@ class DatasetGraph:
 
         return tuple(self._findings[key] for key in sorted(self._findings))
 
+    @property
+    def images(self) -> Tuple[MammogramImage, ...]:
+        """Return images ordered by their governed image key."""
+
+        return tuple(self._images[key] for key in sorted(self._images))
+
+    @property
+    def unresolved_references(self) -> Tuple[UnresolvedReference, ...]:
+        return self._unresolved_references
+
     def patient(self, patient_id: str) -> Optional[Patient]:
         return self._patients.get(patient_id)
 
@@ -106,6 +127,9 @@ class DatasetGraph:
 
     def finding(self, accession: str, finding_number: str) -> Optional[Finding]:
         return self._findings.get((accession, str(finding_number)))
+
+    def image(self, image_id: str) -> Optional[MammogramImage]:
+        return self._images.get(image_id)
 
     def transaction(self, mode: str = "audit") -> "GraphTransaction":
         """Open the only supported mutation surface for this graph."""
@@ -181,6 +205,103 @@ class DatasetGraph:
             if owned.findings or owned.images
         }
 
+    def _resolve_images(self) -> None:
+        unresolved: set[UnresolvedReference] = set()
+        for exam in self._exams.values():
+            exam.images.clear()
+            for side in exam.breast_sides.values():
+                side.images.clear()
+
+        for image_id in sorted(self._images):
+            image = self._images[image_id]
+            observations = self._image_observations[image_id]
+            image.sources = sorted(
+                set().union(*(set(values) for values in observations.values())),
+                key=lambda source: repr(source.to_dict()),
+            )
+            image.patient_id = _one_value_or_none(observations["patient_id"].values())
+            image.accession_number = _one_value_or_none(
+                observations["accession"].values()
+            )
+            image.laterality = _one_enum_or_unknown(
+                observations["laterality"].values(), Laterality.UNKNOWN
+            )
+            image.view_position = _one_enum_or_unknown(
+                observations["view_position"].values(), ViewPosition.UNKNOWN
+            )
+            image.modality = _one_enum_or_unknown(
+                observations["modality"].values(), ImageModality.UNKNOWN
+            )
+            for field in (
+                "source_modality",
+                "derived_image_type",
+                "height",
+                "width",
+                "frame_count",
+                "study_instance_uid",
+                "series_instance_uid",
+                "sop_instance_uid",
+                "coordinate_frame_id",
+            ):
+                setattr(image, field, _one_value_or_none(observations[field].values()))
+
+            if image.patient_id is not None and image.patient_id not in self._patients:
+                unresolved.add(
+                    UnresolvedReference(
+                        "image", image_id, "patient", image.patient_id, "missing_target"
+                    )
+                )
+            if image.accession_number is None:
+                continue
+            exam = self._exams.get(image.accession_number)
+            if exam is None:
+                unresolved.add(
+                    UnresolvedReference(
+                        "image",
+                        image_id,
+                        "exam",
+                        image.accession_number,
+                        "missing_target",
+                    )
+                )
+                continue
+            if (
+                image.patient_id is not None
+                and exam.patient_id is not None
+                and image.patient_id != exam.patient_id
+            ):
+                unresolved.add(
+                    UnresolvedReference(
+                        "image",
+                        image_id,
+                        "exam",
+                        image.accession_number,
+                        "conflicting_patient",
+                    )
+                )
+                continue
+            exam.add_image(image)
+
+        for exam in self._exams.values():
+            exam.images.sort(key=lambda image: image.image_id)
+            exam.breast_sides = {
+                side: owned
+                for side, owned in exam.breast_sides.items()
+                if owned.findings or owned.images
+            }
+        self._unresolved_references = tuple(
+            sorted(
+                unresolved,
+                key=lambda item: (
+                    item.source_kind,
+                    item.source_id,
+                    item.target_kind,
+                    item.target_id,
+                    item.reason,
+                ),
+            )
+        )
+
 
 class GraphTransaction(AbstractContextManager["GraphTransaction"]):
     """Invocation-scoped staging area with strict rollback semantics."""
@@ -196,6 +317,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         self._patient_nodes: Dict[str, Patient] = {}
         self._exam_nodes: Dict[str, Exam] = {}
         self._finding_nodes: Dict[Tuple[str, str], Finding] = {}
+        self._image_nodes: Dict[str, MammogramImage] = {}
         self._closed = False
 
     def __enter__(self) -> "GraphTransaction":
@@ -415,6 +537,119 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 values.add(value)
         return values
 
+    def upsert_image(
+        self,
+        image_id: str,
+        source: SourceRef,
+        *,
+        patient_id: Optional[str] = None,
+        accession: Optional[str] = None,
+        laterality: Laterality = Laterality.UNKNOWN,
+        view_position: ViewPosition = ViewPosition.UNKNOWN,
+        modality: ImageModality = ImageModality.UNKNOWN,
+        source_modality: Optional[str] = None,
+        derived_image_type: Optional[str] = None,
+        height: Optional[int] = None,
+        width: Optional[int] = None,
+        frame_count: Optional[int] = None,
+        study_instance_uid: Optional[str] = None,
+        series_instance_uid: Optional[str] = None,
+        sop_instance_uid: Optional[str] = None,
+        coordinate_frame_id: Optional[str] = None,
+        values: Optional[Mapping[str, Any]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> MammogramImage:
+        """Stage one image without manufacturing referenced clinical nodes."""
+
+        _require_open(self)
+        _require_identifier(image_id, "image_id")
+        side = Laterality.coerce(laterality)
+        view = ViewPosition.coerce(view_position)
+        image_modality = ImageModality.coerce(modality)
+        normalized = values or {
+            "image_id": image_id,
+            "patient_id": patient_id,
+            "accession": accession,
+            "laterality": side.value,
+            "view_position": view.value,
+            "modality": image_modality.value,
+            "source_modality": source_modality,
+            "derived_image_type": derived_image_type,
+            "height": height,
+            "width": width,
+            "frame_count": frame_count,
+            "study_instance_uid": study_instance_uid,
+            "series_instance_uid": series_instance_uid,
+            "sop_instance_uid": sop_instance_uid,
+            "coordinate_frame_id": coordinate_frame_id,
+        }
+        contribution = _Contribution(
+            source=source,
+            concept="image",
+            slot="",
+            entity_id=image_id,
+            payload=_freeze(normalized),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph.image(image_id) or MammogramImage(
+                image_id, side, view, sources=[source]
+            )
+        for field, value in normalized.items():
+            if field == "image_id" or value is None or value == "UNKNOWN":
+                continue
+            observed = self._observed_image_values(image_id, field)
+            comparison = (
+                Laterality.coerce(value)
+                if field == "laterality"
+                else ViewPosition.coerce(value)
+                if field == "view_position"
+                else ImageModality.coerce(value)
+                if field == "modality"
+                else value
+            )
+            if observed - {comparison}:
+                self.add_issue(
+                    Issue(
+                        code="conflicting_image_field",
+                        message=f"one image has conflicting populated values for {field}",
+                        source=source,
+                        context={
+                            "image_id": image_id,
+                            "field": field,
+                            "observed_values": sorted(
+                                str(item) for item in observed | {comparison}
+                            ),
+                        },
+                    )
+                )
+        image = self.graph.image(image_id)
+        if image is None:
+            image = self._image_nodes.setdefault(
+                image_id, MammogramImage(image_id, side, view, sources=[source])
+            )
+        return image
+
+    def _observed_image_values(self, image_id: str, field: str) -> set[Any]:
+        values = {
+            value
+            for value in self.graph._image_observations[image_id][field].values()
+            if value is not None and getattr(value, "value", value) != "UNKNOWN"
+        }
+        for contribution in self._pending.values():
+            if contribution.concept != "image" or contribution.entity_id != image_id:
+                continue
+            value = dict(_thaw_mapping(contribution.payload)).get(field)
+            if field == "laterality":
+                value = Laterality.coerce(value)
+            elif field == "view_position":
+                value = ViewPosition.coerce(value)
+            elif field == "modality":
+                value = ImageModality.coerce(value)
+            if value is not None and getattr(value, "value", value) != "UNKNOWN":
+                values.add(value)
+        return values
+
     def _observed_exam_values(self, accession: str, field: str) -> set[Any]:
         values = {
             value
@@ -463,6 +698,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             graph._exams.setdefault(accession, exam)
         for identity, finding in self._finding_nodes.items():
             graph._findings.setdefault(identity, finding)
+        for image_id, image in self._image_nodes.items():
+            graph._images.setdefault(image_id, image)
 
         touched_exams: set[str] = set()
         touched_findings: set[Tuple[str, str]] = set()
@@ -478,6 +715,20 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 for field in ("finding_type", "assessment", "recommendation"):
                     observations[field][contribution.source] = values.get(field)
                 touched_findings.add(identity)
+                continue
+            if contribution.concept == "image":
+                values = dict(_thaw_mapping(contribution.payload))
+                observations = graph._image_observations[contribution.entity_id]
+                for field, value in values.items():
+                    if field == "image_id":
+                        continue
+                    if field == "laterality":
+                        value = Laterality.coerce(value)
+                    elif field == "view_position":
+                        value = ViewPosition.coerce(value)
+                    elif field == "modality":
+                        value = ImageModality.coerce(value)
+                    observations[field][contribution.source] = value
                 continue
             if contribution.concept != "exam":
                 continue
@@ -505,6 +756,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             exam.findings.sort(key=lambda finding: finding.identity)
             for side in exam.breast_sides.values():
                 side.findings.sort(key=lambda finding: finding.identity)
+        graph._resolve_images()
         for issue in self.issues:
             graph._record_issue(issue)
 
@@ -530,6 +782,11 @@ def _require_open(transaction: GraphTransaction) -> None:
 def _one_value_or_none(values: Any) -> Any:
     populated = {value for value in values if value is not None}
     return next(iter(populated)) if len(populated) == 1 else None
+
+
+def _one_enum_or_unknown(values: Any, unknown: Any) -> Any:
+    populated = {value for value in values if value is not unknown}
+    return next(iter(populated)) if len(populated) == 1 else unknown
 
 
 def _freeze(value: Any) -> Tuple[Any, ...]:

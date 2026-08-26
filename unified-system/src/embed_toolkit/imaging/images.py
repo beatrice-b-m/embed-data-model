@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
 from embed_toolkit.core.provenance import SourceLocator
+from embed_toolkit.core.source import SourceRef
 from embed_toolkit.core.primitives import (
     ImageModality,
     Laterality,
@@ -22,7 +23,7 @@ class MammogramImage:
     image_id: str
     laterality: Laterality
     view_position: ViewPosition
-    sources: List[SourceLocator]
+    sources: List[object] = field(default_factory=list)
     modality: ImageModality = ImageModality.UNKNOWN
     source_modality: Optional[str] = None
     derived_image_type: Optional[str] = None
@@ -37,24 +38,27 @@ class MammogramImage:
     patient_orientation: Optional[PatientOrientation] = None
     coordinate_frame_id: Optional[str] = None
     landmarks: Tuple[ImageLandmark, ...] = field(default_factory=tuple)
-    attribute_sources: Dict[str, SourceLocator] = field(default_factory=dict)
+    attribute_sources: Dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.image_id, str) or not self.image_id.strip():
             raise ValueError("image_id must be a non-empty string")
         self.sources = list(self.sources)
-        if not self.sources:
-            raise ValueError("sources must contain at least one SourceLocator")
-        if any(not isinstance(source, SourceLocator) for source in self.sources):
-            raise TypeError("sources must contain only SourceLocator values")
+        if any(
+            not isinstance(source, (SourceLocator, SourceRef))
+            for source in self.sources
+        ):
+            raise TypeError("sources must contain SourceRef or SourceLocator values")
         if len(set(self.sources)) != len(self.sources):
             raise ValueError("sources must contain unique SourceLocator values")
         self.attribute_sources = dict(self.attribute_sources)
         for attribute, source in self.attribute_sources.items():
             if not isinstance(attribute, str) or not attribute.strip():
                 raise ValueError("attribute_sources keys must be non-empty strings")
-            if not isinstance(source, SourceLocator):
-                raise TypeError("attribute_sources values must be SourceLocator values")
+            if not isinstance(source, (SourceLocator, SourceRef)):
+                raise TypeError(
+                    "attribute_sources values must be SourceRef or SourceLocator values"
+                )
             if source not in self.sources:
                 raise ValueError("attribute_sources locators must occur in sources")
         self.laterality = Laterality.coerce(self.laterality)
@@ -100,19 +104,21 @@ class MammogramImage:
         )
 
     @property
-    def canonical_source(self) -> SourceLocator:
+    def canonical_source(self) -> object:
         """Return the deterministic source locator governing image scope."""
 
+        if not self.sources:
+            raise ValueError("this manually constructed image has no source evidence")
         return self.sources[0]
 
-    def add_source(self, source: SourceLocator) -> SourceLocator:
-        if not isinstance(source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+    def add_source(self, source: object) -> object:
+        if not isinstance(source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
         if source not in self.sources:
             self.sources.append(source)
         return source
 
-    def source_for(self, attribute: str) -> SourceLocator:
+    def source_for(self, attribute: str) -> object:
         """Return evidence for an attribute, falling back to object evidence."""
 
         if not isinstance(attribute, str) or not attribute.strip():

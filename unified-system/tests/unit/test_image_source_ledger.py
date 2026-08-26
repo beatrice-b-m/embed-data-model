@@ -451,7 +451,7 @@ def test_image_tables_reject_roi_modality_and_frame_bound_mismatches() -> None:
         replace(dbt, rois=(replace(dbt_roi, source_provenance=out_of_range),))
 
 
-def test_image_source_contract_is_required_unique_and_copy_preserved() -> None:
+def test_image_source_contract_is_optional_unique_and_copy_preserved() -> None:
     tables = build_image_tables([row()], source_scope="image-materialization")
     image = tables.images[0]
     copied = image.with_landmark(
@@ -461,14 +461,10 @@ def test_image_source_contract_is_required_unique_and_copy_preserved() -> None:
     assert copied.sources == image.sources
     assert copied.sources is not image.sources
     assert copied.canonical_source == image.canonical_source
-    with pytest.raises(TypeError):
-        MammogramImage(  # type: ignore[call-arg]
-            "missing",
-            Laterality.LEFT,
-            ViewPosition.CC,
-        )
-    with pytest.raises(ValueError, match="at least one"):
-        MammogramImage("empty", Laterality.LEFT, ViewPosition.CC, [])
+    manual = MammogramImage("manual", Laterality.LEFT, ViewPosition.CC)
+    assert manual.sources == []
+    with pytest.raises(ValueError, match="no source evidence"):
+        _ = manual.canonical_source
     with pytest.raises(ValueError, match="unique"):
         MammogramImage(
             "duplicate",

@@ -5,10 +5,10 @@ from datetime import date, datetime
 import pandas as pd
 import pytest
 
-from embed_toolkit import DatasetGraph, LoadError, load_embed
+from embed_toolkit import DatasetGraph, LoadError, MammogramImage, load_embed
 from embed_toolkit.adapters.tables import iter_records
 from embed_toolkit.core.source import CanonicalKey, SourceRef
-from embed_toolkit.core.primitives import Laterality
+from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 
 
 def test_source_keys_are_typed_and_round_trip() -> None:
@@ -341,3 +341,100 @@ def test_finding_load_enriches_existing_canonical_exam_and_patient() -> None:
     assert graph.exam("A-1") is exam
     assert graph.patient("P-1").exams == [exam]
     assert exam.findings == [graph.finding("A-1", "1")]
+
+
+def test_image_table_loads_alone_without_manufacturing_clinical_nodes() -> None:
+    report = load_embed(
+        images=pd.DataFrame(
+            {
+                "anon_dicom_path": ["images/1.dcm"],
+                "empi_anon": ["P-1"],
+                "acc_anon": ["A-1"],
+                "ImageLateralityFinal": ["L"],
+                "ViewPosition": ["CC"],
+                "Modality": ["DBT"],
+                "Rows": [2048],
+                "Columns": [1664],
+                "ImagesInAcquisition": [50],
+            },
+            index=[91],
+        ),
+        source_scope="release-1",
+    )
+
+    image = report.graph.image("images/1.dcm")
+    assert image is not None
+    assert image.modality is ImageModality.DBT
+    assert image.image_shape == (2048, 1664)
+    assert report.graph.patients == report.graph.exams == ()
+    assert {
+        (reference.target_kind, reference.target_id, reference.reason)
+        for reference in report.graph.unresolved_references
+    } == {
+        ("patient", "P-1", "missing_target"),
+        ("exam", "A-1", "missing_target"),
+    }
+
+
+def test_clinical_load_resolves_image_edges_onto_same_canonical_graph() -> None:
+    graph = DatasetGraph(source_scope="release-1")
+    load_embed(
+        images=[
+            {
+                "anon_dicom_path": "images/1.dcm",
+                "empi_anon": "P-1",
+                "acc_anon": "A-1",
+                "ImageLateralityFinal": "R",
+                "ViewPosition": "MLO",
+            }
+        ],
+        into=graph,
+    )
+    image = graph.image("images/1.dcm")
+
+    load_embed(
+        patients=[{"empi_anon": "P-1"}],
+        exams=[{"acc_anon": "A-1", "empi_anon": "P-1"}],
+        into=graph,
+    )
+
+    exam = graph.exam("A-1")
+    assert graph.image("images/1.dcm") is image
+    assert exam.images == [image]
+    assert exam.breast_sides[Laterality.RIGHT].images == [image]
+    assert graph.patient("P-1").exams == [exam]
+    assert graph.unresolved_references == ()
+
+
+def test_image_patient_conflict_remains_unresolved_and_unattached() -> None:
+    report = load_embed(
+        patients=[{"empi_anon": "P-1"}, {"empi_anon": "P-2"}],
+        exams=[{"acc_anon": "A-1", "empi_anon": "P-1"}],
+        images=[
+            {
+                "anon_dicom_path": "images/1.dcm",
+                "acc_anon": "A-1",
+                "empi_anon": "P-2",
+            }
+        ],
+        source_keys={
+            "patients": lambda row: row["empi_anon"],
+        },
+    )
+
+    assert report.graph.exam("A-1").images == []
+    assert [reference.reason for reference in report.graph.unresolved_references] == [
+        "conflicting_patient"
+    ]
+
+
+def test_manual_image_construction_does_not_require_audit_provenance() -> None:
+    image = MammogramImage(
+        image_id="manual-1",
+        laterality=Laterality.LEFT,
+        view_position=ViewPosition.CC,
+    )
+
+    assert image.sources == []
+    with pytest.raises(ValueError, match="no source evidence"):
+        _ = image.canonical_source

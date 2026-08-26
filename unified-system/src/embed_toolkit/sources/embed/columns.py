@@ -29,6 +29,24 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "recommendation": "recc",
             }
         ),
+        "images": MappingProxyType(
+            {
+                "image_id": "anon_dicom_path",
+                "patient_id": "empi_anon",
+                "accession": "acc_anon",
+                "laterality": "ImageLateralityFinal",
+                "view_position": "ViewPosition",
+                "modality": "Modality",
+                "derived_image_type": "FinalImageType",
+                "height": "Rows",
+                "width": "Columns",
+                "frame_count": "ImagesInAcquisition",
+                "study_instance_uid": None,
+                "series_instance_uid": "SeriesInstanceUID",
+                "sop_instance_uid": "anon_dicom_path",
+                "coordinate_frame_id": None,
+            }
+        ),
     }
 )
 
@@ -36,6 +54,7 @@ _REQUIRED = {
     "patients": frozenset({"patient_id"}),
     "exams": frozenset({"accession"}),
     "findings": frozenset({"accession", "finding_number"}),
+    "images": frozenset({"image_id"}),
 }
 
 

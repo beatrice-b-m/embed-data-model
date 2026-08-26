@@ -13,7 +13,7 @@ from embed_toolkit.adapters.tables import (
     iter_records,
 )
 from embed_toolkit.core.graph import DatasetGraph
-from embed_toolkit.core.primitives import Laterality
+from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.source import Issue, SourceRef
 from embed_toolkit.sources.embed.columns import resolve_columns
 
@@ -35,6 +35,7 @@ def load_embed(
     patients: Any = None,
     exams: Any = None,
     findings: Any = None,
+    images: Any = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
@@ -108,6 +109,14 @@ def load_embed(
             columns=column_maps["findings"],
             retain_raw=retain_raw,
         )
+        _load_images(
+            images,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["images"],
+            columns=column_maps["images"],
+            retain_raw=retain_raw,
+        )
 
     return LoadReport(
         graph=graph,
@@ -123,6 +132,7 @@ def _resolve_source_keys(
         "patients": None,
         "exams": None,
         "findings": None,
+        "images": None,
     }
     if source_keys is None:
         return resolved
@@ -310,6 +320,112 @@ def _load_findings(
         )
 
 
+def _load_images(
+    table: Any,
+    *,
+    transaction: Any,
+    source_scope: str,
+    source_key: Optional[SourceKeySelector],
+    columns: Mapping[str, Optional[str]],
+    retain_raw: bool,
+) -> None:
+    image_column = columns["image_id"]
+    assert image_column is not None
+    for record in _table_records(table, source_key, "images", transaction):
+        source = _record_source(record, source_scope, "images")
+        if not _add_table_issues(record, source, transaction):
+            continue
+        raw_image_id = record.mapping.get(image_column)
+        image_id = _normalize_identifier(raw_image_id)
+        if image_id is None:
+            transaction.add_issue(
+                _identity_issue("image_id", raw_image_id, source, image_column)
+            )
+            continue
+        patient_id = _mapped_identifier(record.mapping, columns["patient_id"])
+        accession = _mapped_identifier(record.mapping, columns["accession"])
+        raw_laterality = _mapped_value(record.mapping, columns["laterality"])
+        raw_view = _mapped_value(record.mapping, columns["view_position"])
+        laterality = Laterality.coerce(raw_laterality)
+        view_position = ViewPosition.coerce(raw_view)
+        source_modality = _mapped_text(record.mapping, columns["modality"])
+        derived_image_type = _mapped_text(
+            record.mapping, columns["derived_image_type"]
+        )
+        modality = ImageModality.coerce(source_modality)
+        if modality is ImageModality.UNKNOWN:
+            modality = ImageModality.coerce(derived_image_type)
+        for semantic, raw_value, normalized in (
+            ("laterality", raw_laterality, laterality),
+            ("view_position", raw_view, view_position),
+        ):
+            if not _is_missing(raw_value) and normalized.value == "UNKNOWN":
+                transaction.add_issue(
+                    Issue(
+                        code=f"unsupported_image_{semantic}",
+                        message=f"image {semantic} was retained as unknown",
+                        severity="warning",
+                        source=source,
+                        context={"value": raw_value},
+                    )
+                )
+        values = {
+            "image_id": image_id,
+            "patient_id": patient_id,
+            "accession": accession,
+            "laterality": laterality.value,
+            "view_position": view_position.value,
+            "modality": modality.value,
+            "source_modality": source_modality,
+            "derived_image_type": derived_image_type,
+            "height": _mapped_positive_int(
+                record.mapping, columns["height"], "height", source, transaction
+            ),
+            "width": _mapped_positive_int(
+                record.mapping, columns["width"], "width", source, transaction
+            ),
+            "frame_count": _mapped_positive_int(
+                record.mapping,
+                columns["frame_count"],
+                "frame_count",
+                source,
+                transaction,
+            ),
+            "study_instance_uid": _mapped_text(
+                record.mapping, columns["study_instance_uid"]
+            ),
+            "series_instance_uid": _mapped_text(
+                record.mapping, columns["series_instance_uid"]
+            ),
+            "sop_instance_uid": _mapped_text(
+                record.mapping, columns["sop_instance_uid"]
+            ),
+            "coordinate_frame_id": _mapped_text(
+                record.mapping, columns["coordinate_frame_id"]
+            ),
+        }
+        transaction.upsert_image(
+            image_id,
+            source,
+            patient_id=patient_id,
+            accession=accession,
+            laterality=laterality,
+            view_position=view_position,
+            modality=modality,
+            source_modality=source_modality,
+            derived_image_type=derived_image_type,
+            height=values["height"],
+            width=values["width"],
+            frame_count=values["frame_count"],
+            study_instance_uid=values["study_instance_uid"],
+            series_instance_uid=values["series_instance_uid"],
+            sop_instance_uid=values["sop_instance_uid"],
+            coordinate_frame_id=values["coordinate_frame_id"],
+            values=values,
+            metadata=_evidence(record.mapping, retain_raw),
+        )
+
+
 def _record_source(
     record: TableRecord, source_scope: str, source_table: str
 ) -> Optional[SourceRef]:
@@ -421,6 +537,52 @@ def _mapped_text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]
     if hasattr(value, "isoformat"):
         return str(value.isoformat())
     return str(value)
+
+
+def _mapped_value(row: Mapping[str, Any], column: Optional[str]) -> Any:
+    if column is None:
+        return None
+    value = _plain_scalar(row.get(column))
+    return None if _is_missing(value) else value
+
+
+def _mapped_identifier(
+    row: Mapping[str, Any], column: Optional[str]
+) -> Optional[str]:
+    return _normalize_identifier(_mapped_value(row, column))
+
+
+def _mapped_positive_int(
+    row: Mapping[str, Any],
+    column: Optional[str],
+    semantic: str,
+    source: Optional[SourceRef],
+    transaction: Any,
+) -> Optional[int]:
+    value = _mapped_value(row, column)
+    if value is None:
+        return None
+    value = _plain_scalar(value)
+    if isinstance(value, bool):
+        normalized = None
+    elif isinstance(value, Integral):
+        normalized = int(value)
+    elif isinstance(value, Real) and float(value).is_integer():
+        normalized = int(value)
+    else:
+        normalized = None
+    if normalized is None or normalized <= 0:
+        transaction.add_issue(
+            Issue(
+                code=f"invalid_image_{semantic}",
+                message=f"image {semantic} must be a positive integer",
+                severity="error",
+                source=source,
+                context={"column": column, "value": value},
+            )
+        )
+        return None
+    return normalized
 
 
 def _plain_scalar(value: Any) -> Any:
