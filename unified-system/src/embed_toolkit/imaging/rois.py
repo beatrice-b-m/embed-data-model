@@ -59,6 +59,8 @@ class RegionOfInterest:
     source_coordinates: Optional[CoordinateBox] = None
     source_coordinate_convention: Optional[str] = None
     source_frame_indices: Tuple[int, ...] = ()
+    frame_provenance: Optional[str] = None
+    frame_derivation_method: Optional[str] = None
 
     @classmethod
     def from_embed_coordinates(
@@ -139,6 +141,22 @@ class RegionOfInterest:
         if len(set(frame_indices)) != len(frame_indices):
             raise ValueError("source_frame_indices cannot contain duplicates")
         object.__setattr__(self, "source_frame_indices", frame_indices)
+        if self.frame_provenance is not None and self.frame_provenance not in {
+            "source_supplied",
+            "derived",
+            "unavailable",
+        }:
+            raise ValueError("frame_provenance is not recognized")
+        if self.frame_provenance == "derived":
+            if (
+                not isinstance(self.frame_derivation_method, str)
+                or not self.frame_derivation_method.strip()
+            ):
+                raise ValueError("derived frame provenance requires a method")
+        elif self.frame_derivation_method is not None:
+            raise ValueError(
+                "frame_derivation_method is only valid for derived provenance"
+            )
         if self.source_coordinates is not None:
             source_coordinates = tuple(
                 float(value) for value in self.source_coordinates
@@ -380,4 +398,6 @@ class RegionOfInterest:
             ),
             "source_coordinate_convention": self.source_coordinate_convention,
             "frame_indices": list(self.frame_indices),
+            "frame_provenance": self.frame_provenance,
+            "frame_derivation_method": self.frame_derivation_method,
         }

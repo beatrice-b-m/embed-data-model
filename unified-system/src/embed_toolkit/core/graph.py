@@ -478,6 +478,12 @@ class DatasetGraph:
                 source_frame_indices=(
                     _one_value_or_none(observations["frame_indices"].values()) or ()
                 ),
+                frame_provenance=_one_value_or_none(
+                    observations["frame_provenance"].values()
+                ),
+                frame_derivation_method=_one_value_or_none(
+                    observations["frame_derivation_method"].values()
+                ),
             )
             current = self._rois.get(identity)
             roi = current if current == candidate else candidate
@@ -1011,6 +1017,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         coordinate_frame_id: Optional[str] = None,
         source_coordinates: Optional[CoordinateBox] = None,
         source_coordinate_convention: Optional[str] = None,
+        frame_provenance: Optional[str] = None,
+        frame_derivation_method: Optional[str] = None,
         values: Optional[Mapping[str, Any]] = None,
         metadata: Optional[Mapping[str, Any]] = None,
     ) -> RegionOfInterest:
@@ -1030,6 +1038,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             "coordinate_frame_id": coordinate_frame_id,
             "source_coordinates": source_coordinates,
             "source_coordinate_convention": source_coordinate_convention,
+            "frame_provenance": frame_provenance,
+            "frame_derivation_method": frame_derivation_method,
         }
         contribution = _Contribution(
             source=source,
@@ -1079,6 +1089,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                     source_coordinates=source_coordinates,
                     source_coordinate_convention=source_coordinate_convention,
                     source_frame_indices=tuple(frame_indices),
+                    frame_provenance=frame_provenance,
+                    frame_derivation_method=frame_derivation_method,
                 ),
             )
         return roi

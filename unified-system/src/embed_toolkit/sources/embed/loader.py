@@ -808,14 +808,14 @@ def _load_rois(
                 _identity_issue("image_id", raw_image_id, source, image_column)
             )
             continue
-        roi_key = _mapped_identifier(record.mapping, columns["roi_key"])
-        if roi_key is None:
-            roi_key = json.dumps(
+        base_roi_key = _mapped_identifier(record.mapping, columns["roi_key"])
+        if base_roi_key is None:
+            base_roi_key = json.dumps(
                 source.key.to_dict(), sort_keys=True, separators=(",", ":")
             )
         raw_coordinates = record.mapping.get(coordinates_column)
-        source_coordinates = _coordinate_tuple(raw_coordinates)
-        if source_coordinates is None:
+        coordinate_collection = _coordinate_collection(raw_coordinates)
+        if coordinate_collection is None:
             transaction.add_issue(
                 Issue(
                     code="invalid_roi_coordinates",
@@ -829,12 +829,11 @@ def _load_rois(
                 )
             )
             continue
-        y_min, x_min, y_max, x_max = source_coordinates
-        coordinates = (y_min, x_min, y_max + 1.0, x_max + 1.0)
-        frame_indices = _nonnegative_int_tuple(
-            _mapped_value(record.mapping, columns["frame_indices"])
+        raw_frames = _mapped_value(record.mapping, columns["frame_indices"])
+        frame_collections = _roi_frame_collections(
+            raw_frames, len(coordinate_collection)
         )
-        if frame_indices is None:
+        if frame_collections is None:
             transaction.add_issue(
                 Issue(
                     code="invalid_roi_frames",
@@ -843,39 +842,77 @@ def _load_rois(
                     source=source,
                 )
             )
-            frame_indices = ()
+            frame_collections = tuple(() for _ in coordinate_collection)
+        derived_flags = _roi_derived_flags(
+            _mapped_value(record.mapping, columns["depth_derived"]),
+            len(coordinate_collection),
+        )
+        if derived_flags is None:
+            transaction.add_issue(
+                Issue(
+                    code="invalid_roi_depth_derived",
+                    message="ROI derived-depth flags must align with ROI coordinates",
+                    severity="warning",
+                    source=source,
+                )
+            )
+            derived_flags = tuple(False for _ in coordinate_collection)
         confidence = _optional_confidence(
             _mapped_value(record.mapping, columns["confidence"])
         )
-        values = {
-            "image_id": image_id,
-            "roi_key": roi_key,
-            "coordinates": coordinates,
-            "frame_indices": frame_indices,
-            "annotation_source": _mapped_text(
-                record.mapping, columns["annotation_source"]
-            ),
-            "confidence": confidence,
-            "coordinate_frame_id": _mapped_text(
-                record.mapping, columns["coordinate_frame_id"]
-            ),
-            "source_coordinates": source_coordinates,
-            "source_coordinate_convention": "inclusive_maxima",
-        }
-        transaction.upsert_roi(
-            image_id,
-            roi_key,
-            source,
-            coordinates=coordinates,
-            frame_indices=frame_indices,
-            annotation_source=values["annotation_source"],
-            confidence=confidence,
-            coordinate_frame_id=values["coordinate_frame_id"],
-            source_coordinates=source_coordinates,
-            source_coordinate_convention="inclusive_maxima",
-            values=values,
-            metadata=_evidence(record.mapping, retain_raw),
+        annotation_source = _mapped_text(
+            record.mapping, columns["annotation_source"]
         )
+        coordinate_frame_id = _mapped_text(
+            record.mapping, columns["coordinate_frame_id"]
+        )
+        for ordinal, (source_coordinates, frame_indices, derived) in enumerate(
+            zip(coordinate_collection, frame_collections, derived_flags)
+        ):
+            roi_key = (
+                base_roi_key
+                if len(coordinate_collection) == 1
+                else f"{base_roi_key}:{ordinal}"
+            )
+            y_min, x_min, y_max, x_max = source_coordinates
+            coordinates = (y_min, x_min, y_max + 1.0, x_max + 1.0)
+            frame_provenance = (
+                "derived"
+                if derived
+                else "source_supplied"
+                if frame_indices
+                else "unavailable"
+            )
+            derivation_method = "embed_roi_depth_derived" if derived else None
+            values = {
+                "image_id": image_id,
+                "roi_key": roi_key,
+                "coordinates": coordinates,
+                "frame_indices": frame_indices,
+                "annotation_source": annotation_source,
+                "confidence": confidence,
+                "coordinate_frame_id": coordinate_frame_id,
+                "source_coordinates": source_coordinates,
+                "source_coordinate_convention": "inclusive_maxima",
+                "frame_provenance": frame_provenance,
+                "frame_derivation_method": derivation_method,
+            }
+            transaction.upsert_roi(
+                image_id,
+                roi_key,
+                source,
+                coordinates=coordinates,
+                frame_indices=frame_indices,
+                annotation_source=annotation_source,
+                confidence=confidence,
+                coordinate_frame_id=coordinate_frame_id,
+                source_coordinates=source_coordinates,
+                source_coordinate_convention="inclusive_maxima",
+                frame_provenance=frame_provenance,
+                frame_derivation_method=derivation_method,
+                values=values,
+                metadata=_evidence(record.mapping, retain_raw),
+            )
 
 
 def _load_histories(
@@ -1340,6 +1377,76 @@ def _coordinate_tuple(value: Any) -> Optional[tuple[float, float, float, float]]
     if coordinates[2] < coordinates[0] or coordinates[3] < coordinates[1]:
         return None
     return coordinates
+
+
+def _coordinate_collection(
+    value: Any,
+) -> Optional[tuple[tuple[float, float, float, float], ...]]:
+    parsed = _literal_sequence(value)
+    single = _coordinate_tuple(parsed)
+    if single is not None:
+        return (single,)
+    if not isinstance(parsed, (list, tuple)) or not parsed:
+        return None
+    coordinates = tuple(_coordinate_tuple(item) for item in parsed)
+    if any(item is None for item in coordinates):
+        return None
+    return tuple(item for item in coordinates if item is not None)
+
+
+def _roi_frame_collections(
+    value: Any, count: int
+) -> Optional[tuple[tuple[int, ...], ...]]:
+    if value is None:
+        return tuple(() for _ in range(count))
+    parsed = _literal_sequence(value)
+    if count == 1:
+        if (
+            isinstance(parsed, (list, tuple))
+            and len(parsed) == 1
+            and isinstance(parsed[0], (list, tuple))
+        ):
+            parsed = parsed[0]
+        frames = _nonnegative_int_tuple(parsed)
+        return None if frames is None else (frames,)
+    if not isinstance(parsed, (list, tuple)) or len(parsed) != count:
+        return None
+    collections = tuple(_nonnegative_int_tuple(item) for item in parsed)
+    if any(item is None for item in collections):
+        return None
+    return tuple(item for item in collections if item is not None)
+
+
+def _roi_derived_flags(value: Any, count: int) -> Optional[tuple[bool, ...]]:
+    if value is None:
+        return tuple(False for _ in range(count))
+    parsed = _literal_sequence(value)
+    if parsed is None and isinstance(value, str):
+        parsed = value
+    if isinstance(parsed, (list, tuple)):
+        if len(parsed) != count:
+            return None
+        flags = tuple(_derived_flag(item) for item in parsed)
+    else:
+        flag = _derived_flag(parsed)
+        flags = tuple(flag for _ in range(count))
+    return None if any(flag is None for flag in flags) else tuple(bool(flag) for flag in flags)
+
+
+def _derived_flag(value: Any) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, Real) and not isinstance(value, bool):
+        if float(value) == 1.0:
+            return True
+        if float(value) == 0.0:
+            return False
+    text = "" if value is None else str(value).strip().upper()
+    if text in {"Y", "YES", "TRUE", "DERIVED"}:
+        return True
+    if text in {"N", "NO", "FALSE", "SOURCE", "SOURCE_SUPPLIED", ""}:
+        return False
+    return None
 
 
 def _nonnegative_int_tuple(value: Any) -> Optional[tuple[int, ...]]:

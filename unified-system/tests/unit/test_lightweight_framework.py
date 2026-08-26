@@ -1015,3 +1015,48 @@ def test_invalid_finding_distance_is_a_transactional_issue() -> None:
     with pytest.raises(LoadError, match="invalid_finding_distance"):
         load_embed(findings=[row], into=graph, mode="strict")
     assert graph.findings == ()
+
+
+def test_multi_roi_rows_preserve_image_scope_frames_and_derivation() -> None:
+    report = load_embed(
+        rois=[
+            {
+                "anon_dicom_path": "images/1.dcm",
+                "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
+                "ROI_frames": [[4], [7, 8]],
+                "ROI_depth_derived": [False, True],
+            }
+        ],
+        source_scope="release-1",
+    )
+
+    first, second = report.graph.rois
+    assert first.identity[0] == second.identity[0] == "images/1.dcm"
+    assert first.identity[1].endswith(":0")
+    assert second.identity[1].endswith(":1")
+    assert first.frame_indices == (4,)
+    assert first.frame_provenance == "source_supplied"
+    assert first.frame_derivation_method is None
+    assert second.frame_indices == (7, 8)
+    assert second.frame_provenance == "derived"
+    assert second.frame_derivation_method == "embed_roi_depth_derived"
+    assert first.sources == second.sources
+    assert report.issues == ()
+
+
+def test_misaligned_roi_frames_are_reported_without_erasing_safe_geometry() -> None:
+    row = {
+        "anon_dicom_path": "images/1.dcm",
+        "ROI_coords": [[1, 2, 3, 4], [10, 20, 30, 40]],
+        "ROI_frames": [[4]],
+    }
+    audit = load_embed(rois=[row])
+
+    assert len(audit.graph.rois) == 2
+    assert all(roi.frame_indices == () for roi in audit.graph.rois)
+    assert [issue.code for issue in audit.issues] == ["invalid_roi_frames"]
+
+    graph = DatasetGraph()
+    with pytest.raises(LoadError, match="invalid_roi_frames"):
+        load_embed(rois=[row], into=graph, mode="strict")
+    assert graph.rois == ()

@@ -63,6 +63,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "roi_key": None,
                 "coordinates": "ROI_coords",
                 "frame_indices": "ROI_frames",
+                "depth_derived": "ROI_depth_derived",
                 "annotation_source": None,
                 "confidence": None,
                 "coordinate_frame_id": None,
