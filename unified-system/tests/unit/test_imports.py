@@ -258,5 +258,4 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert workflows.FindingLocalizer
     assert workflows.FindingRoiMatcher
     assert workflows.RoiLocalizer
-    assert workflows.transfer_roi
     assert workflows.extract_patch
