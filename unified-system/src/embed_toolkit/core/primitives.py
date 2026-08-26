@@ -6,14 +6,17 @@ import ast
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Tuple, Union
+from typing import Any, Iterable, Tuple, Type, TypeVar, Union
+
+
+_CoercibleEnumT = TypeVar("_CoercibleEnumT", bound="CoercibleEnum")
 
 
 class CoercibleEnum(Enum):
     """Enum with explicit, non-throwing coercion for source data values."""
 
     @classmethod
-    def coerce(cls, value: Any) -> "CoercibleEnum":
+    def coerce(cls: Type[_CoercibleEnumT], value: Any) -> _CoercibleEnumT:
         if isinstance(value, cls):
             return value
         try:
@@ -22,7 +25,7 @@ class CoercibleEnum(Enum):
             return cls._coerce_unknown(value)
 
     @classmethod
-    def _coerce_unknown(cls, value: Any) -> "CoercibleEnum":
+    def _coerce_unknown(cls: Type[_CoercibleEnumT], value: Any) -> _CoercibleEnumT:
         unknown = getattr(cls, "UNKNOWN", None)
         if unknown is None:
             raise ValueError(f"{value!r} is not a valid {cls.__name__}")
@@ -158,7 +161,7 @@ class PatientOrientation:
             Iterable[Union[str, OrientationDirection]],
         ],
     ) -> "PatientOrientation":
-        if isinstance(value, cls):
+        if isinstance(value, PatientOrientation):
             return value
         parsed = cls._parse(value)
         return cls(

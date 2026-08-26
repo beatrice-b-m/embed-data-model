@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Tuple, Union, cast
 
 from embed_toolkit.core.source import CanonicalKey, canonicalize_source_key
 
@@ -104,7 +104,9 @@ def iter_records(table: Any, key: KeySelector = None) -> Iterator[TableRecord]:
 
 def _dataframe_rows(
     table: Any,
-) -> Optional[Tuple[list, list, bool, Optional[bool]]]:
+) -> Optional[
+    Tuple[list[Mapping[Any, Any]], list[Any], bool, Optional[bool]]
+]:
     to_dict = getattr(table, "to_dict", None)
     if (
         not callable(to_dict)
@@ -130,20 +132,25 @@ def _dataframe_rows(
     is_unique = getattr(index, "is_unique", None)
     if type(is_unique) is not bool:
         is_unique = None
-    return rows, index_values, type(index).__name__ == "RangeIndex", is_unique
+    return (
+        cast(list[Mapping[Any, Any]], rows),
+        index_values,
+        type(index).__name__ == "RangeIndex",
+        is_unique,
+    )
 
 
 def _records_from_rows(
     rows: Iterable[Mapping[Any, Any]],
     key: KeySelector,
     *,
-    index_values: Optional[list] = None,
+    index_values: Optional[list[Any]] = None,
     range_index: bool = False,
     index_unique: Optional[bool] = None,
 ) -> Iterator[TableRecord]:
     rows = list(rows)
-    candidates = []
-    issues = [[] for _ in rows]
+    candidates: list[Optional[CanonicalKey]] = []
+    issues: list[list[TableIssue]] = [[] for _ in rows]
 
     automatic_index = key is None and index_values is not None and not range_index
     for ordinal, row in enumerate(rows):
@@ -175,6 +182,7 @@ def _records_from_rows(
                 )
                 continue
         elif automatic_index:
+            assert index_values is not None
             raw_key = index_values[ordinal]
         else:
             raw_key = ordinal
@@ -208,6 +216,7 @@ def _records_from_rows(
                 )
 
     if automatic_index and index_unique is False:
+        assert index_values is not None
         for ordinal in range(len(rows)):
             candidates[ordinal] = canonicalize_source_key(ordinal)
             issues[ordinal].append(
@@ -227,9 +236,11 @@ def _records_from_rows(
 
 
 def _invalidate_duplicate_requested_keys(
-    candidates: list, issues: list, key: KeySelector
+    candidates: list[Optional[CanonicalKey]],
+    issues: list[list[TableIssue]],
+    key: KeySelector,
 ) -> None:
-    positions = {}
+    positions: dict[CanonicalKey, list[int]] = {}
     for ordinal, candidate in enumerate(candidates):
         if candidate is not None:
             positions.setdefault(candidate, []).append(ordinal)

@@ -66,6 +66,8 @@ class CanonicalKey:
 
         tag = value.get("tag")
         encoded = value.get("value")
+        if not isinstance(tag, str):
+            raise TypeError("serialized canonical key tag must be a string")
         if tag == "tuple":
             if not isinstance(encoded, (list, tuple)):
                 raise TypeError("serialized tuple key value must be a sequence")

@@ -13,8 +13,10 @@ license = { text = "Proprietary" }
 [dependency-groups]
 dev = [
     "build>=1.2",
+    "mypy>=1.10,<2",
     "pandas>=2.0",
     "pytest>=8",
+    "ruff>=0.8",
 ]
 
 [tool.setuptools.packages.find]
@@ -23,3 +25,19 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.9"
+files = [
+    "src/embed_toolkit/core/primitives.py",
+    "src/embed_toolkit/core/source.py",
+    "src/embed_toolkit/core/tables.py",
+]
+follow_imports = "skip"
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
