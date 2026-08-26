@@ -24,7 +24,7 @@ def test_built_wheel_imports_and_loads_outside_source_tree(tmp_path: Path) -> No
     wheel = next(wheel_dir.glob("*.whl"))
 
     environment = tmp_path / "environment"
-    venv.EnvBuilder(with_pip=True, system_site_packages=True).create(environment)
+    venv.EnvBuilder(with_pip=True).create(environment)
     scripts = "Scripts" if os.name == "nt" else "bin"
     python = environment / scripts / ("python.exe" if os.name == "nt" else "python")
     subprocess.run(

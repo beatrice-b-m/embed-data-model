@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pandas as pd
-
 import embed_toolkit
 from embed_toolkit import Box, DatasetGraph, RegionOfInterest, SourceRef, load_embed
 from examples.patch_extraction import extract_patch
@@ -15,12 +13,9 @@ def run() -> None:
     package_path = Path(embed_toolkit.__file__).resolve()
     assert "site-packages" in package_path.as_posix()
 
-    patients = pd.DataFrame(
-        {"empi_anon": ["P-1", "P-2"]},
-        index=pd.Index([101, 102], name="source_row"),
-    )
+    patients = [{"empi_anon": "P-1"}, {"empi_anon": "P-2"}]
     patient_only = load_embed(
-        patients=patients.loc[[102]],
+        patients=[patients[1]],
         source_scope="journey-patient",
         identity_namespace="release-2",
     )
@@ -33,32 +28,33 @@ def run() -> None:
     )
     assert exam_only.graph.exam("A-standalone") is not None
 
-    exams = pd.DataFrame(
-        {"acc_anon": ["A-1", "A-2"], "empi_anon": ["P-1", "P-2"]},
-        index=[201, 202],
-    )
-    images = pd.DataFrame(
+    exams = [
+        {"acc_anon": "A-1", "empi_anon": "P-1"},
+        {"acc_anon": "A-2", "empi_anon": "P-2"},
+    ]
+    images = [
         {
-            "anon_dicom_path": ["IMG-1", "IMG-2"],
-            "empi_anon": ["P-1", "P-2"],
-            "acc_anon": ["A-1", "A-2"],
-            "ImageLateralityFinal": ["L", "R"],
-            "ViewPosition": ["CC", "MLO"],
-            "Modality": ["MG", "MG"],
+            "anon_dicom_path": "IMG-1",
+            "empi_anon": "P-1",
+            "acc_anon": "A-1",
+            "ImageLateralityFinal": "L",
+            "ViewPosition": "CC",
+            "Modality": "MG",
         },
-        index=[301, 302],
-    )
-    rois = pd.DataFrame(
         {
-            "anon_dicom_path": ["IMG-2"],
-            "ROI_coords": [[[1, 1, 2, 3]]],
+            "anon_dicom_path": "IMG-2",
+            "empi_anon": "P-2",
+            "acc_anon": "A-2",
+            "ImageLateralityFinal": "R",
+            "ViewPosition": "MLO",
+            "Modality": "MG",
         },
-        index=[401],
-    )
+    ]
+    rois = [{"anon_dicom_path": "IMG-2", "ROI_coords": [[1, 1, 2, 3]]}]
     combined = load_embed(
-        patients=patients.loc[[102]],
-        exams=exams.loc[[202]],
-        images=images.loc[[302]],
+        patients=[patients[1]],
+        exams=[exams[1]],
+        images=[images[1]],
         rois=rois,
         source_scope="journey-combined",
         identity_namespace="release-2",
