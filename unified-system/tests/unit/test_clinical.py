@@ -58,14 +58,11 @@ def test_exam_rejects_conflicting_finding_merge_atomically() -> None:
     assert "source_row_count" not in first.metadata
 
 
-def test_negative_nine_is_a_synthetic_contralateral_negative_finding() -> None:
+def test_finding_number_does_not_imply_source_specific_record_type() -> None:
     finding = Finding("ACC-1", Laterality.BILATERAL, -9)
 
-    assert (
-        finding.record_type
-        is FindingRecordType.SYNTHETIC_CONTRALATERAL_NEGATIVE
-    )
-    assert finding.to_dict()["record_type"] == "synthetic_contralateral_negative"
+    assert finding.record_type is FindingRecordType.FINDING
+    assert finding.to_dict()["record_type"] == "finding"
 
 
 def test_breast_side_contains_findings_without_attribution_edges() -> None:

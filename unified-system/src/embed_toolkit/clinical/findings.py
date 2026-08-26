@@ -15,7 +15,7 @@ from embed_toolkit.core.source import SourceRef
 
 
 class FindingRecordType(str, Enum):
-    """Governed meaning of EMBED finding-number records."""
+    """Explicit semantic kind of a finding record."""
 
     FINDING = "finding"
     SYNTHETIC_CONTRALATERAL_NEGATIVE = "synthetic_contralateral_negative"
@@ -102,16 +102,12 @@ class Finding:
         default_factory=list
     )
     metadata: Dict[str, Any] = field(default_factory=dict)
-    record_type: FindingRecordType = field(init=False)
+    record_type: FindingRecordType = FindingRecordType.FINDING
 
     def __post_init__(self) -> None:
         self.laterality = Laterality.coerce(self.laterality)
         self.finding_number = str(self.finding_number)
-        self.record_type = (
-            FindingRecordType.SYNTHETIC_CONTRALATERAL_NEGATIVE
-            if self.finding_number == "-9"
-            else FindingRecordType.FINDING
-        )
+        self.record_type = FindingRecordType(self.record_type)
         if (
             self.interpretation is not None
             and self.interpretation.identity != self.identity

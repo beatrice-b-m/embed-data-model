@@ -21,6 +21,7 @@ from embed_toolkit.clinical.attributes import PatientAttributeName
 from embed_toolkit.clinical.findings import (
     FindingNormalizationEvidence,
     FindingNormalizationWarning,
+    FindingRecordType,
 )
 from embed_toolkit.core.anatomy import AnatomicalPosition, Quadrant
 from embed_toolkit.core.graph import DatasetGraph
@@ -520,6 +521,11 @@ def _load_findings(
             "finding_number": finding_number,
             "laterality": laterality.value,
             "finding_type": _mapped_text(record.mapping, columns["finding_type"]),
+            "record_type": (
+                FindingRecordType.SYNTHETIC_CONTRALATERAL_NEGATIVE.value
+                if finding_number == "-9"
+                else FindingRecordType.FINDING.value
+            ),
             "assessment": _mapped_text(record.mapping, columns["assessment"]),
             "recommendation": _mapped_text(record.mapping, columns["recommendation"]),
         }
@@ -536,6 +542,7 @@ def _load_findings(
             source,
             laterality=laterality,
             finding_type=values["finding_type"],
+            record_type=FindingRecordType(values["record_type"]),
             assessment=values["assessment"],
             recommendation=values["recommendation"],
             anatomical_position=anatomy["position"],

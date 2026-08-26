@@ -306,6 +306,16 @@ def test_finding_table_loads_alone_and_establishes_exam_ownership() -> None:
     assert report.issues == ()
 
 
+def test_embed_adapter_maps_synthetic_negative_finding_sentinel() -> None:
+    report = load_embed(
+        findings=[{"acc_anon": "A-1", "numfind": -9, "side": "B"}]
+    )
+
+    finding = report.graph.finding("A-1", "-9")
+    assert finding is not None
+    assert finding.record_type.value == "synthetic_contralateral_negative"
+
+
 def test_finding_identity_does_not_depend_on_side_or_interpretation() -> None:
     report = load_embed(
         findings=[{"acc_anon": "A-1", "numfind": "7"}],

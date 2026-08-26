@@ -23,6 +23,7 @@ from embed_toolkit.clinical.findings import (
     Finding,
     FindingNormalizationEvidence,
     FindingNormalizationWarning,
+    FindingRecordType,
 )
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.histories import PatientHistoryObservation
@@ -295,6 +296,10 @@ class DatasetGraph:
         finding.laterality = laterality or Laterality.UNKNOWN
         finding.finding_type = _one_value_or_none(
             observations["finding_type"].values()
+        )
+        finding.record_type = (
+            _one_value_or_none(observations["record_type"].values())
+            or FindingRecordType.FINDING
         )
         finding.anatomical_position = _merge_anatomical_positions(
             observations["anatomical_position"].values()
@@ -774,6 +779,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         *,
         laterality: Laterality = Laterality.UNKNOWN,
         finding_type: Optional[str] = None,
+        record_type: FindingRecordType = FindingRecordType.FINDING,
         assessment: Optional[str] = None,
         recommendation: Optional[str] = None,
         anatomical_position: Optional[AnatomicalPosition] = None,
@@ -791,6 +797,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         _require_identifier(accession, "accession")
         _require_identifier(finding_number, "finding_number")
         side = Laterality.coerce(laterality)
+        semantic_record_type = FindingRecordType(record_type)
         identity = (accession, finding_number)
         normalized = dict(
             values
@@ -799,6 +806,7 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 "finding_number": finding_number,
                 "laterality": side.value,
                 "finding_type": finding_type,
+                "record_type": semantic_record_type.value,
                 "assessment": assessment,
                 "recommendation": recommendation,
             }
@@ -833,12 +841,13 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         )
         if not self._stage(contribution):
             return self.graph.finding(*identity) or Finding(
-                accession, side, finding_number
+                accession, side, finding_number, record_type=semantic_record_type
             )
 
         for field, value in (
             ("laterality", side if side is not Laterality.UNKNOWN else None),
             ("finding_type", finding_type),
+            ("record_type", semantic_record_type),
             ("assessment", assessment),
             ("recommendation", recommendation),
             ("anatomical_position", anatomical_position),
@@ -878,7 +887,13 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         finding = self.graph.finding(*identity)
         if finding is None:
             finding = self._finding_nodes.setdefault(
-                identity, Finding(accession, side, finding_number)
+                identity,
+                Finding(
+                    accession,
+                    side,
+                    finding_number,
+                    record_type=semantic_record_type,
+                ),
             )
         return finding
 
@@ -903,6 +918,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             )
             if field == "laterality" and value is not None:
                 value = Laterality.coerce(value)
+            elif field == "record_type" and value is not None:
+                value = FindingRecordType(value)
             if value is not None and value is not Laterality.UNKNOWN:
                 values.add(value)
         return values
@@ -1364,8 +1381,16 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 observations["laterality"][contribution.source] = Laterality.coerce(
                     values.get("laterality")
                 )
-                for field in ("finding_type", "assessment", "recommendation"):
-                    observations[field][contribution.source] = values.get(field)
+                for field in (
+                    "finding_type",
+                    "assessment",
+                    "recommendation",
+                    "record_type",
+                ):
+                    value = values.get(field)
+                    if field == "record_type" and value is not None:
+                        value = FindingRecordType(value)
+                    observations[field][contribution.source] = value
                 for field in (
                     "anatomical_position",
                     "location_codes",
