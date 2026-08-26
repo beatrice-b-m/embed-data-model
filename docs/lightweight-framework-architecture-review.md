@@ -1,6 +1,13 @@
 # Lightweight framework architecture review and recovery plan
 
 Date: 2026-08-26
+Status: implemented on 2026-08-26
+
+> **Implementation record.** The findings below describe the pre-recovery
+> baseline. The phased plan and global acceptance criteria are now implemented
+> by the canonical `DatasetGraph`/`load_embed` surface, the bounded package
+> facade, repo-only examples, and the replacement-test matrix in
+> [lightweight-framework-test-traceability.md](lightweight-framework-test-traceability.md).
 
 Scope: `unified-system/`, active repository documentation, tests, and relevant
 git history

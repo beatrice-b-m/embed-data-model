@@ -9,6 +9,11 @@ kb_status: draft
 
 # Parallel Unified System Implementation Orchestration Plan
 
+> **Historical orchestration plan — completed and superseded.** It is not an
+> active work queue. Current architecture and acceptance criteria are recorded
+> in
+> [lightweight-framework-architecture-review.md](lightweight-framework-architecture-review.md).
+
 ## Purpose
 
 This document summarizes the parallel implementation status of the unified

@@ -1,5 +1,11 @@
 # Clinical object model evaluation
 
+> **Historical evaluation — superseded.** Scientific invariants retained from
+> this work are mapped to canonical graph tests in
+> [lightweight-framework-test-traceability.md](lightweight-framework-test-traceability.md).
+> Current API and architecture are governed by the
+> [lightweight framework review](lightweight-framework-architecture-review.md).
+
 > **Current resolution status (2026-08-24): Resolved.** The evaluation below is
 > retained as the historical baseline that motivated the implementation. This
 > addendum and the

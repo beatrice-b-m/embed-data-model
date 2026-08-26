@@ -1,6 +1,11 @@
 # Internal V2 framework and dataset-profile reassessment
 
 Date: 2026-08-25
+
+> **Historical review — superseded.** This review remains evidence for source
+> meanings migrated into the canonical graph. Current architecture and public
+> boundaries are governed by
+> [lightweight-framework-architecture-review.md](lightweight-framework-architecture-review.md).
 Reference: `embed_context_internal` MCP, profile `internal-v2`
 Scope: current runtime implementation under `unified-system/`
 

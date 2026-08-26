@@ -9,6 +9,11 @@ kb_status: draft
 
 # Legacy Retirement Policy
 
+> **Historical retirement policy.** Its prohibition on former root-package
+> imports remains valid. Current invariant ownership and package boundaries are
+> governed by
+> [lightweight-framework-architecture-review.md](lightweight-framework-architecture-review.md).
+
 ## Decision
 
 The root-level `embed_toolkit/` and `quadrant_matching/` trees have been

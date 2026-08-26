@@ -5,6 +5,11 @@ Source review: `docs/internal-v2-conformance-review.md`
 Implementation scope: `unified-system/`
 Status: completed on 2026-08-25
 
+> **Historical resolution — superseded.** Retained scientific meanings now
+> flow through `DatasetGraph`; deleted builders, policy objects, and workflow
+> services in this record are not current API. See
+> [lightweight-framework-architecture-review.md](lightweight-framework-architecture-review.md).
+
 ## Assessment
 
 The six findings in the review are reproducible in the current implementation.

@@ -3,6 +3,11 @@
 Date: 2026-08-24
 Status: completed implementation contract
 
+> **Historical contract — superseded.** The canonical graph recovery preserved
+> the scientific invariants but retired this plan's builder/evidence machinery.
+> See
+> [lightweight-framework-architecture-review.md](lightweight-framework-architecture-review.md).
+
 ## Objective
 
 Resolve the correctness and coverage findings in

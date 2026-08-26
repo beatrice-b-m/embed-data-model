@@ -2,6 +2,11 @@
 
 Date: 2026-08-25
 
+> **Historical review — superseded.** Package topology, builders, workflows,
+> and `temp/` references below describe the pre-recovery system. The governing
+> current architecture is
+> [lightweight-framework-architecture-review.md](lightweight-framework-architecture-review.md).
+
 Editable Lucid chart:
 [WIP EMBED Toolkit — System Architecture (Expanded Review)](https://lucid.app/lucidchart/5717732a-8d25-40e8-97df-fa1a657eaa6b/edit)
 
