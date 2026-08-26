@@ -15,6 +15,7 @@ from embed_toolkit.core.provenance import (
     ResolutionState,
     SourceLocator,
 )
+from embed_toolkit.core.source import SourceRef
 
 
 class PatientAttributeName(str, Enum):
@@ -51,7 +52,7 @@ class ExamAttributeObservation:
     accession_number: str
     attribute: ExamAttributeName
     value: Optional[str]
-    source: SourceLocator
+    source: object
 
     def __post_init__(self) -> None:
         if (
@@ -64,11 +65,11 @@ class ExamAttributeObservation:
             if not isinstance(self.value, str) or not self.value.strip():
                 raise TypeError("exam attribute value must be a string or None")
             object.__setattr__(self, "value", self.value.strip())
-        if not isinstance(self.source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
 
     @property
-    def identity(self) -> Tuple[str, ExamAttributeName, SourceLocator]:
+    def identity(self) -> Tuple[str, ExamAttributeName, object]:
         return self.accession_number, self.attribute, self.source
 
     def reference_dict(self) -> dict[str, object]:
@@ -89,7 +90,7 @@ class PatientAttributeObservation:
     patient_id: str
     attribute: PatientAttributeName
     value: Any
-    source: SourceLocator
+    source: object
     context_date: Optional[date]
     time_basis: PatientObservationTimeBasis
 
@@ -102,8 +103,8 @@ class PatientAttributeObservation:
             "time_basis",
             PatientObservationTimeBasis(self.time_basis),
         )
-        if not isinstance(self.source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
         if self.context_date is not None and type(self.context_date) is not date:
             raise TypeError("context_date must be a date or None")
         if self.attribute is PatientAttributeName.SEX:
@@ -121,7 +122,7 @@ class PatientAttributeObservation:
             object.__setattr__(self, "value", int(self.value))
 
     @property
-    def identity(self) -> Tuple[str, PatientAttributeName, SourceLocator]:
+    def identity(self) -> Tuple[str, PatientAttributeName, object]:
         """Governed identity preserving distinct physical source observations."""
 
         return self.patient_id, self.attribute, self.source
@@ -186,7 +187,7 @@ class PatientAttributeSelection:
     resolution_state: ResolutionState
     selected_value: Any = None
     selected_context_date: Optional[date] = None
-    supporting_sources: Tuple[SourceLocator, ...] = ()
+    supporting_sources: Tuple[object, ...] = ()
     reason: str = ""
     issues: Tuple[BuildIssue, ...] = ()
 
@@ -207,8 +208,12 @@ class PatientAttributeSelection:
         ):
             raise TypeError("selected_context_date must be a date or None")
         sources = tuple(self.supporting_sources)
-        if any(not isinstance(source, SourceLocator) for source in sources):
-            raise TypeError("supporting_sources must contain SourceLocator values")
+        if any(
+            not isinstance(source, (SourceLocator, SourceRef)) for source in sources
+        ):
+            raise TypeError(
+                "supporting_sources must contain SourceRef or SourceLocator values"
+            )
         if len(set(sources)) != len(sources):
             raise ValueError("supporting_sources must be unique")
         object.__setattr__(self, "supporting_sources", sources)
@@ -401,7 +406,7 @@ def select_patient_attribute_as_of(
 
 def _unique_sources(
     observations: Iterable[PatientAttributeObservation],
-) -> Tuple[SourceLocator, ...]:
+) -> Tuple[object, ...]:
     sources = []
     for observation in observations:
         if observation.source not in sources:

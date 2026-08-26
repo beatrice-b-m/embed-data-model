@@ -5,12 +5,18 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from datetime import date
 from enum import Enum
 from typing import Any, DefaultDict, Dict, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.associations import AssociationLink
+from embed_toolkit.clinical.attributes import (
+    PatientAttributeName,
+    PatientAttributeObservation,
+    PatientObservationTimeBasis,
+)
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.histories import PatientHistoryObservation
@@ -73,6 +79,9 @@ class DatasetGraph:
             Tuple[str, SourceRef, str], PatientHistoryObservation
         ] = {}
         self._procedures: Dict[ProcedureIdentity, Procedure] = {}
+        self._patient_attribute_observations: Dict[
+            Tuple[str, PatientAttributeName, SourceRef], PatientAttributeObservation
+        ] = {}
         self._pathology_diagnoses: Dict[SourceRef, PathologyDiagnosis] = {}
         self._pathology_observations: Dict[
             Tuple[SourceRef, str], PathologyObservation
@@ -170,6 +179,19 @@ class DatasetGraph:
                     identity.performed_date,
                     identity.procedure_type,
                     identity.laterality.value,
+                ),
+            )
+        )
+
+    @property
+    def patient_attribute_observations(self) -> Tuple[PatientAttributeObservation, ...]:
+        return tuple(
+            sorted(
+                self._patient_attribute_observations.values(),
+                key=lambda item: (
+                    item.patient_id,
+                    item.attribute.value,
+                    repr(item.source.to_dict()),
                 ),
             )
         )
@@ -537,6 +559,9 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             Tuple[str, SourceRef, str], PatientHistoryObservation
         ] = {}
         self._procedure_nodes: Dict[ProcedureIdentity, Procedure] = {}
+        self._patient_attribute_nodes: Dict[
+            Tuple[str, PatientAttributeName, SourceRef], PatientAttributeObservation
+        ] = {}
         self._pathology_diagnosis_nodes: Dict[SourceRef, PathologyDiagnosis] = {}
         self._pathology_observation_nodes: Dict[
             Tuple[SourceRef, str], PathologyObservation
@@ -577,15 +602,28 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         *,
         values: Optional[Mapping[str, Any]] = None,
         metadata: Optional[Mapping[str, Any]] = None,
+        attributes: Optional[Mapping[PatientAttributeName, Any]] = None,
+        context_date: Optional[date] = None,
     ) -> Patient:
         _require_open(self)
         _require_identifier(patient_id, "patient_id")
+        normalized = dict(values or {"patient_id": patient_id})
+        normalized_attributes = {
+            PatientAttributeName(attribute): value
+            for attribute, value in (attributes or {}).items()
+        }
+        if normalized_attributes:
+            normalized["attributes"] = {
+                attribute.value: value
+                for attribute, value in normalized_attributes.items()
+            }
+            normalized["attribute_context_date"] = context_date
         contribution = _Contribution(
             source=source,
             concept="patient",
             slot="",
             entity_id=patient_id,
-            payload=_freeze(values or {"patient_id": patient_id}),
+            payload=_freeze(normalized),
             metadata=dict(metadata or {}),
         )
         if not self._stage(contribution):
@@ -593,6 +631,18 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         patient = self.graph.patient(patient_id)
         if patient is None:
             patient = self._patient_nodes.setdefault(patient_id, Patient(patient_id))
+        for attribute, value in normalized_attributes.items():
+            observation = PatientAttributeObservation(
+                patient_id=patient_id,
+                attribute=attribute,
+                value=value,
+                source=source,
+                context_date=context_date,
+                time_basis=PatientObservationTimeBasis.EXAM_DATE_CONTEXT,
+            )
+            self._patient_attribute_nodes.setdefault(
+                (patient_id, attribute, source), observation
+            )
         return patient
 
     def upsert_exam(
@@ -1192,6 +1242,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             graph._histories.setdefault(key, observation)
         for identity, procedure in self._procedure_nodes.items():
             graph._procedures.setdefault(identity, procedure)
+        for key, observation in self._patient_attribute_nodes.items():
+            graph._patient_attribute_observations.setdefault(key, observation)
         for source, diagnosis in self._pathology_diagnosis_nodes.items():
             graph._pathology_diagnoses.setdefault(source, diagnosis)
         for key, observation in self._pathology_observation_nodes.items():
@@ -1270,6 +1322,10 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             patient.history_observations.clear()
         for observation in graph.histories:
             graph._patients[observation.patient_id].add_history_observation(observation)
+        for patient in graph._patients.values():
+            patient.attribute_observations.clear()
+        for observation in graph.patient_attribute_observations:
+            graph._patients[observation.patient_id].add_attribute_observation(observation)
         procedure_sources: DefaultDict[ProcedureIdentity, set[SourceRef]] = defaultdict(set)
         for contribution in graph._contributions.values():
             if contribution.concept != "procedure":

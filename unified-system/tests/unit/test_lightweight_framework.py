@@ -14,6 +14,13 @@ from embed_toolkit import (
     load_embed,
 )
 from embed_toolkit.adapters.tables import iter_records
+from embed_toolkit.clinical.attributes import (
+    PatientAttributeAsOfPolicy,
+    PatientAttributeName,
+    PatientObservationTimeBasis,
+    UndatedObservationPolicy,
+    select_patient_attribute_as_of,
+)
 from embed_toolkit.core.source import CanonicalKey, SourceRef
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 
@@ -847,3 +854,66 @@ def test_explicit_and_wide_tables_contribute_distinct_source_evidence() -> None:
         "magview",
     }
     assert report.issues == ()
+
+
+def test_patient_attributes_preserve_source_and_temporal_context() -> None:
+    report = load_embed(
+        patients=pd.DataFrame(
+            {
+                "empi_anon": ["P-1", "P-1"],
+                "GENDER_DESC": ["F", "F"],
+                "birth_year": ["1970", 1970.0],
+                "studydate_anon": ["20200102", "2021-03-04"],
+            },
+            index=[1, 2],
+        ),
+        source_scope="release-1",
+    )
+
+    patient = report.graph.patient("P-1")
+    assert len(patient.attribute_observations) == 4
+    assert patient.attribute_observations == list(
+        report.graph.patient_attribute_observations
+    )
+    selected = select_patient_attribute_as_of(
+        patient.attribute_observations,
+        patient_id="P-1",
+        attribute=PatientAttributeName.BIRTH_YEAR,
+        policy=PatientAttributeAsOfPolicy(
+            as_of_date=date(2021, 12, 31),
+            time_basis=PatientObservationTimeBasis.EXAM_DATE_CONTEXT,
+            undated=UndatedObservationPolicy.REJECT,
+        ),
+    )
+    assert selected.selected_value == 1970
+    assert selected.selected_context_date == date(2021, 3, 4)
+    assert report.issues == ()
+
+
+def test_invalid_patient_attribute_does_not_erase_safe_patient_in_audit() -> None:
+    report = load_embed(
+        patients=[
+            {
+                "empi_anon": "P-1",
+                "birth_year": "1970.5",
+                "studydate_anon": "not-a-date",
+            }
+        ]
+    )
+
+    assert report.graph.patient("P-1") is not None
+    assert report.graph.patient_attribute_observations == ()
+    assert [issue.code for issue in report.issues] == [
+        "invalid_patient_attribute_value"
+    ]
+
+
+def test_patient_attribute_error_rolls_back_patient_in_strict_mode() -> None:
+    graph = DatasetGraph()
+    with pytest.raises(LoadError, match="invalid_patient_attribute_value"):
+        load_embed(
+            patients=[{"empi_anon": "P-1", "birth_year": True}],
+            into=graph,
+            mode="strict",
+        )
+    assert graph.patient("P-1") is None

@@ -10,7 +10,14 @@ ColumnMap = Mapping[str, Optional[str]]
 
 DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
     {
-        "patients": MappingProxyType({"patient_id": "empi_anon"}),
+        "patients": MappingProxyType(
+            {
+                "patient_id": "empi_anon",
+                "sex": "GENDER_DESC",
+                "birth_year": "birth_year",
+                "context_date": "studydate_anon",
+            }
+        ),
         "exams": MappingProxyType(
             {
                 "accession": "acc_anon",

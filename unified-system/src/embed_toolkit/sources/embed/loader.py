@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 import json
 from math import isfinite
 from numbers import Integral, Real
@@ -15,6 +17,7 @@ from embed_toolkit.adapters.tables import (
     iter_records,
 )
 from embed_toolkit.clinical.associations import AssociationLink, AttributionStatus
+from embed_toolkit.clinical.attributes import PatientAttributeName
 from embed_toolkit.core.graph import DatasetGraph
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.source import Issue, SourceRef
@@ -331,11 +334,53 @@ def _load_patients(
             )
             continue
         values = {"patient_id": patient_id}
+        attributes: dict[PatientAttributeName, Any] = {}
+        sex_column = columns["sex"]
+        if sex_column is not None and sex_column in record.mapping:
+            attributes[PatientAttributeName.SEX] = _mapped_text(
+                record.mapping, sex_column
+            )
+        birth_year_column = columns["birth_year"]
+        if birth_year_column is not None and birth_year_column in record.mapping:
+            raw_birth_year = _mapped_value(record.mapping, birth_year_column)
+            if raw_birth_year is None:
+                attributes[PatientAttributeName.BIRTH_YEAR] = None
+            else:
+                birth_year = _exact_integer(raw_birth_year)
+                if birth_year is None:
+                    transaction.add_issue(
+                        Issue(
+                            code="invalid_patient_attribute_value",
+                            message="birth_year must represent an exact finite integer",
+                            source=source,
+                            context={
+                                "attribute": "birth_year",
+                                "column": birth_year_column,
+                                "value": raw_birth_year,
+                            },
+                        )
+                    )
+                else:
+                    attributes[PatientAttributeName.BIRTH_YEAR] = birth_year
+        context_column = columns["context_date"]
+        raw_context = _mapped_value(record.mapping, context_column)
+        context_date = _calendar_date(raw_context)
+        if raw_context is not None and context_date is None and attributes:
+            transaction.add_issue(
+                Issue(
+                    code="invalid_patient_attribute_context_date",
+                    message="patient attribute context date could not be parsed",
+                    source=source,
+                    context={"column": context_column, "value": raw_context},
+                )
+            )
         transaction.upsert_patient(
             patient_id,
             source,
             values=values,
             metadata=_evidence(record.mapping, retain_raw),
+            attributes=attributes,
+            context_date=context_date,
         )
 
 
@@ -1074,6 +1119,42 @@ def _mapped_positive_int(
         )
         return None
     return normalized
+
+
+def _exact_integer(value: Any) -> Optional[int]:
+    value = _plain_scalar(value)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Real):
+        numeric = float(value)
+        return int(numeric) if isfinite(numeric) and numeric.is_integer() else None
+    if isinstance(value, str):
+        try:
+            numeric = Decimal(value.strip())
+        except InvalidOperation:
+            return None
+        if numeric.is_finite() and numeric == numeric.to_integral():
+            return int(numeric)
+    return None
+
+
+def _calendar_date(value: Any) -> Optional[date]:
+    value = _plain_scalar(value)
+    if isinstance(value, datetime):
+        return value.date()
+    if type(value) is date:
+        return value
+    if value is None:
+        return None
+    text = str(value).strip()
+    try:
+        if len(text) == 8 and text.isdigit():
+            return date(int(text[:4]), int(text[4:6]), int(text[6:]))
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def _literal_sequence(value: Any) -> Any:
