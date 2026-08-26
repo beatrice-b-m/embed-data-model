@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.abc
+import importlib.metadata
 import pkgutil
 import sys
 from contextlib import contextmanager
@@ -107,7 +108,9 @@ def import_targets(source_file: Path) -> Iterator[str]:
 def test_imports_new_src_package() -> None:
     with new_src_imports() as src_path:
         package = importlib.import_module("embed_toolkit")
-        assert package.__version__ == "0.1.0"
+        assert package.__version__ == importlib.metadata.version(
+            "embed-toolkit-unified"
+        )
         assert Path(package.__file__).resolve().is_relative_to(src_path)
 
 

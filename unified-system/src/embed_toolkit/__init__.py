@@ -1,5 +1,7 @@
 """Unified EMBED mammography toolkit."""
 
+from importlib.metadata import version
+
 from embed_toolkit.clinical.exams import BreastSide, Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.patients import Patient
@@ -24,4 +26,4 @@ __all__ = [
     "load_embed",
 ]
 
-__version__ = "0.1.0"
+__version__ = version("embed-toolkit-unified")
