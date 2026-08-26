@@ -103,7 +103,8 @@ class AuditWarning:
 class PatchExtractionResult:
     status: ResultStatus
     image_id: str
-    roi_locator: RoiLocator
+    roi_locator: Optional[RoiLocator]
+    roi_key: Optional[str]
     patch_id: str
     bbox: Sequence[float]
     shape: Sequence[int]
@@ -116,8 +117,10 @@ class PatchExtractionResult:
         object.__setattr__(self, "status", ResultStatus(self.status))
         if not self.image_id.strip() or not self.patch_id.strip():
             raise ValueError("Image and patch identities must be non-empty")
-        if not isinstance(self.roi_locator, RoiLocator):
-            raise TypeError("roi_locator must be a RoiLocator")
+        if self.roi_locator is None and not self.roi_key:
+            raise ValueError("A patch result requires roi_locator or roi_key")
+        if self.roi_locator is not None and not isinstance(self.roi_locator, RoiLocator):
+            raise TypeError("roi_locator must be a RoiLocator or None")
         bbox = tuple(self.bbox)
         shape = tuple(self.shape)
         if len(bbox) != 4 or any(not math.isfinite(float(value)) for value in bbox):
@@ -138,7 +141,10 @@ class PatchExtractionResult:
         return {
             "status": self.status.value,
             "image_id": self.image_id,
-            "roi_locator": self.roi_locator.to_dict(),
+            "roi_locator": (
+                self.roi_locator.to_dict() if self.roi_locator is not None else None
+            ),
+            "roi_key": self.roi_key,
             "patch_id": self.patch_id,
             "bbox": list(self.bbox),
             "shape": list(self.shape),

@@ -17,7 +17,7 @@ from embed_toolkit.imaging.roi_provenance import (
     RoiSourceCountBasis,
     RoiSourceProvenance,
 )
-from embed_toolkit.imaging.rois import RegionOfInterest
+from embed_toolkit.imaging.rois import Box, RegionOfInterest
 
 
 def roi(
@@ -281,6 +281,20 @@ def test_patch_identity_and_governed_metadata_are_locator_derived() -> None:
     assert first.metadata["annotation_source"] == "embed"
     assert first.metadata["frame_indices"] == ()
     assert first.metadata["custom"] == "retained"
+
+
+def test_patch_accepts_manual_roi_identity() -> None:
+    observed = RegionOfInterest(
+        Box(0, 0, 1, 1),
+        image_id="manual-image",
+        roi_key="manual-roi",
+    )
+
+    result = extract_patch([[1]], observed)
+
+    assert result.roi_locator is None
+    assert result.roi_key == "manual-roi"
+    assert result.patch_id.startswith("patch:")
 
 
 def test_patch_accepts_noncanonical_source_ledger_locator() -> None:

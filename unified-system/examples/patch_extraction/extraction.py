@@ -111,7 +111,11 @@ class PatchExtractor:
                 "annotation_source": roi.annotation_source,
                 "confidence": roi.confidence,
                 "frame_indices": list(roi.frame_indices),
-                "source_provenance": roi.source_provenance.to_dict(),
+                "source_provenance": (
+                    roi.source_provenance.to_dict()
+                    if roi.source_provenance is not None
+                    else None
+                ),
                 "source_references": [source.to_dict() for source in roi.sources],
                 "coordinate_frame_id": roi.coordinate_frame_id
                 or _object_attr(image, "coordinate_frame_id"),
@@ -122,6 +126,7 @@ class PatchExtractor:
             status=status,
             image_id=resolved_image_id,
             roi_locator=roi.locator,
+            roi_key=roi.roi_key,
             patch_id=resolved_patch_id,
             bbox=[float(value) for value in extraction_bbox],
             shape=shape,
@@ -305,8 +310,13 @@ def _warnings_for(
 
 
 def _default_patch_id(roi: RegionOfInterest) -> str:
+    identity = (
+        roi.locator.to_dict()
+        if roi.locator is not None
+        else {"image_id": roi.image_id, "roi_key": roi.roi_key}
+    )
     encoded = json.dumps(
-        roi.locator.to_dict(),
+        identity,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
