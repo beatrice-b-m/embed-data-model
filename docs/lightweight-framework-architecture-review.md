@@ -1,32 +1,52 @@
-# Lightweight framework architecture review and recovery plan
+# Lightweight framework architecture review and recovery record
 
 Date: 2026-08-26
 Status: implemented on 2026-08-26
 
-> **Implementation record.** The findings below describe the pre-recovery
-> baseline. The phased plan and global acceptance criteria are now implemented
-> by the canonical `DatasetGraph`/`load_embed` surface, the bounded package
-> facade, repo-only examples, and the replacement-test matrix in
-> [lightweight-framework-test-traceability.md](lightweight-framework-test-traceability.md).
+## Current architecture outcome
+
+The repository now meets the central product goal established by this review: a
+small, source-aware framework that researchers can populate from any supported
+subset of tables and extend with project-specific workflows. The canonical
+`DatasetGraph`/`load_embed` surface provides transactional incremental loading,
+the package root exposes a bounded facade, and optional workflows live in
+repo-only examples. The replacement-test matrix is recorded in
+[lightweight-framework-test-traceability.md](lightweight-framework-test-traceability.md).
+
+The governing requirements, target construction model, dependency rule, and
+global acceptance criteria below remain the current architecture contract. The
+assessment, topology, findings, risks, and phased plan are retained as the
+historical recovery record, not as descriptions of the current tree.
+
+## Historical review baseline
 
 Scope: `unified-system/`, active repository documentation, tests, and relevant
-git history
+git history as reviewed at baseline revision
+`b4e1de8f172d412e0fdd676c31498dee3c8ce110`.
 
-## Executive judgment
+Unless a different revision is written explicitly, every historical source
+path and line reference below is commit-qualified by that baseline revision and
+is relative to `unified-system/src/embed_toolkit/`. This convention keeps
+references to subsequently deleted modules, such as `adapters/embed.py`,
+auditable with
+`git show b4e1de8:unified-system/src/embed_toolkit/<path>`.
 
-The repository does not currently meet its central product goal: a small,
-source-aware framework that researchers can populate from whatever subset of
-tables they have and then extend with project-specific workflows.
+### Pre-recovery executive judgment
 
-The implementation is scientifically careful in several important ways, but it
-is pipeline-shaped rather than framework-shaped. The strongest supported path
-is one complete, wide, finding-grain MagView row stream, optionally followed by
-one image-metadata build and a separate reconciliation call. Patient-only,
-clean exam-only, direct DataFrame, incremental, and multi-table composition are
-either unsupported or require undocumented workarounds.
+At the reviewed baseline, the repository did not meet its central product goal:
+a small, source-aware framework that researchers can populate from whatever
+subset of tables they have and then extend with project-specific workflows.
 
-The most consequential problem is not the 13,320-line size by itself. It is that
-the size has not purchased a composable user model:
+The baseline implementation was scientifically careful in several important
+ways, but it was pipeline-shaped rather than framework-shaped. The strongest
+supported path was one complete, wide, finding-grain MagView row stream,
+optionally followed by one image-metadata build and a separate reconciliation
+call. Patient-only, clean exam-only, direct DataFrame, incremental, and
+multi-table composition were either unsupported or required undocumented
+workarounds.
+
+The most consequential problem was not the 13,320-line size by itself. It was
+that the size had not purchased a composable user model:
 
 - Clinical, image, and patient-history builders create separate object
   registries.
@@ -41,11 +61,11 @@ the size has not purchased a composable user model:
 - Workflow-specific code and its audit/result machinery occupy a substantial
   portion of the installed runtime and are not independently removable.
 
-This is architectural drift, not a documentation problem. The appropriate
-response is not to split the 3,394-line adapter mechanically. The construction
-model should be replaced with one canonical identity registry and a small
+This was architectural drift, not a documentation problem. The appropriate
+response was not to split the 3,394-line adapter mechanically. The construction
+model needed to be replaced with one canonical identity registry and a small
 grain-oriented ingestion protocol, then the old wrappers, clone-based assembly,
-mandatory governance layers, and workflow leakage should be deleted.
+mandatory governance layers, and workflow leakage needed to be deleted.
 
 The recommended north star is:
 
@@ -54,7 +74,7 @@ The recommended north star is:
 > canonical graph. Source-specific rules live in source adapters, and
 > opinionated workflows depend on the framework without becoming part of it.
 
-## Review method and evidence
+### Pre-recovery review method and evidence
 
 This review used four complementary passes:
 
@@ -135,11 +155,11 @@ dictionaries. It means keeping only the mechanisms that enforce current user
 stories, locating them at the correct boundary, and making their cost
 proportional to the task.
 
-## Current topology and scale
+## Pre-recovery topology and scale
 
 ### Runtime allocation
 
-| Package | LOC | Current role |
+| Package | LOC | Baseline role |
 |---|---:|---|
 | `adapters` | 4,732 | Parsing, construction, reconciliation, graph assembly |
 | `workflows` | 1,887 | Localization, matching, transfer, extraction |
@@ -205,9 +225,9 @@ Patient -> Exam -> BreastSide -> Image -> ROI
     -> Patient history
 ```
 
-## Researcher-journey assessment
+## Pre-recovery researcher-journey assessment
 
-| Desired use | Current behavior | Assessment |
+| Desired use | Baseline behavior | Assessment |
 |---|---|---|
 | Pass a filtered pandas DataFrame | DataFrame iteration yields column labels; users must discover `.to_dict("records")` | Unsupported |
 | Build patients from a patient table | Missing accession returns before Patient construction | Unsupported |
@@ -239,7 +259,7 @@ researcher's entry point directly. The replacement corrected many scientific
 and identity defects, then swung past the intended balance into exhaustive
 governance without restoring an equally usable entry point.
 
-## Severity-ranked findings
+## Pre-recovery severity-ranked findings
 
 ### Critical: the assembled object is not the clinical graph
 
@@ -489,7 +509,7 @@ reparsing code while making extensions easier to type and test.
 This is intentionally a library with no CLI, API server, persistence layer, or
 job runner. That makes its Python API and examples the entire product surface.
 
-Today:
+At the reviewed baseline:
 
 - `embed_toolkit` exports only `__version__`.
 - Users need deep adapter imports.
@@ -585,10 +605,9 @@ because they cover old classes.
   loaders targeting the existing graph grains.
 - Deterministic graph traversal and a single serialization policy.
 
-`Cohort` should be deferred from the replacement core unless a concrete loading
-and traversal story appears. It is currently an analytic grouping rather than a
-necessary clinical hierarchy level, and is a candidate for deletion instead of
-automatic migration.
+`Cohort` was deferred from the replacement core because no concrete loading and
+traversal story appeared. It was an analytic grouping rather than a necessary
+clinical hierarchy level and was deleted instead of migrated automatically.
 
 ### Keep in EMBED source adapters
 
@@ -929,7 +948,7 @@ top-level `load_embed(magview=...)` facade; no broader public adapter module is
 promised. The important constraints are one-way dependency, honest naming, and
 physical removability. Core never knows that either kind of recipe exists.
 
-## Phased implementation plan
+## Historical phased implementation plan
 
 The project permits clean API breaks and has no declared external consumers.
 Use that freedom. Do not create a long-lived parallel v1/v2 architecture or
@@ -1208,7 +1227,7 @@ of mandatory machinery on simple paths. The installed runtime should become
 materially smaller as a consequence of deleting duplicate construction paths
 and optional code, not by targeting an arbitrary percentage.
 
-## Risks and controls
+## Historical recovery risks and controls
 
 ### Identity and count changes
 
@@ -1276,12 +1295,11 @@ Control: preserve algorithm-level golden tests and explicitly version example
 outputs. Do not preserve generic wrappers solely for byte-for-byte historical
 serialization when there are no external consumers.
 
-## Recommended immediate next step
+## Completed initial implementation milestone
 
-Begin with the table normalization and canonical Patient/Exam graph slice, not
-with workflow movement or a mechanical adapter split.
-
-The first implementation milestone should demonstrate, in one coherent path:
+The recovery began with the table normalization and canonical Patient/Exam
+graph slice rather than workflow movement or a mechanical adapter split. The
+first implementation milestone demonstrated this coherent path:
 
 ```python
 report = load_embed(
@@ -1292,12 +1310,12 @@ report = load_embed(
 )
 ```
 
-with direct DataFrame support, stable source keys, correct null handling, and
-the same canonical Patient/Exam objects regardless of which subset or order was
-loaded. The milestone also demonstrates invocation-scoped issue inspection,
-same-contribution idempotency, and strict rollback. Once that composition root
-exists, findings, images, ROIs, histories, and the scientific safeguards can
-migrate into it without recreating separate graphs.
+The implemented path provides direct DataFrame support, stable source keys,
+correct null handling, and the same canonical Patient/Exam objects regardless
+of which subset or order was loaded. It also demonstrates invocation-scoped
+issue inspection, same-contribution idempotency, and strict rollback. Findings,
+images, ROIs, histories, and the retained scientific safeguards now compose
+through that root without recreating separate graphs.
 
-That milestone tests the central product promise. Everything else should be
-judged by whether it makes that path safer, clearer, or more extensible.
+That milestone established the central product promise. Subsequent recovery
+work was judged by whether it made that path safer, clearer, or more extensible.
