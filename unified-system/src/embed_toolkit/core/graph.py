@@ -17,13 +17,18 @@ from embed_toolkit.clinical.attributes import (
     PatientAttributeObservation,
     PatientObservationTimeBasis,
 )
-from embed_toolkit.clinical.findings import Finding
+from embed_toolkit.clinical.findings import (
+    Finding,
+    FindingNormalizationEvidence,
+    FindingNormalizationWarning,
+)
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.histories import PatientHistoryObservation
 from embed_toolkit.clinical.pathology import PathologyDiagnosis, PathologyObservation
 from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.clinical.procedures import Procedure, ProcedureIdentity
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.anatomy import AnatomicalPosition, Quadrant
 from embed_toolkit.core.source import (
     Issue,
     IssueSeverity,
@@ -274,6 +279,24 @@ class DatasetGraph:
         finding.laterality = laterality or Laterality.UNKNOWN
         finding.finding_type = _one_value_or_none(
             observations["finding_type"].values()
+        )
+        finding.anatomical_position = _merge_anatomical_positions(
+            observations["anatomical_position"].values()
+        )
+        finding.source_location_codes = _resolved_code_mapping(
+            observations["location_codes"].values()
+        )
+        finding.source_depth_codes = _resolved_code_mapping(
+            observations["depth_codes"].values()
+        )
+        finding.source_distance_codes = _resolved_code_mapping(
+            observations["distance_codes"].values()
+        )
+        finding.normalization_evidence = list(
+            _unique_observation_items(observations["anatomy_evidence"].values())
+        )
+        finding.normalization_warnings = list(
+            _unique_observation_items(observations["anatomy_warnings"].values())
         )
         assessment = _one_value_or_none(observations["assessment"].values())
         recommendation = _one_value_or_none(
@@ -731,6 +754,12 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         finding_type: Optional[str] = None,
         assessment: Optional[str] = None,
         recommendation: Optional[str] = None,
+        anatomical_position: Optional[AnatomicalPosition] = None,
+        location_codes: Optional[Mapping[str, Any]] = None,
+        depth_codes: Optional[Mapping[str, Any]] = None,
+        distance_codes: Optional[Mapping[str, Any]] = None,
+        anatomy_evidence: Tuple[FindingNormalizationEvidence, ...] = (),
+        anatomy_warnings: Tuple[FindingNormalizationWarning, ...] = (),
         values: Optional[Mapping[str, Any]] = None,
         metadata: Optional[Mapping[str, Any]] = None,
     ) -> Finding:
@@ -741,33 +770,70 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         _require_identifier(finding_number, "finding_number")
         side = Laterality.coerce(laterality)
         identity = (accession, finding_number)
-        normalized = values or {
-            "accession": accession,
-            "finding_number": finding_number,
-            "laterality": side.value,
-            "finding_type": finding_type,
-            "assessment": assessment,
-            "recommendation": recommendation,
-        }
+        normalized = dict(
+            values
+            or {
+                "accession": accession,
+                "finding_number": finding_number,
+                "laterality": side.value,
+                "finding_type": finding_type,
+                "assessment": assessment,
+                "recommendation": recommendation,
+            }
+        )
+        normalized.update(
+            {
+                "anatomical_position": anatomical_position,
+                "location_codes": dict(location_codes or {}),
+                "depth_codes": dict(depth_codes or {}),
+                "distance_codes": dict(distance_codes or {}),
+                "anatomy_evidence": tuple(anatomy_evidence),
+                "anatomy_warnings": tuple(anatomy_warnings),
+            }
+        )
         contribution = _Contribution(
             source=source,
             concept="finding",
             slot="",
             entity_id="\x1f".join(identity),
             payload=_freeze(normalized),
-            metadata=dict(metadata or {}),
+            metadata={
+                **dict(metadata or {}),
+                "_anatomy": {
+                    "anatomical_position": anatomical_position,
+                    "location_codes": dict(location_codes or {}),
+                    "depth_codes": dict(depth_codes or {}),
+                    "distance_codes": dict(distance_codes or {}),
+                    "anatomy_evidence": tuple(anatomy_evidence),
+                    "anatomy_warnings": tuple(anatomy_warnings),
+                },
+            },
         )
         if not self._stage(contribution):
-            return self.graph.finding(*identity) or Finding(accession, side, finding_number)
+            return self.graph.finding(*identity) or Finding(
+                accession, side, finding_number
+            )
 
         for field, value in (
             ("laterality", side if side is not Laterality.UNKNOWN else None),
             ("finding_type", finding_type),
             ("assessment", assessment),
             ("recommendation", recommendation),
+            ("anatomical_position", anatomical_position),
         ):
             observed = self._observed_finding_values(identity, field)
-            if value is not None and observed - {value}:
+            conflicts = (
+                value is not None
+                and (
+                    any(
+                        not _anatomical_positions_compatible(item, value)
+                        for item in observed
+                    )
+                    if field == "anatomical_position"
+                    else bool(observed - {value})
+                )
+            )
+            if conflicts:
                 self.add_issue(
                     Issue(
                         code="conflicting_finding_field",
@@ -777,12 +843,16 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                             "accession": accession,
                             "finding_number": finding_number,
                             "field": field,
-                            "observed_values": sorted(str(item) for item in observed | {value}),
+                            "observed_values": sorted(
+                                str(item) for item in observed | {value}
+                            ),
                         },
                     )
                 )
 
-        self._exam_nodes.setdefault(accession, self.graph.exam(accession) or Exam(accession))
+        self._exam_nodes.setdefault(
+            accession, self.graph.exam(accession) or Exam(accession)
+        )
         finding = self.graph.finding(*identity)
         if finding is None:
             finding = self._finding_nodes.setdefault(
@@ -804,7 +874,11 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             if tuple(contribution.entity_id.split("\x1f", 1)) != identity:
                 continue
             payload = dict(_thaw_mapping(contribution.payload))
-            value = payload.get(field)
+            value = (
+                contribution.metadata.get("_anatomy", {}).get(field)
+                if field == "anatomical_position"
+                else payload.get(field)
+            )
             if field == "laterality" and value is not None:
                 value = Laterality.coerce(value)
             if value is not None and value is not Laterality.UNKNOWN:
@@ -1264,6 +1338,17 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 )
                 for field in ("finding_type", "assessment", "recommendation"):
                     observations[field][contribution.source] = values.get(field)
+                for field in (
+                    "anatomical_position",
+                    "location_codes",
+                    "depth_codes",
+                    "distance_codes",
+                    "anatomy_evidence",
+                    "anatomy_warnings",
+                ):
+                    observations[field][contribution.source] = contribution.metadata[
+                        "_anatomy"
+                    ][field]
                 touched_findings.add(identity)
                 continue
             if contribution.concept == "image":
@@ -1377,6 +1462,82 @@ def _one_enum_or_unknown(values: Any, unknown: Any) -> Any:
     return next(iter(populated)) if len(populated) == 1 else unknown
 
 
+def _resolved_code_mapping(mappings: Any) -> Dict[str, Any]:
+    observations: DefaultDict[str, list[Any]] = defaultdict(list)
+    for mapping in mappings:
+        for field, value in (mapping or {}).items():
+            if value not in observations[field]:
+                observations[field].append(value)
+    return {
+        field: values[0]
+        for field, values in observations.items()
+        if len(values) == 1
+    }
+
+
+def _unique_observation_items(collections: Any) -> Tuple[Any, ...]:
+    items: list[Any] = []
+    for collection in collections:
+        for item in collection or ():
+            if item not in items:
+                items.append(item)
+    return tuple(items)
+
+
+def _anatomical_positions_compatible(
+    left: AnatomicalPosition, right: AnatomicalPosition
+) -> bool:
+    for first, second in (
+        (left.laterality, right.laterality),
+        (left.quadrant.ml, right.quadrant.ml),
+        (left.quadrant.si, right.quadrant.si),
+        (left.quadrant.depth, right.quadrant.depth),
+        (left.clock_position, right.clock_position),
+        (left.location_category, right.location_category),
+        (left.distance_from_nipple_cm, right.distance_from_nipple_cm),
+    ):
+        if _is_known_anatomy(first) and _is_known_anatomy(second) and first != second:
+            return False
+    return True
+
+
+def _merge_anatomical_positions(values: Any) -> Optional[AnatomicalPosition]:
+    positions = [value for value in values if value is not None]
+    if not positions:
+        return None
+    if any(
+        not _anatomical_positions_compatible(left, right)
+        for index, left in enumerate(positions)
+        for right in positions[index + 1 :]
+    ):
+        return None
+
+    def choose(items: Any) -> Any:
+        return next((item for item in items if _is_known_anatomy(item)), items[0])
+
+    laterality = choose([position.laterality for position in positions])
+    return AnatomicalPosition(
+        laterality=laterality,
+        quadrant=Quadrant(
+            laterality=laterality,
+            ml=choose([position.quadrant.ml for position in positions]),
+            si=choose([position.quadrant.si for position in positions]),
+            depth=choose([position.quadrant.depth for position in positions]),
+        ),
+        clock_position=choose([position.clock_position for position in positions]),
+        location_category=choose(
+            [position.location_category for position in positions]
+        ),
+        distance_from_nipple_cm=choose(
+            [position.distance_from_nipple_cm for position in positions]
+        ),
+    )
+
+
+def _is_known_anatomy(value: Any) -> bool:
+    return value is not None and getattr(value, "name", None) != "UNKNOWN"
+
+
 def _freeze(value: Any) -> Tuple[Any, ...]:
     if isinstance(value, Mapping):
         return (
@@ -1401,7 +1562,8 @@ def _thaw_mapping(value: Tuple[Any, ...]) -> Tuple[Tuple[str, Any], ...]:
 
 
 def _thaw(value: Tuple[Any, ...]) -> Any:
-    tag, payload = value
+    tag = value[0]
+    payload = value[1] if len(value) == 2 else value[-1]
     if tag == "mapping":
         return {key: _thaw(item) for key, item in payload}
     if tag == "sequence":

@@ -23,6 +23,12 @@ from embed_toolkit.clinical.attributes import (
 )
 from embed_toolkit.core.source import CanonicalKey, SourceRef
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
+from embed_toolkit.core.anatomy import (
+    AnatomicalLocationCategory,
+    DepthThird,
+    MedialLateralAxis,
+    SuperiorInferiorAxis,
+)
 
 
 def test_source_keys_are_typed_and_round_trip() -> None:
@@ -917,3 +923,95 @@ def test_patient_attribute_error_rolls_back_patient_in_strict_mode() -> None:
             mode="strict",
         )
     assert graph.patient("P-1") is None
+
+
+def test_finding_anatomy_normalizes_magview_codes_and_distance() -> None:
+    report = load_embed(
+        findings=[
+            {
+                "acc_anon": "A-1",
+                "numfind": "1",
+                "side": "L",
+                "location": "10;S",
+                "depth": "P",
+                "distance": "4.5",
+            }
+        ],
+        source_scope="release-1",
+    )
+
+    finding = report.graph.finding("A-1", "1")
+    position = finding.anatomical_position
+    assert position.clock_position.hour == 10
+    assert position.location_category is AnatomicalLocationCategory.SUBAREOLAR
+    assert position.quadrant.ml is MedialLateralAxis.MEDIAL
+    assert position.quadrant.si is SuperiorInferiorAxis.SUPERIOR
+    assert position.quadrant.depth is DepthThird.POSTERIOR
+    assert position.distance_from_nipple_cm == 4.5
+    assert finding.source_location_codes == {"location": "10;S"}
+    assert finding.source_depth_codes == {"depth": "P"}
+    assert finding.source_distance_codes == {"distance": "4.5"}
+    assert {item.source_field for item in finding.normalization_evidence} == {
+        "location",
+        "depth",
+        "distance",
+    }
+    assert report.issues == ()
+
+
+def test_repeated_finding_anatomy_rows_merge_only_compatible_values() -> None:
+    compatible = load_embed(
+        findings=pd.DataFrame(
+            {
+                "acc_anon": ["A-1", "A-1", "A-1"],
+                "numfind": ["1", "1", "1"],
+                "side": ["R", "R", "R"],
+                "location": ["OU", None, None],
+                "depth": [None, "P", None],
+                "distance": [None, None, "2.5"],
+            },
+            index=[1, 2, 3],
+        ),
+        source_scope="release-1",
+    )
+    position = compatible.graph.finding("A-1", "1").anatomical_position
+    assert position.quadrant.ml is MedialLateralAxis.LATERAL
+    assert position.quadrant.depth is DepthThird.POSTERIOR
+    assert position.distance_from_nipple_cm == 2.5
+    assert compatible.issues == ()
+
+    conflicting = load_embed(
+        findings=pd.DataFrame(
+            {
+                "acc_anon": ["A-1", "A-1"],
+                "numfind": ["1", "1"],
+                "side": ["R", "R"],
+                "depth": ["A", "P"],
+            },
+            index=[1, 2],
+        ),
+        source_scope="release-1",
+    )
+    assert conflicting.graph.finding("A-1", "1").anatomical_position is None
+    assert [issue.code for issue in conflicting.issues] == [
+        "conflicting_finding_field"
+    ]
+
+
+def test_invalid_finding_distance_is_a_transactional_issue() -> None:
+    row = {
+        "acc_anon": "A-1",
+        "numfind": "1",
+        "side": "L",
+        "distance": -1,
+    }
+    audit = load_embed(findings=[row])
+    finding = audit.graph.finding("A-1", "1")
+    assert finding.source_distance_codes == {"distance": -1}
+    assert finding.normalization_evidence[0].normalized_value is None
+    assert [issue.code for issue in audit.issues] == ["invalid_finding_distance"]
+
+    graph = DatasetGraph()
+    with pytest.raises(LoadError, match="invalid_finding_distance"):
+        load_embed(findings=[row], into=graph, mode="strict")
+    assert graph.findings == ()

@@ -34,6 +34,9 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "finding_type": None,
                 "assessment": "asses",
                 "recommendation": "recc",
+                "location": "location",
+                "depth": "depth",
+                "distance": "distance",
             }
         ),
         "images": MappingProxyType(

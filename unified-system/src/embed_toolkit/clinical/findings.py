@@ -11,6 +11,7 @@ from embed_toolkit.clinical.procedures import _to_plain
 from embed_toolkit.core.anatomy import AnatomicalPosition
 from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.provenance import SourceLocator
+from embed_toolkit.core.source import SourceRef
 
 
 class FindingRecordType(str, Enum):
@@ -24,15 +25,15 @@ class FindingRecordType(str, Enum):
 class FindingNormalizationEvidence:
     """Source-scoped evidence supporting one normalized finding attribute."""
 
-    source: SourceLocator
+    source: object
     source_field: str
     raw_value: Any
     normalized_kind: str
     normalized_value: Any = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
         for attribute in ("source_field", "normalized_kind"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
@@ -52,15 +53,15 @@ class FindingNormalizationEvidence:
 class FindingNormalizationWarning:
     """Source-scoped warning emitted while normalizing finding anatomy."""
 
-    source: SourceLocator
+    source: object
     code: str
     message: str
     source_field: Optional[str] = None
     raw_value: Any = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
         for attribute in ("code", "message"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():

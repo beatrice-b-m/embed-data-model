@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import json
@@ -18,6 +18,11 @@ from embed_toolkit.adapters.tables import (
 )
 from embed_toolkit.clinical.associations import AssociationLink, AttributionStatus
 from embed_toolkit.clinical.attributes import PatientAttributeName
+from embed_toolkit.clinical.findings import (
+    FindingNormalizationEvidence,
+    FindingNormalizationWarning,
+)
+from embed_toolkit.core.anatomy import AnatomicalPosition, Quadrant
 from embed_toolkit.core.graph import DatasetGraph
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.source import Issue, SourceRef
@@ -26,6 +31,7 @@ from embed_toolkit.sources.embed.histories import (
     normalize_medication_history,
     normalize_procedure_history,
 )
+from embed_toolkit.adapters.magview import normalize_magview_location
 from embed_toolkit.sources.embed.procedures_pathology import (
     normalize_pathology,
     normalize_procedure,
@@ -509,6 +515,13 @@ def _load_findings(
             "assessment": _mapped_text(record.mapping, columns["assessment"]),
             "recommendation": _mapped_text(record.mapping, columns["recommendation"]),
         }
+        anatomy = _finding_anatomy(
+            record.mapping,
+            columns,
+            source,
+            laterality,
+            transaction,
+        )
         transaction.upsert_finding(
             accession,
             finding_number,
@@ -517,9 +530,153 @@ def _load_findings(
             finding_type=values["finding_type"],
             assessment=values["assessment"],
             recommendation=values["recommendation"],
+            anatomical_position=anatomy["position"],
+            location_codes=anatomy["location_codes"],
+            depth_codes=anatomy["depth_codes"],
+            distance_codes=anatomy["distance_codes"],
+            anatomy_evidence=anatomy["evidence"],
+            anatomy_warnings=anatomy["warnings"],
             values=values,
             metadata=_evidence(record.mapping, retain_raw),
         )
+
+
+def _finding_anatomy(
+    row: Mapping[str, Any],
+    columns: Mapping[str, Optional[str]],
+    source: SourceRef,
+    laterality: Laterality,
+    transaction: Any,
+) -> dict[str, Any]:
+    location_column = columns["location"]
+    depth_column = columns["depth"]
+    distance_column = columns["distance"]
+    side_column = columns["laterality"]
+    location_present = location_column is not None and location_column in row
+    depth_present = depth_column is not None and depth_column in row
+    distance_present = distance_column is not None and distance_column in row
+    location_value = row.get(location_column) if location_present else None
+    depth_value = row.get(depth_column) if depth_present else None
+    distance_value = row.get(distance_column) if distance_present else None
+    location_codes = {location_column: location_value} if location_present else {}
+    depth_codes = {depth_column: depth_value} if depth_present else {}
+    distance_codes = {distance_column: distance_value} if distance_present else {}
+    evidence: list[FindingNormalizationEvidence] = []
+    warnings: list[FindingNormalizationWarning] = []
+    position: Optional[AnatomicalPosition] = None
+    has_location = location_present and not _is_missing(location_value)
+    has_depth = depth_present and not _is_missing(depth_value)
+    if has_location or has_depth:
+        normalized = normalize_magview_location(
+            laterality=laterality,
+            location_code=location_value if has_location else None,
+            depth_code=depth_value if has_depth else None,
+        )
+        source_fields = {
+            "location_code": (location_column, location_value),
+            "depth_code": (depth_column, depth_value),
+            "laterality": (side_column, row.get(side_column)),
+        }
+        for item in normalized.evidence:
+            source_field, raw_value = source_fields[item.field]
+            if source_field is not None:
+                evidence.append(
+                    FindingNormalizationEvidence(
+                        source=source,
+                        source_field=source_field,
+                        raw_value=raw_value,
+                        normalized_kind=item.normalized_kind,
+                        normalized_value=(
+                            item.normalized_value
+                            if laterality.is_unilateral
+                            else None
+                        ),
+                    )
+                )
+        for warning in normalized.warnings:
+            source_field, raw_value = source_fields.get(
+                warning.field, (None, warning.raw_value)
+            )
+            warnings.append(
+                FindingNormalizationWarning(
+                    source=source,
+                    source_field=source_field,
+                    raw_value=raw_value,
+                    code=warning.code,
+                    message=warning.message,
+                )
+            )
+        position = (
+            normalized.position
+            if laterality.is_unilateral
+            else AnatomicalPosition(
+                laterality=laterality,
+                quadrant=Quadrant(laterality=laterality),
+            )
+        )
+
+    has_distance = distance_present and not _is_missing(distance_value)
+    if has_distance:
+        distance: Optional[float]
+        try:
+            if isinstance(distance_value, bool):
+                raise ValueError
+            distance = float(distance_value)
+            if not isfinite(distance) or distance < 0:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            distance = None
+            transaction.add_issue(
+                Issue(
+                    code="invalid_finding_distance",
+                    message="finding distance must be finite and nonnegative",
+                    source=source,
+                    context={
+                        "source_field": distance_column,
+                        "raw_value": distance_value,
+                    },
+                )
+            )
+        assert distance_column is not None
+        evidence.append(
+            FindingNormalizationEvidence(
+                source=source,
+                source_field=distance_column,
+                raw_value=distance_value,
+                normalized_kind="distance_from_nipple_cm",
+                normalized_value=distance,
+            )
+        )
+        if position is None and distance is not None and laterality.is_unilateral:
+            position = AnatomicalPosition(
+                laterality=laterality,
+                quadrant=Quadrant(laterality=laterality),
+            )
+        if position is not None and distance is not None:
+            position = replace(position, distance_from_nipple_cm=distance)
+
+    if (
+        (has_location or has_depth or has_distance)
+        and not laterality.is_unilateral
+        and not any(warning.code == "unsupported_laterality" for warning in warnings)
+    ):
+        warnings.append(
+            FindingNormalizationWarning(
+                source=source,
+                source_field=side_column,
+                raw_value=row.get(side_column) if side_column is not None else None,
+                code="unsupported_laterality",
+                message="finding anatomy requires left or right laterality",
+            )
+        )
+    return {
+        "position": position,
+        "location_codes": location_codes,
+        "depth_codes": depth_codes,
+        "distance_codes": distance_codes,
+        "evidence": tuple(evidence),
+        "warnings": tuple(warnings),
+    }
 
 
 def _load_images(
