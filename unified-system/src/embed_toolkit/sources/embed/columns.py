@@ -58,6 +58,34 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "coordinate_frame_id": None,
             }
         ),
+        "hormone_history": MappingProxyType(
+            {
+                "patient_id": "empi_anon",
+                "accession": "acc_anon",
+                "category": "type",
+                "medication": "code",
+                "continuous": "continuous",
+                "current": "current",
+                "duration": "duration",
+                "start_age": "first_age",
+                "start_month": "mfirst",
+                "start_year": "yfirst",
+                "stop_age": "last_age",
+                "stop_month": "mlast",
+                "stop_year": "ylast",
+                "comment": "comment",
+            }
+        ),
+        "procedure_history": MappingProxyType(
+            {
+                "patient_id": "empi_anon",
+                "accession": "acc_anon",
+                "category": "type",
+                "procedure": "pcode",
+                "laterality": "side",
+                "result": "result",
+            }
+        ),
     }
 )
 
@@ -67,6 +95,8 @@ _REQUIRED = {
     "findings": frozenset({"accession", "finding_number"}),
     "images": frozenset({"image_id"}),
     "rois": frozenset({"image_id", "coordinates"}),
+    "hormone_history": frozenset({"patient_id", "category", "medication"}),
+    "procedure_history": frozenset({"patient_id", "category", "procedure"}),
 }
 
 

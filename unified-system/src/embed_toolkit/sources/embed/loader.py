@@ -18,6 +18,10 @@ from embed_toolkit.core.graph import DatasetGraph
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.source import Issue, SourceRef
 from embed_toolkit.sources.embed.columns import resolve_columns
+from embed_toolkit.sources.embed.histories import (
+    normalize_medication_history,
+    normalize_procedure_history,
+)
 
 
 SourceKeySelector = Union[str, Callable[[Mapping[str, Any]], Any]]
@@ -39,6 +43,8 @@ def load_embed(
     findings: Any = None,
     images: Any = None,
     rois: Any = None,
+    hormone_history: Any = None,
+    procedure_history: Any = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
@@ -128,6 +134,26 @@ def load_embed(
             columns=column_maps["rois"],
             retain_raw=retain_raw,
         )
+        _load_histories(
+            hormone_history,
+            table_name="hormone_history",
+            normalizer=normalize_medication_history,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["hormone_history"],
+            columns=column_maps["hormone_history"],
+            retain_raw=retain_raw,
+        )
+        _load_histories(
+            procedure_history,
+            table_name="procedure_history",
+            normalizer=normalize_procedure_history,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["procedure_history"],
+            columns=column_maps["procedure_history"],
+            retain_raw=retain_raw,
+        )
 
     return LoadReport(
         graph=graph,
@@ -145,6 +171,8 @@ def _resolve_source_keys(
         "findings": None,
         "images": None,
         "rois": None,
+        "hormone_history": None,
+        "procedure_history": None,
     }
     if source_keys is None:
         return resolved
@@ -526,6 +554,53 @@ def _load_rois(
             coordinate_frame_id=values["coordinate_frame_id"],
             source_coordinates=source_coordinates,
             source_coordinate_convention="inclusive_maxima",
+            values=values,
+            metadata=_evidence(record.mapping, retain_raw),
+        )
+
+
+def _load_histories(
+    table: Any,
+    *,
+    table_name: str,
+    normalizer: Callable[..., Any],
+    transaction: Any,
+    source_scope: str,
+    source_key: Optional[SourceKeySelector],
+    columns: Mapping[str, Optional[str]],
+    retain_raw: bool,
+) -> None:
+    patient_column = columns["patient_id"]
+    assert patient_column is not None
+    for record in _table_records(table, source_key, table_name, transaction):
+        source = _record_source(record, source_scope, table_name)
+        if not _add_table_issues(record, source, transaction):
+            continue
+        raw_patient_id = record.mapping.get(patient_column)
+        patient_id = _normalize_identifier(raw_patient_id)
+        if patient_id is None:
+            transaction.add_issue(
+                _identity_issue("patient_id", raw_patient_id, source, patient_column)
+            )
+            continue
+        transaction.upsert_patient(
+            patient_id,
+            source,
+            values={"patient_id": patient_id},
+            metadata=_evidence(record.mapping, retain_raw),
+        )
+        observation, issues = normalizer(
+            record.mapping, columns, source, patient_id
+        )
+        for issue in issues:
+            transaction.add_issue(issue)
+        if observation is None:
+            continue
+        values = dict(observation.to_dict())
+        values.pop("source", None)
+        transaction.upsert_history(
+            observation,
+            source,
             values=values,
             metadata=_evidence(record.mapping, retain_raw),
         )

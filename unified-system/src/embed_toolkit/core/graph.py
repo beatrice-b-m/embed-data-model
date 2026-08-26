@@ -12,6 +12,7 @@ from uuid import uuid4
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
+from embed_toolkit.clinical.histories import PatientHistoryObservation
 from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.source import (
@@ -65,6 +66,9 @@ class DatasetGraph:
         self._findings: Dict[Tuple[str, str], Finding] = {}
         self._images: Dict[str, MammogramImage] = {}
         self._rois: Dict[Tuple[str, str], RegionOfInterest] = {}
+        self._histories: Dict[
+            Tuple[str, SourceRef, str], PatientHistoryObservation
+        ] = {}
         self._contributions: Dict[Tuple[SourceRef, str, str], _Contribution] = {}
         self._issues: list[Issue] = []
         self._issue_fingerprints: set[Tuple[Any, ...]] = set()
@@ -129,6 +133,21 @@ class DatasetGraph:
         """Return resolved ROI observations ordered by image and ROI key."""
 
         return tuple(self._rois[key] for key in sorted(self._rois))
+
+    @property
+    def histories(self) -> Tuple[PatientHistoryObservation, ...]:
+        """Return patient histories in deterministic physical-source order."""
+
+        return tuple(
+            sorted(
+                self._histories.values(),
+                key=lambda item: (
+                    item.patient_id,
+                    type(item).__name__,
+                    repr(item.source.to_dict()),
+                ),
+            )
+        )
 
     def patient(self, patient_id: str) -> Optional[Patient]:
         return self._patients.get(patient_id)
@@ -406,6 +425,9 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         self._finding_nodes: Dict[Tuple[str, str], Finding] = {}
         self._image_nodes: Dict[str, MammogramImage] = {}
         self._roi_nodes: Dict[Tuple[str, str], RegionOfInterest] = {}
+        self._history_nodes: Dict[
+            Tuple[str, SourceRef, str], PatientHistoryObservation
+        ] = {}
         self._closed = False
 
     def __enter__(self) -> "GraphTransaction":
@@ -841,6 +863,39 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 values.add(tuple(value) if isinstance(value, (list, tuple)) else value)
         return values
 
+    def upsert_history(
+        self,
+        observation: PatientHistoryObservation,
+        source: SourceRef,
+        *,
+        values: Optional[Mapping[str, Any]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> PatientHistoryObservation:
+        """Stage one patient-owned history observation."""
+
+        _require_open(self)
+        if not isinstance(observation, PatientHistoryObservation):
+            raise TypeError("observation must be a PatientHistoryObservation")
+        if observation.source != source:
+            raise ValueError("history observation source must match contribution source")
+        key = (observation.patient_id, source, type(observation).__name__)
+        contribution = _Contribution(
+            source=source,
+            concept="history",
+            slot=type(observation).__name__,
+            entity_id=observation.patient_id,
+            payload=_freeze(values or observation.to_dict()),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph._histories.get(key, observation)
+        self._patient_nodes.setdefault(
+            observation.patient_id,
+            self.graph.patient(observation.patient_id)
+            or Patient(observation.patient_id),
+        )
+        return self._history_nodes.setdefault(key, observation)
+
     def _observed_exam_values(self, accession: str, field: str) -> set[Any]:
         values = {
             value
@@ -893,6 +948,8 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             graph._images.setdefault(image_id, image)
         for identity, roi in self._roi_nodes.items():
             graph._rois.setdefault(identity, roi)
+        for key, observation in self._history_nodes.items():
+            graph._histories.setdefault(key, observation)
 
         touched_exams: set[str] = set()
         touched_findings: set[Tuple[str, str]] = set()
@@ -960,6 +1017,10 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 side.findings.sort(key=lambda finding: finding.identity)
         graph._resolve_images()
         graph._resolve_rois()
+        for patient in graph._patients.values():
+            patient.history_observations.clear()
+        for observation in graph.histories:
+            graph._patients[observation.patient_id].add_history_observation(observation)
         for issue in self.issues:
             graph._record_issue(issue)
 

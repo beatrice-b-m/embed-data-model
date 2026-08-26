@@ -8,6 +8,7 @@ from typing import Dict, Optional, Tuple
 
 from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.provenance import SourceLocator
+from embed_toolkit.core.source import SourceRef
 
 
 def _optional_text(value: Optional[str], name: str) -> Optional[str]:
@@ -64,17 +65,17 @@ class PatientHistoryObservation:
     """Base for one patient-reported history item at one physical source row."""
 
     patient_id: str
-    source: SourceLocator
+    source: object
 
     def __post_init__(self) -> None:
         if not isinstance(self.patient_id, str) or not self.patient_id.strip():
             raise ValueError("patient_id must be a non-empty string")
         object.__setattr__(self, "patient_id", self.patient_id.strip())
-        if not isinstance(self.source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
 
     @property
-    def identity(self) -> Tuple[str, SourceLocator]:
+    def identity(self) -> Tuple[str, object]:
         """Keep repeated reports distinct by physical source occurrence."""
 
         return self.patient_id, self.source

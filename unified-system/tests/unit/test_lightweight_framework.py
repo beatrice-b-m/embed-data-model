@@ -531,3 +531,85 @@ def test_manual_box_and_roi_do_not_require_source_provenance() -> None:
     assert roi.coordinates == box.as_tuple()
     assert roi.sources == ()
     assert roi.area == 200.0
+
+
+def test_auxiliary_histories_load_onto_one_canonical_patient() -> None:
+    report = load_embed(
+        hormone_history=pd.DataFrame(
+            {
+                "empi_anon": ["P-1"],
+                "type": ["H"],
+                "code": ["ESTRO"],
+                "current": ["Y"],
+                "first_age": [42],
+            },
+            index=[101],
+        ),
+        procedure_history=pd.DataFrame(
+            {
+                "empi_anon": ["P-1"],
+                "type": ["B"],
+                "pcode": ["SB"],
+                "side": ["L"],
+                "result": ["BEN"],
+            },
+            index=[202],
+        ),
+        source_scope="release-1",
+    )
+
+    patient = report.graph.patient("P-1")
+    assert patient is not None
+    assert len(report.graph.histories) == 2
+    assert tuple(patient.history_observations) == report.graph.histories
+    assert patient.medication_history[0].medication == "estrogen"
+    assert patient.medication_history[0].started.age == 42.0
+    assert patient.procedure_history[0].detail == "stereotactic_core_biopsy"
+    assert patient.procedure_history[0].reported_result == "benign"
+    assert report.issues == ()
+
+
+def test_history_then_exam_enriches_same_patient_identity() -> None:
+    graph = DatasetGraph(source_scope="release-1")
+    load_embed(
+        procedure_history=[
+            {"empi_anon": "P-1", "type": "B", "pcode": "L"}
+        ],
+        into=graph,
+    )
+    patient = graph.patient("P-1")
+
+    load_embed(
+        exams=[{"acc_anon": "A-1", "empi_anon": "P-1"}],
+        into=graph,
+    )
+
+    assert graph.patient("P-1") is patient
+    assert patient.exams == [graph.exam("A-1")]
+    assert len(patient.history_observations) == 1
+
+
+def test_invalid_history_child_rolls_back_safe_parent_in_strict_mode() -> None:
+    graph = DatasetGraph(source_scope="release-1")
+
+    with pytest.raises(LoadError, match="incomplete_medication_history_identity"):
+        load_embed(
+            hormone_history=[{"empi_anon": "P-1", "type": "H"}],
+            into=graph,
+            mode="strict",
+        )
+
+    assert graph.patient("P-1") is None
+    assert graph.histories == ()
+
+
+def test_audit_history_retains_safe_patient_when_child_is_incomplete() -> None:
+    report = load_embed(
+        hormone_history=[{"empi_anon": "P-1", "type": "H"}],
+    )
+
+    assert report.graph.patient("P-1") is not None
+    assert report.graph.histories == ()
+    assert [issue.code for issue in report.issues] == [
+        "incomplete_medication_history_identity"
+    ]
