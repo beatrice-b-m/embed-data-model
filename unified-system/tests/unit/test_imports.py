@@ -19,7 +19,6 @@ PUBLIC_NAMESPACE_MODULES = [
     "embed_toolkit.imaging",
     "embed_toolkit.sources.embed",
     "embed_toolkit.visualization",
-    "embed_toolkit.workflows",
 ]
 
 LEGACY_IMPORT_PREFIXES = (
@@ -198,7 +197,6 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
             "embed_toolkit.imaging.roi_provenance"
         )
         visualization = importlib.import_module("embed_toolkit.visualization")
-        workflows = importlib.import_module("embed_toolkit.workflows")
 
     assert package.DatasetGraph
     assert package.load_embed
@@ -255,4 +253,3 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         sources=(image_source,),
     ).area == 1
     assert visualization.build_mammogram_render_plan
-    assert workflows.extract_patch

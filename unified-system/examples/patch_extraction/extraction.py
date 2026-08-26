@@ -8,9 +8,15 @@ import math
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
-from embed_toolkit.audit.evidence import AuditWarning, Evidence, WarningSeverity
-from embed_toolkit.audit.results import PatchExtractionResult, ResultStatus
 from embed_toolkit.imaging.rois import RegionOfInterest
+
+from examples.patch_extraction.results import (
+    AuditWarning,
+    Evidence,
+    PatchExtractionResult,
+    ResultStatus,
+    WarningSeverity,
+)
 
 
 PixelData = Any

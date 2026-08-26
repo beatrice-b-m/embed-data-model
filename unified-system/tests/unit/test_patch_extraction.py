@@ -1,10 +1,12 @@
+"""Acceptance tests for the repository-only patch-extraction recipe."""
+
 from __future__ import annotations
 
 from dataclasses import replace
 
 import pytest
 
-from embed_toolkit.audit.results import ResultStatus
+from examples.patch_extraction import PatchExtractor, ResultStatus, extract_patch
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
@@ -16,7 +18,6 @@ from embed_toolkit.imaging.roi_provenance import (
     RoiSourceProvenance,
 )
 from embed_toolkit.imaging.rois import RegionOfInterest
-from embed_toolkit.workflows.patch_extraction import PatchExtractor, extract_patch
 
 
 def roi(
