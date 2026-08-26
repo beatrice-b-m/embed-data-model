@@ -1,8 +1,8 @@
 # Patient history auxiliary-table assessment
 
 Date: 2026-08-25  
-Scope: reference code in `temp/hormonehist/` and `temp/prochist/`, interpreted
-against the runtime under `unified-system/`
+Scope: former reference code from `temp/hormonehist/` and `temp/prochist/`,
+preserved here and interpreted against the runtime under `unified-system/`
 
 ## Conclusion
 
@@ -86,8 +86,9 @@ for `type=O`.
 | `O` | contraceptive | `C`, `ORAL`, `O` |
 
 The named meanings in the reference are translated to readable open strings,
-but unknown future codes are retained rather than rejected. Raw values remain
-available in the source occurrence ledger.
+but unknown future codes are retained rather than rejected. Physical source
+identity is always retained; complete raw rows are retained only when the
+caller explicitly selects `retain_raw=True`.
 
 ### Semantics that remain unestablished
 
@@ -148,18 +149,23 @@ The translation is intentionally split into two layers:
 
 - `clinical/histories.py` contains source-neutral base and concrete observation
   classes. `Patient` owns an extensible `history_observations` collection.
-- `adapters/embed_history.py` contains only the reference EMBED code mappings,
-  parsing rules, source ledger, and structured build issues.
+- `sources/embed/histories.py` contains only the EMBED code mappings and
+  parsing rules. `sources/embed/loader.py` projects `HormoneHist` and
+  `ProcHist` rows through `DatasetGraph.transaction()`.
 
-The adapter defaults to audit/fail-soft behavior. A row needs patient,
+`load_embed` defaults to audit/fail-soft behavior. A row needs patient,
 category, and item code to create an observation. Unknown but populated codes
-produce warnings and remain represented; missing construction identity leaves
-an unresolved `SourceOccurrence`. Callers can opt into `BuildPolicy.strict()`
-for validation jobs.
+produce issues and remain represented; audit mode retains a safely identified
+patient when a child observation is incomplete. Callers can select
+`mode="strict"` to roll back the complete invocation.
 
-The adapter deliberately has no `ProfileContract`. Adding these tables to a
-governed internal profile requires confirmation from the actual catalog/data
+These tables deliberately have no mandatory profile contract. Any future
+maintainer-only catalog validation requires confirmation from the actual data
 dictionary and representative source rows.
+
+The original prototypes under `temp/hormonehist/` and `temp/prochist/` were
+deleted after this document captured their supported vocabularies,
+contradictions, and unresolved production-verification questions.
 
 ## Production verification gate
 
