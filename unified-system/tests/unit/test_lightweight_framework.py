@@ -1060,3 +1060,31 @@ def test_misaligned_roi_frames_are_reported_without_erasing_safe_geometry() -> N
     with pytest.raises(LoadError, match="invalid_roi_frames"):
         load_embed(rois=[row], into=graph, mode="strict")
     assert graph.rois == ()
+
+
+def test_exam_observations_distinguish_absent_from_explicit_null() -> None:
+    report = load_embed(
+        exams=[
+            {"acc_anon": "A-1"},
+            {"acc_anon": "A-1", "desc": None},
+            {"acc_anon": "A-1", "studydate_anon": "2020-01-02"},
+        ],
+        source_scope="release-1",
+    )
+
+    exam = report.graph.exam("A-1")
+    description_observations = [
+        item
+        for item in exam.attribute_observations
+        if item.attribute.value == "description"
+    ]
+    date_observations = [
+        item
+        for item in exam.attribute_observations
+        if item.attribute.value == "exam_date"
+    ]
+    assert [item.value for item in description_observations] == [None]
+    assert [item.value for item in date_observations] == ["2020-01-02"]
+    assert exam.exam_date == "2020-01-02"
+    assert exam.description is None
+    assert report.issues == ()

@@ -446,6 +446,14 @@ def _load_exams(
             "patient_id": patient_id,
             "exam_date": exam_date,
             "exam_description": description,
+            "exam_date_present": (
+                columns["exam_date"] is not None
+                and columns["exam_date"] in record.mapping
+            ),
+            "exam_description_present": (
+                columns["exam_description"] is not None
+                and columns["exam_description"] in record.mapping
+            ),
         }
         transaction.upsert_exam(
             accession,

@@ -13,6 +13,8 @@ from uuid import uuid4
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.associations import AssociationLink
 from embed_toolkit.clinical.attributes import (
+    ExamAttributeName,
+    ExamAttributeObservation,
     PatientAttributeName,
     PatientAttributeObservation,
     PatientObservationTimeBasis,
@@ -258,6 +260,20 @@ class DatasetGraph:
         exam.patient_id = _one_value_or_none(observations["patient_id"].values())
         exam.exam_date = _one_value_or_none(observations["exam_date"].values())
         exam.description = _one_value_or_none(observations["description"].values())
+        exam.attribute_observations.clear()
+        for field, attribute in (
+            ("exam_date", ExamAttributeName.EXAM_DATE),
+            ("description", ExamAttributeName.DESCRIPTION),
+        ):
+            for source, value in observations[field].items():
+                exam.add_attribute_observation(
+                    ExamAttributeObservation(
+                        accession_number=accession,
+                        attribute=attribute,
+                        value=value,
+                        source=source,
+                    )
+                )
 
         for patient in self._patients.values():
             patient.exams[:] = [
@@ -1391,10 +1407,17 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             values = dict(_thaw_mapping(contribution.payload))
             observations = graph._exam_observations[contribution.entity_id]
             observations["patient_id"][contribution.source] = values.get("patient_id")
-            observations["exam_date"][contribution.source] = values.get("exam_date")
-            observations["description"][contribution.source] = values.get(
-                "exam_description"
-            )
+            if values.get("exam_date_present", values.get("exam_date") is not None):
+                observations["exam_date"][contribution.source] = values.get(
+                    "exam_date"
+                )
+            if values.get(
+                "exam_description_present",
+                values.get("exam_description") is not None,
+            ):
+                observations["description"][contribution.source] = values.get(
+                    "exam_description"
+                )
             touched_exams.add(contribution.entity_id)
 
         # A newly loaded patient may resolve an existing exam reference.
