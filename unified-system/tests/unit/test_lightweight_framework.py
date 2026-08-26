@@ -613,3 +613,162 @@ def test_audit_history_retains_safe_patient_when_child_is_incomplete() -> None:
     assert [issue.code for issue in report.issues] == [
         "incomplete_medication_history_identity"
     ]
+
+
+def test_verified_procedure_table_uses_governed_identity_and_patient() -> None:
+    report = load_embed(
+        procedures=pd.DataFrame(
+            {
+                "empi_anon": ["P-1", "P-1"],
+                "procdate_anon": ["2020-01-02", "2020-01-02"],
+                "type": ["biopsy", "biopsy"],
+                "bside": ["L", "L"],
+            },
+            index=[11, 12],
+        ),
+        source_scope="release-1",
+    )
+
+    assert report.graph.patient("P-1") is not None
+    assert len(report.graph.procedures) == 1
+    procedure = report.graph.procedures[0]
+    assert procedure.identity.patient_id == "P-1"
+    assert procedure.identity.laterality is Laterality.LEFT
+    assert len(procedure.sources) == 2
+    assert report.issues == ()
+
+
+def test_incomplete_procedure_keeps_safe_patient_only_in_audit_mode() -> None:
+    report = load_embed(procedures=[{"empi_anon": "P-1", "type": "biopsy"}])
+
+    assert report.graph.patient("P-1") is not None
+    assert report.graph.procedures == ()
+    assert [issue.code for issue in report.issues] == [
+        "incomplete_procedure_identity"
+    ]
+
+
+def test_pathology_only_preserves_row_diagnosis_and_slot_observations() -> None:
+    report = load_embed(
+        pathology=pd.DataFrame(
+            {
+                "pathology_diagnosis": ["invasive ductal carcinoma"],
+                "pathology_result_category": ["malignant"],
+                "pathology_malignant": ["Y"],
+                "path_severity": [5],
+                "pdate_anon": ["2020-02-03"],
+                "path1": ["ductal carcinoma"],
+                "path2": ["necrosis"],
+            },
+            index=[501],
+        ),
+        source_scope="release-1",
+    )
+
+    assert report.graph.patients == report.graph.exams == ()
+    diagnosis = report.graph.pathology_diagnoses[0]
+    assert diagnosis.diagnosis == "invasive ductal carcinoma"
+    assert diagnosis.severity == 5
+    assert diagnosis.report_documented_date == "2020-02-03"
+    assert [item.source_slot for item in report.graph.pathology_observations] == [
+        "path1",
+        "path2",
+    ]
+    assert report.issues == ()
+
+
+def test_pathology_severity_failure_keeps_evidence_in_audit_and_rolls_back_strict() -> None:
+    row = {"path_severity": 99, "path1": "descriptor"}
+    audit = load_embed(pathology=[row])
+
+    assert len(audit.graph.pathology_diagnoses) == 1
+    assert len(audit.graph.pathology_observations) == 1
+    assert audit.graph.pathology_diagnoses[0].severity is None
+    assert [issue.code for issue in audit.issues] == ["invalid_pathology_severity"]
+
+    graph = DatasetGraph()
+    with pytest.raises(LoadError, match="invalid_pathology_severity"):
+        load_embed(pathology=[row], into=graph, mode="strict")
+    assert graph.pathology_diagnoses == ()
+    assert graph.pathology_observations == ()
+
+
+def test_equal_pathology_descriptors_from_distinct_rows_remain_distinct_evidence() -> None:
+    report = load_embed(
+        pathology=pd.DataFrame(
+            {"path_severity": [1, 1], "path1": ["benign", "benign"]},
+            index=[1, 2],
+        ),
+        source_scope="release-1",
+    )
+
+    assert len(report.graph.pathology_diagnoses) == 2
+    assert len(report.graph.pathology_observations) == 2
+    assert (
+        report.graph.pathology_observations[0].source
+        != report.graph.pathology_observations[1].source
+    )
+
+
+def test_procedure_links_resolve_to_existing_exam_and_finding() -> None:
+    report = load_embed(
+        patients=[{"empi_anon": "P-1"}],
+        exams=[{"acc_anon": "A-1", "empi_anon": "P-1"}],
+        findings=[{"acc_anon": "A-1", "numfind": "1", "side": "L"}],
+        procedures=[
+            {
+                "empi_anon": "P-1",
+                "procdate_anon": "2020-01-02",
+                "type": "biopsy",
+                "bside": "L",
+                "acc_anon": "A-1",
+                "numfind": "1",
+            }
+        ],
+    )
+
+    assert {
+        (link.source_kind, link.target_kind) for link in report.graph.links
+    } == {
+        ("procedure", "patient"),
+        ("procedure", "exam"),
+        ("procedure", "breast_side"),
+        ("procedure", "finding"),
+    }
+    assert report.graph.unresolved_references == ()
+
+
+def test_pathology_attribution_resolves_incrementally_without_losing_evidence() -> None:
+    graph = DatasetGraph(source_scope="release-1")
+    load_embed(
+        pathology=[
+            {
+                "empi_anon": "P-1",
+                "acc_anon": "A-1",
+                "numfind": "1",
+                "bside": "R",
+                "path_severity": 4,
+                "path1": "carcinoma",
+            }
+        ],
+        into=graph,
+    )
+    diagnosis = graph.pathology_diagnoses[0]
+    observation = graph.pathology_observations[0]
+
+    assert graph.links == ()
+    assert {
+        reference.target_kind for reference in graph.unresolved_references
+    } == {"patient", "exam", "breast_side", "finding"}
+
+    load_embed(
+        patients=[{"empi_anon": "P-1"}],
+        exams=[{"acc_anon": "A-1", "empi_anon": "P-1"}],
+        findings=[{"acc_anon": "A-1", "numfind": "1", "side": "R"}],
+        into=graph,
+    )
+
+    assert graph.pathology_diagnoses[0] is diagnosis
+    assert graph.pathology_observations[0] is observation
+    assert len(graph.links) == 8
+    assert graph.unresolved_references == ()

@@ -10,10 +10,13 @@ from typing import Any, DefaultDict, Dict, Mapping, Optional, Tuple
 from uuid import uuid4
 
 from embed_toolkit.clinical.exams import Exam
+from embed_toolkit.clinical.associations import AssociationLink
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.histories import PatientHistoryObservation
+from embed_toolkit.clinical.pathology import PathologyDiagnosis, PathologyObservation
 from embed_toolkit.clinical.patients import Patient
+from embed_toolkit.clinical.procedures import Procedure, ProcedureIdentity
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.source import (
     Issue,
@@ -69,6 +72,13 @@ class DatasetGraph:
         self._histories: Dict[
             Tuple[str, SourceRef, str], PatientHistoryObservation
         ] = {}
+        self._procedures: Dict[ProcedureIdentity, Procedure] = {}
+        self._pathology_diagnoses: Dict[SourceRef, PathologyDiagnosis] = {}
+        self._pathology_observations: Dict[
+            Tuple[SourceRef, str], PathologyObservation
+        ] = {}
+        self._link_candidates: Dict[Tuple[Any, ...], AssociationLink] = {}
+        self._links: Dict[Tuple[Any, ...], AssociationLink] = {}
         self._contributions: Dict[Tuple[SourceRef, str, str], _Contribution] = {}
         self._issues: list[Issue] = []
         self._issue_fingerprints: set[Tuple[Any, ...]] = set()
@@ -147,6 +157,47 @@ class DatasetGraph:
                     repr(item.source.to_dict()),
                 ),
             )
+        )
+
+    @property
+    def procedures(self) -> Tuple[Procedure, ...]:
+        return tuple(
+            self._procedures[key]
+            for key in sorted(
+                self._procedures,
+                key=lambda identity: (
+                    identity.patient_id,
+                    identity.performed_date,
+                    identity.procedure_type,
+                    identity.laterality.value,
+                ),
+            )
+        )
+
+    @property
+    def pathology_diagnoses(self) -> Tuple[PathologyDiagnosis, ...]:
+        return tuple(
+            self._pathology_diagnoses[source]
+            for source in sorted(
+                self._pathology_diagnoses, key=lambda item: repr(item.to_dict())
+            )
+        )
+
+    @property
+    def pathology_observations(self) -> Tuple[PathologyObservation, ...]:
+        return tuple(
+            self._pathology_observations[key]
+            for key in sorted(
+                self._pathology_observations,
+                key=lambda item: (repr(item[0].to_dict()), item[1]),
+            )
+        )
+
+    @property
+    def links(self) -> Tuple[AssociationLink, ...]:
+        return tuple(
+            self._links[key]
+            for key in sorted(self._links, key=repr)
         )
 
     def patient(self, patient_id: str) -> Optional[Patient]:
@@ -408,6 +459,63 @@ class DatasetGraph:
             )
         )
 
+    def _resolve_links(self) -> None:
+        unresolved = set(self._unresolved_references)
+        resolved: Dict[Tuple[Any, ...], AssociationLink] = {}
+        for key, link in self._link_candidates.items():
+            if self._has_target(link.target_kind, link.target_identity):
+                resolved[key] = link
+            else:
+                unresolved.add(
+                    UnresolvedReference(
+                        link.source_kind,
+                        "\x1f".join(link.source_identity),
+                        link.target_kind,
+                        "\x1f".join(link.target_identity),
+                        "missing_target",
+                    )
+                )
+        self._links = resolved
+        self._unresolved_references = tuple(
+            sorted(
+                unresolved,
+                key=lambda item: (
+                    item.source_kind,
+                    item.source_id,
+                    item.target_kind,
+                    item.target_id,
+                    item.reason,
+                ),
+            )
+        )
+
+    def _has_target(self, kind: str, identity: Tuple[str, ...]) -> bool:
+        if kind == "patient" and len(identity) == 1:
+            return identity[0] in self._patients
+        if kind == "exam" and len(identity) == 1:
+            return identity[0] in self._exams
+        if kind == "finding" and len(identity) == 2:
+            return identity in self._findings
+        if kind == "image" and len(identity) == 1:
+            return identity[0] in self._images
+        if kind == "roi" and len(identity) == 2:
+            return identity in self._rois
+        if kind == "breast_side" and len(identity) == 2:
+            exam = self._exams.get(identity[0])
+            return (
+                exam is not None
+                and Laterality.coerce(identity[1]) in exam.breast_sides
+            )
+        if kind == "procedure" and len(identity) == 4:
+            try:
+                procedure_identity = ProcedureIdentity(
+                    identity[0], identity[1], identity[2], Laterality.coerce(identity[3])
+                )
+            except ValueError:
+                return False
+            return procedure_identity in self._procedures
+        return False
+
 
 class GraphTransaction(AbstractContextManager["GraphTransaction"]):
     """Invocation-scoped staging area with strict rollback semantics."""
@@ -428,6 +536,12 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         self._history_nodes: Dict[
             Tuple[str, SourceRef, str], PatientHistoryObservation
         ] = {}
+        self._procedure_nodes: Dict[ProcedureIdentity, Procedure] = {}
+        self._pathology_diagnosis_nodes: Dict[SourceRef, PathologyDiagnosis] = {}
+        self._pathology_observation_nodes: Dict[
+            Tuple[SourceRef, str], PathologyObservation
+        ] = {}
+        self._link_nodes: Dict[Tuple[Any, ...], AssociationLink] = {}
         self._closed = False
 
     def __enter__(self) -> "GraphTransaction":
@@ -896,6 +1010,132 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
         )
         return self._history_nodes.setdefault(key, observation)
 
+    def upsert_procedure(
+        self,
+        procedure: Procedure,
+        source: SourceRef,
+        *,
+        values: Optional[Mapping[str, Any]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> Procedure:
+        """Stage one resolved clinical procedure identity."""
+
+        _require_open(self)
+        if not isinstance(procedure, Procedure):
+            raise TypeError("procedure must be a Procedure")
+        identity = procedure.identity
+        contribution = _Contribution(
+            source=source,
+            concept="procedure",
+            slot="",
+            entity_id="\x1f".join(
+                (
+                    identity.patient_id,
+                    identity.performed_date,
+                    identity.procedure_type,
+                    identity.laterality.value,
+                )
+            ),
+            payload=_freeze(values or identity.to_dict()),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph._procedures.get(identity, procedure)
+        self._patient_nodes.setdefault(
+            identity.patient_id,
+            self.graph.patient(identity.patient_id) or Patient(identity.patient_id),
+        )
+        return self._procedure_nodes.setdefault(identity, procedure)
+
+    def upsert_pathology_diagnosis(
+        self,
+        diagnosis: PathologyDiagnosis,
+        source: SourceRef,
+        *,
+        values: Optional[Mapping[str, Any]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> PathologyDiagnosis:
+        """Stage row-level diagnosis evidence independently of attribution."""
+
+        _require_open(self)
+        if not isinstance(diagnosis, PathologyDiagnosis):
+            raise TypeError("diagnosis must be a PathologyDiagnosis")
+        if diagnosis.source != source:
+            raise ValueError("pathology diagnosis source must match contribution source")
+        contribution = _Contribution(
+            source=source,
+            concept="pathology_diagnosis",
+            slot="",
+            entity_id=repr(source.to_dict()),
+            payload=_freeze(values or diagnosis.to_dict()),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph._pathology_diagnoses.get(source, diagnosis)
+        return self._pathology_diagnosis_nodes.setdefault(source, diagnosis)
+
+    def upsert_pathology_observation(
+        self,
+        observation: PathologyObservation,
+        source: SourceRef,
+        *,
+        values: Optional[Mapping[str, Any]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> PathologyObservation:
+        """Stage one pathology descriptor at its physical source slot."""
+
+        _require_open(self)
+        if not isinstance(observation, PathologyObservation):
+            raise TypeError("observation must be a PathologyObservation")
+        if observation.source != source:
+            raise ValueError("pathology observation source must match contribution source")
+        key = (source, observation.source_slot)
+        contribution = _Contribution(
+            source=source,
+            concept="pathology_observation",
+            slot=observation.source_slot,
+            entity_id=repr(source.to_dict()),
+            payload=_freeze(values or observation.to_dict()),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph._pathology_observations.get(key, observation)
+        return self._pathology_observation_nodes.setdefault(key, observation)
+
+    def add_link(
+        self,
+        link: AssociationLink,
+        source: SourceRef,
+        *,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> AssociationLink:
+        """Stage an association, resolving its target at commit time."""
+
+        _require_open(self)
+        if not isinstance(link, AssociationLink):
+            raise TypeError("link must be an AssociationLink")
+        if link.source != source:
+            raise ValueError("association source must match contribution source")
+        key = (
+            link.source_kind,
+            link.source_identity,
+            link.target_kind,
+            link.target_identity,
+            link.status.value,
+            source,
+        )
+        contribution = _Contribution(
+            source=source,
+            concept="link",
+            slot=repr(key[:-1]),
+            entity_id="\x1f".join(link.source_identity),
+            payload=_freeze(link.to_dict()),
+            metadata=dict(metadata or {}),
+        )
+        if not self._stage(contribution):
+            return self.graph._link_candidates.get(key, link)
+        return self._link_nodes.setdefault(key, link)
+
     def _observed_exam_values(self, accession: str, field: str) -> set[Any]:
         values = {
             value
@@ -950,6 +1190,14 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
             graph._rois.setdefault(identity, roi)
         for key, observation in self._history_nodes.items():
             graph._histories.setdefault(key, observation)
+        for identity, procedure in self._procedure_nodes.items():
+            graph._procedures.setdefault(identity, procedure)
+        for source, diagnosis in self._pathology_diagnosis_nodes.items():
+            graph._pathology_diagnoses.setdefault(source, diagnosis)
+        for key, observation in self._pathology_observation_nodes.items():
+            graph._pathology_observations.setdefault(key, observation)
+        for key, link in self._link_nodes.items():
+            graph._link_candidates.setdefault(key, link)
 
         touched_exams: set[str] = set()
         touched_findings: set[Tuple[str, str]] = set()
@@ -1017,10 +1265,30 @@ class GraphTransaction(AbstractContextManager["GraphTransaction"]):
                 side.findings.sort(key=lambda finding: finding.identity)
         graph._resolve_images()
         graph._resolve_rois()
+        graph._resolve_links()
         for patient in graph._patients.values():
             patient.history_observations.clear()
         for observation in graph.histories:
             graph._patients[observation.patient_id].add_history_observation(observation)
+        procedure_sources: DefaultDict[ProcedureIdentity, set[SourceRef]] = defaultdict(set)
+        for contribution in graph._contributions.values():
+            if contribution.concept != "procedure":
+                continue
+            patient_id, performed_date, procedure_type, laterality = (
+                contribution.entity_id.split("\x1f")
+            )
+            procedure_sources[
+                ProcedureIdentity(
+                    patient_id,
+                    performed_date,
+                    procedure_type,
+                    Laterality.coerce(laterality),
+                )
+            ].add(contribution.source)
+        for identity, sources in procedure_sources.items():
+            graph._procedures[identity].sources = sorted(
+                sources, key=lambda source: repr(source.to_dict())
+            )
         for issue in self.issues:
             graph._record_issue(issue)
 

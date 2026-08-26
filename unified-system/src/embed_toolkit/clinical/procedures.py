@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Tuple
 
 from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.provenance import SourceLocator
+from embed_toolkit.core.source import SourceRef
 
 
 def _to_plain(value: Any) -> Any:
@@ -63,7 +64,7 @@ class UnresolvedProcedureOccurrence:
         "laterality",
     )
 
-    source: SourceLocator
+    source: object
     missing_identity_fields: Tuple[str, ...]
     patient_id: Optional[str] = None
     performed_date: Optional[str] = None
@@ -71,8 +72,8 @@ class UnresolvedProcedureOccurrence:
     laterality: Laterality = Laterality.UNKNOWN
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
         missing = tuple(self.missing_identity_fields)
         if not missing or any(
             not isinstance(value, str) or not value.strip() for value in missing
@@ -120,27 +121,29 @@ class Procedure:
     """One resolved procedure shared independently of finding attribution."""
 
     identity: ProcedureIdentity
-    sources: List[SourceLocator] = field(default_factory=list)
+    sources: List[object] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.identity, ProcedureIdentity):
             raise TypeError("identity must be a ProcedureIdentity")
         sources = list(self.sources)
-        if any(not isinstance(source, SourceLocator) for source in sources):
-            raise TypeError("sources must contain only SourceLocator values")
+        if any(
+            not isinstance(source, (SourceLocator, SourceRef)) for source in sources
+        ):
+            raise TypeError("sources must contain SourceRef or SourceLocator values")
         if len(set(sources)) != len(sources):
             raise ValueError("sources must contain unique SourceLocator values")
         self.sources = sources
 
     def add_source(
         self,
-        source: SourceLocator,
-    ) -> SourceLocator:
+        source: object,
+    ) -> object:
         """Attach a source reference without changing clinical identity."""
 
-        if not isinstance(source, SourceLocator):
-            raise TypeError("source must be a SourceLocator")
+        if not isinstance(source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
         if source not in self.sources:
             self.sources.append(source)
         return source

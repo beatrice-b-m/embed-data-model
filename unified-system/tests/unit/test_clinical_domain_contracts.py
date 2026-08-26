@@ -63,7 +63,7 @@ def test_unresolved_procedure_is_source_evidence_not_resolved_identity() -> None
         "performed_date",
         "laterality",
     ]
-    with pytest.raises(TypeError, match="source must be a SourceLocator"):
+    with pytest.raises(TypeError, match="source must be a SourceRef or SourceLocator"):
         UnresolvedProcedureOccurrence(
             source=object(),
             missing_identity_fields=("performed_date",),

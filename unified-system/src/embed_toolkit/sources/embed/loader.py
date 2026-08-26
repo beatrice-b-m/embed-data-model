@@ -14,6 +14,7 @@ from embed_toolkit.adapters.tables import (
     TableRecord,
     iter_records,
 )
+from embed_toolkit.clinical.associations import AssociationLink, AttributionStatus
 from embed_toolkit.core.graph import DatasetGraph
 from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
 from embed_toolkit.core.source import Issue, SourceRef
@@ -21,6 +22,10 @@ from embed_toolkit.sources.embed.columns import resolve_columns
 from embed_toolkit.sources.embed.histories import (
     normalize_medication_history,
     normalize_procedure_history,
+)
+from embed_toolkit.sources.embed.procedures_pathology import (
+    normalize_pathology,
+    normalize_procedure,
 )
 
 
@@ -45,6 +50,8 @@ def load_embed(
     rois: Any = None,
     hormone_history: Any = None,
     procedure_history: Any = None,
+    procedures: Any = None,
+    pathology: Any = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
@@ -144,6 +151,22 @@ def load_embed(
             columns=column_maps["hormone_history"],
             retain_raw=retain_raw,
         )
+        _load_procedures(
+            procedures,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["procedures"],
+            columns=column_maps["procedures"],
+            retain_raw=retain_raw,
+        )
+        _load_pathology(
+            pathology,
+            transaction=transaction,
+            source_scope=resolved_scope,
+            source_key=key_selectors["pathology"],
+            columns=column_maps["pathology"],
+            retain_raw=retain_raw,
+        )
         _load_histories(
             procedure_history,
             table_name="procedure_history",
@@ -173,6 +196,8 @@ def _resolve_source_keys(
         "rois": None,
         "hormone_history": None,
         "procedure_history": None,
+        "procedures": None,
+        "pathology": None,
     }
     if source_keys is None:
         return resolved
@@ -604,6 +629,198 @@ def _load_histories(
             values=values,
             metadata=_evidence(record.mapping, retain_raw),
         )
+
+
+def _load_procedures(
+    table: Any,
+    *,
+    transaction: Any,
+    source_scope: str,
+    source_key: Optional[SourceKeySelector],
+    columns: Mapping[str, Optional[str]],
+    retain_raw: bool,
+) -> None:
+    for record in _table_records(table, source_key, "procedures", transaction):
+        source = _record_source(record, source_scope, "procedures")
+        if not _add_table_issues(record, source, transaction):
+            continue
+        patient_id = _mapped_identifier(record.mapping, columns["patient_id"])
+        if patient_id is not None:
+            transaction.upsert_patient(
+                patient_id,
+                source,
+                values={"patient_id": patient_id},
+                metadata=_evidence(record.mapping, retain_raw),
+            )
+        procedure, issues = normalize_procedure(record.mapping, columns, source)
+        for issue in issues:
+            transaction.add_issue(issue)
+        if procedure is None:
+            continue
+        transaction.upsert_procedure(
+            procedure,
+            source,
+            values=procedure.identity.to_dict(),
+            metadata=_evidence(record.mapping, retain_raw),
+        )
+        procedure_identity = procedure.identity
+        source_identity = (
+            procedure_identity.patient_id,
+            procedure_identity.performed_date,
+            procedure_identity.procedure_type,
+            procedure_identity.laterality.value,
+        )
+        for target_kind, target_identity in _clinical_targets(
+            record.mapping, columns, include_procedure=False
+        ):
+            transaction.add_link(
+                AssociationLink(
+                    source_kind="procedure",
+                    source_identity=source_identity,
+                    target_kind=target_kind,
+                    target_identity=target_identity,
+                    status=AttributionStatus.SOURCE_COLOCATED,
+                    source=source,
+                ),
+                source,
+            )
+
+
+def _load_pathology(
+    table: Any,
+    *,
+    transaction: Any,
+    source_scope: str,
+    source_key: Optional[SourceKeySelector],
+    columns: Mapping[str, Optional[str]],
+    retain_raw: bool,
+) -> None:
+    for record in _table_records(table, source_key, "pathology", transaction):
+        source = _record_source(record, source_scope, "pathology")
+        if not _add_table_issues(record, source, transaction):
+            continue
+        diagnosis, observations, issues = normalize_pathology(
+            record.mapping, columns, source
+        )
+        for issue in issues:
+            transaction.add_issue(issue)
+        if diagnosis is not None:
+            values = {
+                "diagnosis": diagnosis.diagnosis,
+                "result_category": diagnosis.result_category,
+                "malignant": diagnosis.malignant,
+                "severity": (
+                    int(diagnosis.severity)
+                    if diagnosis.severity is not None
+                    else None
+                ),
+                "raw_severity": diagnosis.raw_severity,
+                "report_documented_date": diagnosis.report_documented_date,
+            }
+            transaction.upsert_pathology_diagnosis(
+                diagnosis,
+                source,
+                values=values,
+                metadata=_evidence(record.mapping, retain_raw),
+            )
+            _add_pathology_links(
+                transaction,
+                record.mapping,
+                columns,
+                source,
+                source_kind="pathology_diagnosis",
+                source_identity=("diagnosis", _source_identity_text(source)),
+            )
+        for observation in observations:
+            transaction.upsert_pathology_observation(
+                observation,
+                source,
+                values={
+                    "descriptor": observation.descriptor,
+                    "source_slot": observation.source_slot,
+                    "source_ordinal": observation.source_ordinal,
+                },
+                metadata=_evidence(record.mapping, retain_raw),
+            )
+            _add_pathology_links(
+                transaction,
+                record.mapping,
+                columns,
+                source,
+                source_kind="pathology_observation",
+                source_identity=(
+                    "observation",
+                    observation.source_slot,
+                    _source_identity_text(source),
+                ),
+            )
+
+
+def _add_pathology_links(
+    transaction: Any,
+    row: Mapping[str, Any],
+    columns: Mapping[str, Optional[str]],
+    source: SourceRef,
+    *,
+    source_kind: str,
+    source_identity: tuple[str, ...],
+) -> None:
+    for target_kind, target_identity in _clinical_targets(
+        row, columns, include_procedure=True
+    ):
+        transaction.add_link(
+            AssociationLink(
+                source_kind=source_kind,
+                source_identity=source_identity,
+                target_kind=target_kind,
+                target_identity=target_identity,
+                status=AttributionStatus.SOURCE_COLOCATED,
+                source=source,
+            ),
+            source,
+        )
+
+
+def _clinical_targets(
+    row: Mapping[str, Any],
+    columns: Mapping[str, Optional[str]],
+    *,
+    include_procedure: bool,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    targets: list[tuple[str, tuple[str, ...]]] = []
+    patient_id = _mapped_identifier(row, columns.get("patient_id"))
+    accession = _mapped_identifier(row, columns.get("accession"))
+    finding_number = _mapped_identifier(row, columns.get("finding_number"))
+    raw_laterality = _mapped_text(row, columns.get("laterality"))
+    laterality = Laterality.coerce(raw_laterality)
+    if patient_id is not None:
+        targets.append(("patient", (patient_id,)))
+    if accession is not None:
+        targets.append(("exam", (accession,)))
+        if laterality.is_unilateral:
+            targets.append(("breast_side", (accession, laterality.value)))
+        if finding_number is not None:
+            targets.append(("finding", (accession, finding_number)))
+    if include_procedure and patient_id is not None and laterality is not Laterality.UNKNOWN:
+        procedure_date = _mapped_text(row, columns.get("procedure_date"))
+        procedure_type = _mapped_text(row, columns.get("procedure_type"))
+        if procedure_date is not None and procedure_type is not None:
+            targets.append(
+                (
+                    "procedure",
+                    (
+                        patient_id,
+                        procedure_date,
+                        procedure_type,
+                        laterality.value,
+                    ),
+                )
+            )
+    return tuple(targets)
+
+
+def _source_identity_text(source: SourceRef) -> str:
+    return json.dumps(source.to_dict(), sort_keys=True, separators=(",", ":"))
 
 
 def _record_source(

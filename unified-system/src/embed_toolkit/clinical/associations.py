@@ -8,6 +8,7 @@ from typing import Any, Dict, Tuple
 
 from embed_toolkit.clinical.procedures import ProcedureIdentity
 from embed_toolkit.core.provenance import SourceLocator
+from embed_toolkit.core.source import SourceRef
 
 
 class AttributionStatus(str, Enum):
@@ -68,7 +69,7 @@ class FindingProcedureLink:
     finding_number: str
     procedure: ProcedureIdentity
     status: AttributionStatus
-    source: SourceLocator
+    source: object
 
     def __post_init__(self) -> None:
         for attribute in ("accession_number", "finding_number"):
@@ -87,6 +88,44 @@ class FindingProcedureLink:
                 "finding_number": self.finding_number,
             },
             "procedure": self.procedure.to_dict(),
+            "status": self.status.value,
+            "source": self.source.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class AssociationLink:
+    """Source-attributed edge between two canonical graph records."""
+
+    source_kind: str
+    source_identity: Tuple[str, ...]
+    target_kind: str
+    target_identity: Tuple[str, ...]
+    status: AttributionStatus
+    source: object
+
+    def __post_init__(self) -> None:
+        for attribute in ("source_kind", "target_kind"):
+            value = getattr(self, attribute)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{attribute} must be a non-empty string")
+        for attribute in ("source_identity", "target_identity"):
+            values = tuple(getattr(self, attribute))
+            if not values or any(
+                not isinstance(value, str) or not value.strip() for value in values
+            ):
+                raise ValueError(f"{attribute} components must be populated")
+            object.__setattr__(self, attribute, values)
+        object.__setattr__(self, "status", AttributionStatus(self.status))
+        if not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef or SourceLocator")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source_kind": self.source_kind,
+            "source_identity": list(self.source_identity),
+            "target_kind": self.target_kind,
+            "target_identity": list(self.target_identity),
             "status": self.status.value,
             "source": self.source.to_dict(),
         }

@@ -86,6 +86,32 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "result": "result",
             }
         ),
+        "procedures": MappingProxyType(
+            {
+                "patient_id": "empi_anon",
+                "performed_date": "procdate_anon",
+                "procedure_type": "type",
+                "laterality": "bside",
+                "accession": "acc_anon",
+                "finding_number": "numfind",
+            }
+        ),
+        "pathology": MappingProxyType(
+            {
+                "patient_id": "empi_anon",
+                "accession": "acc_anon",
+                "finding_number": "numfind",
+                "laterality": "bside",
+                "procedure_date": "procdate_anon",
+                "procedure_type": "type",
+                "diagnosis": "pathology_diagnosis",
+                "result_category": "pathology_result_category",
+                "malignant": "pathology_malignant",
+                "severity": "path_severity",
+                "report_documented_date": "pdate_anon",
+                **{f"descriptor_{index}": f"path{index}" for index in range(1, 11)},
+            }
+        ),
     }
 )
 
@@ -97,6 +123,10 @@ _REQUIRED = {
     "rois": frozenset({"image_id", "coordinates"}),
     "hormone_history": frozenset({"patient_id", "category", "medication"}),
     "procedure_history": frozenset({"patient_id", "category", "procedure"}),
+    "procedures": frozenset(
+        {"patient_id", "performed_date", "procedure_type", "laterality"}
+    ),
+    "pathology": frozenset(),
 }
 
 

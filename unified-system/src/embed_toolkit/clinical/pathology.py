@@ -10,7 +10,6 @@ from embed_toolkit.clinical.associations import (
     AttributionStatus,
     ClinicalObjectReference,
 )
-from embed_toolkit.core.provenance import BuildIssue, SourceLocator
 
 
 class PathologySeverity(IntEnum):
@@ -38,7 +37,7 @@ class PathologyObservation:
     descriptor: str
     source_slot: str
     source_ordinal: int
-    source: SourceLocator
+    source: object
 
     def __post_init__(self) -> None:
         for attribute in ("descriptor", "source_slot"):
@@ -65,14 +64,14 @@ class PathologyObservation:
 class PathologyDiagnosis:
     """One row-level diagnosis state with explicitly named documentation time."""
 
-    source: SourceLocator
+    source: object
     diagnosis: Optional[str] = None
     result_category: Optional[str] = None
     malignant: Optional[bool] = None
     severity: Optional[PathologySeverity] = None
     raw_severity: Any = None
     report_documented_date: Optional[str] = None
-    validation_issues: Tuple[BuildIssue, ...] = field(default_factory=tuple)
+    validation_issues: Tuple[object, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if self.severity is not None:
@@ -111,7 +110,7 @@ class PathologyReference:
     """Non-recursive reference to one pathology diagnosis or observation."""
 
     kind: PathologyRecordKind
-    source: SourceLocator
+    source: object
     source_slot: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -141,7 +140,7 @@ class PathologyAttributionLink:
     pathology: PathologyReference
     target: ClinicalObjectReference
     status: AttributionStatus
-    source: SourceLocator
+    source: object
 
     def __post_init__(self) -> None:
         status = AttributionStatus(self.status)
