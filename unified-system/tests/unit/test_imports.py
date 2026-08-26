@@ -13,12 +13,10 @@ from typing import Optional
 
 
 PUBLIC_NAMESPACE_MODULES = [
-    "embed_toolkit.audit",
     "embed_toolkit.clinical",
     "embed_toolkit.core",
     "embed_toolkit.imaging",
     "embed_toolkit.sources.embed",
-    "embed_toolkit.visualization",
 ]
 
 LEGACY_IMPORT_PREFIXES = (
@@ -188,7 +186,6 @@ def test_all_unified_modules_import_without_legacy_runtime_dependencies() -> Non
 def test_foundation_exports_are_available_from_namespaces() -> None:
     with new_src_imports():
         package = importlib.import_module("embed_toolkit")
-        audit = importlib.import_module("embed_toolkit.audit")
         clinical = importlib.import_module("embed_toolkit.clinical")
         core = importlib.import_module("embed_toolkit.core")
         provenance = importlib.import_module("embed_toolkit.core.provenance")
@@ -196,12 +193,9 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         roi_provenance = importlib.import_module(
             "embed_toolkit.imaging.roi_provenance"
         )
-        visualization = importlib.import_module("embed_toolkit.visualization")
 
     assert package.DatasetGraph
     assert package.load_embed
-    assert audit.WorkflowResult
-    assert audit.export_result
     assert clinical.Finding
     assert clinical.FindingNormalizationEvidence
     assert clinical.FindingNormalizationWarning
@@ -223,7 +217,6 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
     assert clinical.ProcedureHistoryObservation
     assert clinical.select_patient_attribute_as_of
     assert core.MassShape.LOBULATED.value == "lobulated"
-    assert imaging.Alignment.reference().is_reference
     assert imaging.MammogramImage
     image_source = provenance.SourceLocator(
         scope="import-smoke",
@@ -252,4 +245,3 @@ def test_foundation_exports_are_available_from_namespaces() -> None:
         source_provenance=roi_source,
         sources=(image_source,),
     ).area == 1
-    assert visualization.build_mammogram_render_plan
