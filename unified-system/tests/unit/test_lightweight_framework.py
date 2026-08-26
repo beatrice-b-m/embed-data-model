@@ -8,11 +8,11 @@ import pytest
 from embed_toolkit import (
     Box,
     DatasetGraph,
-    LoadError,
     MammogramImage,
     RegionOfInterest,
     load_embed,
 )
+from embed_toolkit.core.graph import LoadError
 from embed_toolkit.core.tables import iter_records
 from embed_toolkit.clinical.attributes import (
     PatientAttributeAsOfPolicy,

@@ -111,6 +111,26 @@ def test_imports_new_src_package() -> None:
         assert Path(package.__file__).resolve().is_relative_to(src_path)
 
 
+def test_package_root_exports_only_the_researcher_facade() -> None:
+    with new_src_imports():
+        package = importlib.import_module("embed_toolkit")
+
+    assert set(package.__all__) == {
+        "DatasetGraph",
+        "load_embed",
+        "LoadReport",
+        "Issue",
+        "SourceRef",
+        "Patient",
+        "Exam",
+        "BreastSide",
+        "Finding",
+        "MammogramImage",
+        "RegionOfInterest",
+        "Box",
+    }
+
+
 def test_public_namespace_packages_import() -> None:
     with new_src_imports():
         for module in PUBLIC_NAMESPACE_MODULES:
