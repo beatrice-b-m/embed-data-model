@@ -179,3 +179,14 @@ def test_source_field_updates_remove_old_aliases_and_pop_removes_current_ones():
     graph.pop(image)
     assert graph.source_image("S2") is None and graph.image_at_path("/new") is None
     assert graph.roi_at_source("/new", 1) is None
+def test_finding_and_exam_rekeys_preserve_interpretation_identity_and_reference():
+    from embed_toolkit import load_embed
+    graph = load_embed(findings=[{"acc_anon": "A", "numfind": 1, "asses": "4"}]).graph
+    finding = graph.finding("A", "1")
+    interpretation = finding.interpretation
+    finding.rekey(finding_number="2")
+    assert interpretation.identity == ("A", "2")
+    graph.exam("A").rekey(accession_number="B")
+    assert graph.finding("B", "2") is finding
+    assert finding.interpretation is interpretation
+    assert interpretation.identity == ("B", "2")
