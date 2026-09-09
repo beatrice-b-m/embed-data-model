@@ -36,6 +36,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
             {
                 "accession": "acc_anon",
                 "finding_number": "numfind",
+                "patient_id": "empi_anon",
                 "laterality": "side",
                 "finding_type": None,
                 "assessment": "asses",
@@ -51,11 +52,10 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
         ),
         "images": MappingProxyType(
             {
-                # These three identities are intentionally unbound until the
-                # imaging adapter qualifies its physical source convention.
                 "image_id": None,
-                "source_path": None,
+                "source_path": "anon_dicom_path",
                 "source_sop_instance_uid": None,
+                "derived_from": None,
                 "patient_id": "empi_anon",
                 "accession": "acc_anon",
                 "laterality": "ImageLateralityFinal",
@@ -73,7 +73,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
         "rois": MappingProxyType(
             {
                 "image_id": None,
-                "source_path": None,
+                "source_path": "anon_dicom_path",
                 "roi_key": None,
                 "coordinates": "ROI_coords",
                 "frame_indices": "ROI_frames",
