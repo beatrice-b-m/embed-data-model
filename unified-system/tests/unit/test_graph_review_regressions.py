@@ -137,3 +137,17 @@ def test_pop_does_not_carry_internal_link_as_crossing_reference() -> None:
     assert not destination.unresolved_references
     assert destination.exam("A").linked_exams == (destination.exam("B"),)
     assert destination.exam("B").linked_exams == (destination.exam("A"),)
+
+
+def test_register_preserves_explicit_exam_owner_without_new_source_claim() -> None:
+    patient = Patient("P")
+    exam = patient.add_exam(Exam("A"))
+    patient.rekey(patient_id="Q")
+
+    graph = DatasetGraph()
+    graph.register(patient)
+
+    assert exam.patient_id == "Q"
+    assert exam.asserted_patient_ids == {"P"}
+    assert graph.patient("Q").exams == (exam,)
+    assert not graph.unresolved_references

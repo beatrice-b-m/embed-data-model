@@ -227,9 +227,12 @@ class DatasetGraph:
         self.operation_counts["resolved"] += 1
         if kind == "exam":
             claims = set(getattr(obj, "asserted_patient_ids", ()))
-            if obj.patient_id:
+            owner_explicit = getattr(obj, "_owner_explicit", False)
+            if obj.patient_id and not owner_explicit:
                 claims.add(obj.patient_id)
-            if claims:
+            if owner_explicit:
+                self._set_patient(obj, obj.patient_id)
+            elif claims:
                 self.claim_patient(obj, claims)
         elif kind in {"finding", "image"} and getattr(obj, "accession_number", None):
             self.reference(kind, key, "exam", obj.accession_number, relation="parent")
