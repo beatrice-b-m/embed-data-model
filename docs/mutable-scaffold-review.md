@@ -1,14 +1,38 @@
 # Completed mutable scaffold review
 
+Status: all four findings resolved and requalified on 2026-09-09 against runtime
+`664b4e2`. The original findings and reproductions below are historical.
+See [qualification results](mutable-scaffold-qualification.md) for the full
+Python 3.9–3.13 matrix, installed-wheel checks, static checks, and scale results.
+
 Reviewed on 2026-09-09 at `f6fdeaa`, whose qualifying runtime is `90bb604`.
 Scope: the completed implementation plan, API decisions, qualification evidence,
 and implementation, with additional public-API probes of membership boundaries.
 
-The W1/W2/W4 completion gates still have correctness gaps. The existing 214 tests
-pass, including the installed-wheel test; Ruff passes and mypy passes over all
-35 runtime files. Those checks do not cover the four failures below. This review
-does not change runtime code or repeat the full Python-version matrix, benchmark,
-or private-data qualification.
+At the reviewed revision, the W1/W2/W4 completion gates had correctness gaps.
+The existing 214 tests passed, including the installed-wheel test; Ruff and mypy
+also passed over all 35 runtime files. Those checks did not cover the four
+failures below. The initial review changed no runtime code and did not repeat
+the full Python-version matrix, benchmark, or private-data qualification.
+
+## Resolution
+
+| Finding | Primary fix | Regression coverage |
+|---|---|---|
+| 1: source-SOP collisions | `dbd296d` | Original/derivative final-state checks, mixed rekey preflight, and installed metadata reload. |
+| 2: reverse links after rekey | `726c21a` | One-sided and self-link rekey/clear; reciprocal and pending-link review probes. |
+| 3: incoming crossing references | `b774bf6`, `2ec27bd` | Incoming linked/registry endpoints survive movement; internal edges are not duplicated. |
+| 4: standalone rekey | `0ad9583`, `9836f09`, `b50154e` | Descendants, embedded context, carried references, semantic collections, and unhashable subclasses. |
+
+Integration fixes preserve explicit ownership/source claims (`76187c7`, `0eb92da`),
+propagate registered embedded context (`b100f07`), and reconcile rekeyed detached
+children and copied shared descendants (`b2db363`, `664b4e2`). Rewrite application
+uses an object-ID lookup rather than repeated subtree scans (`a3e02a1`).
+Focused coverage is in `test_graph_review_regressions.py` and
+`test_standalone_rekey.py`; the installed-wheel journey covers all four original
+findings (`8c6a4c2`). Independent review and root integration checks found no
+remaining issues in these fixes. All 239 tests pass on each supported Python
+minor version; private-data and scientific qualification remain outside scope.
 
 ## 1. [P1] Reject source-SOP collisions before updating an image
 
@@ -115,5 +139,5 @@ print(len(graph.unresolved_references))
 # Observed: 1; expected: 0.
 ```
 
-Requalify the affected work-package gates with regression coverage for these
-cases before treating the plan's blanket W0–W9 completion statement as established.
+The affected gates have now been requalified with regression coverage for these
+cases and their movement/rekey interactions, as recorded above.
