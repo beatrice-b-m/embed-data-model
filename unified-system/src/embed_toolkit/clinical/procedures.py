@@ -3,17 +3,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from embed_toolkit.core.entity import (
     MutableEntity,
     plain_value,
-    readonly_mapping,
     serialize_entity,
 )
 from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.provenance import SourceLocator
 from embed_toolkit.core.source import SourceRef
+
+if TYPE_CHECKING:
+    from embed_toolkit.clinical.pathology import Pathology
+
+
+SourceValue = Union[SourceLocator, SourceRef]
 
 
 def _to_plain(value: Any) -> Any:
@@ -62,7 +77,7 @@ class UnresolvedProcedureOccurrence:
         "laterality",
     )
 
-    source: object
+    source: SourceValue
     missing_identity_fields: Tuple[str, ...]
     patient_id: Optional[str] = None
     performed_date: Optional[str] = None
@@ -122,9 +137,9 @@ class Procedure(MutableEntity):
     def __init__(
         self,
         identity: ProcedureIdentity,
-        sources: Optional[List[object]] = None,
+        sources: Optional[Iterable[object]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        pathologies: Optional[List["Pathology"]] = None,
+        pathologies: Optional[Iterable["Pathology"]] = None,
         source: Optional[object] = None,
     ) -> None:
         super().__init__()
@@ -151,12 +166,20 @@ class Procedure(MutableEntity):
         return tuple(self._sources)
 
     @property
-    def metadata(self) -> Any:
-        return readonly_mapping(self._metadata)
+    def metadata(self) -> Dict[str, Any]:
+        return self._metadata
+
+    @metadata.setter
+    def metadata(self, values: Dict[str, Any]) -> None:
+        self._metadata = dict(values)
 
     @property
     def pathologies(self) -> Tuple["Pathology", ...]:
         return tuple(self._pathologies)
+
+    @property
+    def pathology(self) -> Tuple["Pathology", ...]:
+        return self.pathologies
 
     def add_source(self, source: object) -> object:
         """Attach optional source evidence without changing identity."""
@@ -185,21 +208,25 @@ class Procedure(MutableEntity):
             raise TypeError("Procedure children must be Pathology entities")
         for existing in self._pathologies:
             if existing.identity == child.identity:
-                return existing
+                if existing is child:
+                    return existing
+                raise ValueError(
+                    "Distinct Pathology objects cannot share an identity in a Procedure"
+                )
         self._pathologies.append(child)
         return child
 
-    def _detach_local(self, child: MutableEntity) -> "Pathology":
+    def _detach_local(self, child: MutableEntity) -> MutableEntity:
         for index, existing in enumerate(self._pathologies):
             if existing is child:
                 return self._pathologies.pop(index)
-        raise ValueError("Pathology is not attached to this Procedure")
+        return child  # idempotent graph recomposition
 
     def _to_dict_data(self, state: Any) -> Dict[str, Any]:
         return {
             "identity": self.identity,
             "sources": self.sources,
-            "pathologies": self.pathologies,
+            "pathology": self.pathology,
             "metadata": self._metadata,
         }
 
