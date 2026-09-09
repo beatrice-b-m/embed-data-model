@@ -177,3 +177,40 @@ def test_registered_patient_rekey_preserves_source_scoped_child_identities() -> 
     assert destination.image("I").patient_id == "P"
     assert destination.registry_entry("P", "R") is entry
     assert not destination.unresolved_references
+
+
+def test_register_canonicalizes_internal_link_targets_after_member_rekey() -> None:
+    source = DatasetGraph()
+    patient = source.register(Patient("P"))
+    first = patient.add_exam(Exam("A"))
+    second = patient.add_exam(Exam("B"))
+    source.set_linked_accessions(first, ["B"])
+
+    detached = source.pop(patient)
+    second.rekey(accession_number="C")
+
+    destination = DatasetGraph()
+    destination.register(detached)
+
+    assert first.linked_accessions == {"C"}
+    assert first.linked_exams == (second,)
+    assert not destination.unresolved_references
+
+
+def test_register_canonicalizes_internal_registry_targets_after_member_rekey() -> None:
+    source = DatasetGraph()
+    patient = source.register(Patient("P"))
+    exam = patient.add_exam(Exam("A"))
+    entry = exam.add_registry_entry(CancerRegistryEntry("P", "1"))
+    source.set_registry_assignments(exam, [("P", "1")])
+
+    detached = source.pop(patient)
+    entry.rekey(registry_id="2")
+
+    destination = DatasetGraph()
+    destination.register(detached)
+
+    assert exam.registry_references == {("P", "2")}
+    assert exam.registry_entries == (entry,)
+    assert destination.registry_entry("P", "2") is entry
+    assert not destination.unresolved_references

@@ -151,6 +151,130 @@ class DatasetGraph:
             object.__setattr__(candidate, field, value)
         return candidate
 
+    @staticmethod
+    def _detached_member_renames(
+        members: Iterable[Any],
+    ) -> Dict[Tuple[str, Any], Tuple[str, Any]]:
+        """Collect identity changes carried by members of one detached tree."""
+
+        current_addresses = {
+            (kind_of(obj), key_of(obj)): obj for obj in members
+        }
+        renames: Dict[Tuple[str, Any], Tuple[str, Any]] = {}
+        for obj in current_addresses.values():
+            previous = getattr(obj, "_detached_address", None)
+            current = kind_of(obj), key_of(obj)
+            if previous is None or previous == current:
+                continue
+            if not isinstance(previous, tuple) or len(previous) != 2:
+                continue
+            existing = renames.get(previous)
+            if existing is not None and existing != current:
+                raise ValueError("Detached semantic key collision: {!r}".format(previous))
+            other = current_addresses.get(previous)
+            if other is not None and other is not obj:
+                raise ValueError("Detached semantic key collision: {!r}".format(previous))
+            renames[previous] = current
+        return renames
+
+    @staticmethod
+    def _renamed_address(
+        address: Tuple[str, Any],
+        renames: Dict[Tuple[str, Any], Tuple[str, Any]],
+    ) -> Tuple[str, Any]:
+        return renames.get(address, address)
+
+    @classmethod
+    def _canonicalize_detached_members(
+        cls,
+        members: Iterable[Any],
+        renames: Dict[Tuple[str, Any], Tuple[str, Any]],
+    ) -> Dict[int, Dict[str, Any]]:
+        """Plan bounded semantic rewrites before detached members are registered."""
+
+        plan: Dict[int, Dict[str, Any]] = {}
+        for obj in members:
+            updates: Dict[str, Any] = {}
+            if kind_of(obj) == "exam":
+                linked = set(getattr(obj, "linked_accessions", ()))
+                canonical_linked = {
+                    cls._renamed_address(("exam", accession), renames)[1]
+                    for accession in linked
+                }
+                if canonical_linked != linked:
+                    updates["_linked_accessions"] = canonical_linked
+
+                registry = set(getattr(obj, "registry_references", ()))
+                canonical_registry = {
+                    cls._renamed_address(("registry", reference), renames)[1]
+                    for reference in registry
+                }
+                if canonical_registry != registry:
+                    updates["_registry_references"] = canonical_registry
+
+                linked_exams = getattr(obj, "_linked_exams", None)
+                if linked_exams:
+                    canonical_links: Dict[Any, Any] = {}
+                    for accession, target in linked_exams.items():
+                        canonical = cls._renamed_address(("exam", accession), renames)[1]
+                        existing = canonical_links.get(canonical)
+                        if existing is not None and existing is not target:
+                            raise ValueError(
+                                "Detached semantic key collision: {!r}".format(canonical)
+                            )
+                        canonical_links[canonical] = target
+                    if canonical_links != linked_exams:
+                        updates["_linked_exams"] = canonical_links
+
+                registry_entries = getattr(obj, "_registry_entries", None)
+                if registry_entries:
+                    canonical_entries: Dict[Any, Any] = {}
+                    for reference, entry in registry_entries.items():
+                        canonical = cls._renamed_address(("registry", reference), renames)[1]
+                        existing = canonical_entries.get(canonical)
+                        if existing is not None and existing is not entry:
+                            raise ValueError(
+                                "Detached semantic key collision: {!r}".format(canonical)
+                            )
+                        canonical_entries[canonical] = entry
+                    if canonical_entries != registry_entries:
+                        updates["_registry_entries"] = canonical_entries
+
+            detached = getattr(obj, "_detached_references", None)
+            if detached:
+                canonical_detached = []
+                for target_kind, target_key, relation in detached:
+                    target = cls._renamed_address((target_kind, target_key), renames)
+                    canonical_detached.append((target[0], target[1], relation))
+                canonical_detached_tuple = tuple(canonical_detached)
+                if canonical_detached_tuple != tuple(detached):
+                    updates["_detached_references"] = canonical_detached_tuple
+
+            incoming = getattr(obj, "_detached_incoming_references", None)
+            if incoming:
+                canonical_incoming = []
+                for source_kind, source_key, target_kind, target_key, relation in incoming:
+                    target = cls._renamed_address((target_kind, target_key), renames)
+                    canonical_incoming.append(
+                        (source_kind, source_key, target[0], target[1], relation)
+                    )
+                canonical_incoming_tuple = tuple(canonical_incoming)
+                if canonical_incoming_tuple != tuple(incoming):
+                    updates["_detached_incoming_references"] = canonical_incoming_tuple
+
+            if updates:
+                plan[id(obj)] = updates
+        return plan
+
+    @staticmethod
+    def _apply_detached_member_plan(
+        plan: Dict[int, Dict[str, Any]],
+        members: Iterable[Any],
+    ) -> None:
+        for obj in members:
+            for field, value in plan.get(id(obj), {}).items():
+                object.__setattr__(obj, field, value)
+
     def register(self, entity: Any, *, boundary: str = "copy_shared") -> Any:
         self._boundary(boundary)
         if getattr(entity, "graph", None) is self:
@@ -166,6 +290,10 @@ class DatasetGraph:
             other = getattr(obj, "graph", None)
             if other is not None and other is not self:
                 raise ValueError("Subtree contains a foreign owning object")
+        member_values = tuple(members.values())
+        renames = self._detached_member_renames(member_values)
+        detached_plan = self._canonicalize_detached_members(member_values, renames)
+        self._apply_detached_member_plan(detached_plan, member_values)
         for obj in members.values():
             kind, key = kind_of(obj), key_of(obj)
             self._registries[kind][key] = obj
