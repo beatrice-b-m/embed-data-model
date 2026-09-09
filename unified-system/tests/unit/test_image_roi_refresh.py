@@ -144,3 +144,12 @@ def test_derivative_metadata_roi_does_not_replace_original_collection_or_alias()
     assert source.rois == (original_roi,)
     assert graph.source_image("SOP") is source
     assert graph.roi_at_source(PATH, 0) is original_roi
+def test_depth_flags_align_with_each_roi_and_malformed_flags_preserve_snapshot():
+    graph = load_embed(images=[row(ROI_coords="[(1,2,3,4),(5,6,7,8)]", ROI_frames="[[2],[3]]", ROI_depth_derived="[True,False]")]).graph
+    first, second = graph.rois
+    assert first.frame_provenance == "source_derived"
+    assert second.frame_provenance == "source_supplied"
+    assert first.frame_indices == (2,) and second.frame_indices == (3,)
+    result = load_embed(images=[row(ROI_coords="[(1,2,3,4),(5,6,7,8)]", ROI_depth_derived="[True]")], into=graph)
+    assert graph.rois == (first, second)
+    assert any(issue.code == "invalid_roi_collection" for issue in result.issues)

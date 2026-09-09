@@ -210,7 +210,11 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
         value = [value]
     frames = _literal(_mapped(row, columns, "frame_indices"))
     depth_derived = _mapped(row, columns, "depth_derived")
-    derived = not is_null_scalar(depth_derived) and str(depth_derived).strip().lower() in {"1", "1.0", "true", "yes"}
+    if isinstance(depth_derived, str) and depth_derived.strip().startswith(("[", "(")):
+        depth_derived = _literal(depth_derived)
+    flags = depth_derived if isinstance(depth_derived, (list, tuple)) else [depth_derived] * len(value)
+    if len(flags) != len(value):
+        raise ValueError("Depth flags must align with ROI collection slots")
     confidence = _mapped(row, columns, "confidence")
     if not is_null_scalar(confidence):
         confidence = float(confidence)
@@ -219,6 +223,15 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
     source_path = _identifier(_mapped(row, columns, "source_path"))
     result = []
     for position, box in enumerate(value):
+        flag = flags[position]
+        if is_null_scalar(flag):
+            derived = False
+        elif str(flag).strip().lower() in {"1", "1.0", "true", "yes"}:
+            derived = True
+        elif str(flag).strip().lower() in {"0", "0.0", "false", "no"}:
+            derived = False
+        else:
+            raise ValueError("Depth flags must be boolean values")
         if not isinstance(box, (list, tuple)) or len(box) != 4:
             raise ValueError("Each ROI needs exactly four numeric coordinates")
         coords = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
