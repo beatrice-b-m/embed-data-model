@@ -13,11 +13,16 @@ license = { text = "Proprietary" }
 [dependency-groups]
 dev = [
     "build>=1.2",
+    "setuptools>=61",
+    "wheel>=0.43",
     "mypy>=1.10,<2",
     "pandas>=2.0",
     "pytest>=8",
     "ruff>=0.8",
 ]
+
+[tool.setuptools.package-data]
+embed_toolkit = ["py.typed"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -28,12 +33,8 @@ pythonpath = ["."]
 
 [tool.mypy]
 python_version = "3.9"
-files = [
-    "src/embed_toolkit/core/primitives.py",
-    "src/embed_toolkit/core/source.py",
-    "src/embed_toolkit/core/tables.py",
-]
-follow_imports = "skip"
+files = ["src/embed_toolkit"]
+follow_imports = "normal"
 disallow_untyped_defs = true
 no_implicit_optional = true
 warn_redundant_casts = true
