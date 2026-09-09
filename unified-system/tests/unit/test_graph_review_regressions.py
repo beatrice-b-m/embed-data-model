@@ -3,6 +3,13 @@
 import pytest
 
 from embed_toolkit import CancerRegistryEntry, DatasetGraph, Exam, MammogramImage, Patient
+from embed_toolkit.clinical.attributes import (
+    ExamAttributeName,
+    ExamAttributeObservation,
+    PatientAttributeName,
+    PatientAttributeObservation,
+)
+from embed_toolkit.clinical.histories import MedicationHistoryObservation
 
 
 def test_source_sop_collision_is_preflighted_for_update() -> None:
@@ -176,6 +183,55 @@ def test_registered_patient_rekey_preserves_source_scoped_child_identities() -> 
     assert destination.exam("A").patient_id == "Q"
     assert destination.image("I").patient_id == "P"
     assert destination.registry_entry("P", "R") is entry
+    assert not destination.unresolved_references
+
+
+def test_registered_rekey_updates_embedded_observation_context_only() -> None:
+    patient_observation = PatientAttributeObservation(
+        "P", PatientAttributeName.SEX, "F"
+    )
+    history = MedicationHistoryObservation(
+        "P", category="hormone", medication="estrogen"
+    )
+    exam_observation = ExamAttributeObservation(
+        "A", ExamAttributeName.DESCRIPTION, "screening"
+    )
+    patient = Patient(
+        "P",
+        attribute_observations=(patient_observation,),
+        history_observations=(history,),
+    )
+    exam = patient.add_exam(
+        Exam("A", asserted_patient_ids=("P",), attribute_observations=(exam_observation,))
+    )
+    image = exam.add_image(
+        MammogramImage("I", accession_number="A", patient_id="source-P")
+    )
+    entry = exam.add_registry_entry(CancerRegistryEntry("P", "R"))
+
+    graph = DatasetGraph()
+    graph.register(patient)
+    graph.rekey(patient, patient_id="Q")
+    graph.rekey(exam, accession_number="B")
+
+    assert patient_observation.patient_id == "Q"
+    assert history.patient_id == "Q"
+    assert exam_observation.accession_number == "B"
+    assert exam.patient_id == "Q"
+    assert exam.asserted_patient_ids == {"P"}
+    assert image.patient_id == "source-P"
+    assert image.accession_number == "B"
+    assert entry.identity == ("P", "R")
+
+    detached = graph.pop(patient)
+    destination = DatasetGraph()
+    destination.register(detached)
+
+    assert destination.patient("Q") is patient
+    assert destination.exam("B") is exam
+    assert patient_observation.patient_id == "Q"
+    assert history.patient_id == "Q"
+    assert exam_observation.accession_number == "B"
     assert not destination.unresolved_references
 
 

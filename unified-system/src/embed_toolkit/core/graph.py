@@ -152,6 +152,40 @@ class DatasetGraph:
         return candidate
 
     @staticmethod
+    def _embedded_context_changes(
+        entity: Any,
+        fields: Dict[str, Any],
+    ) -> Tuple[Tuple[Any, Dict[str, Any]], ...]:
+        """Plan identity-context updates for values outside graph containment.
+
+        Patient and exam observations are embedded source facts rather than
+        graph-owned registry members.  Their parent identity still needs to
+        follow a registered patient or exam rekey, while their source claims
+        remain independent objects and fields.
+        """
+
+        kind = kind_of(entity)
+        updates = []
+        if kind == "patient" and "patient_id" in fields:
+            old_patient_id = getattr(entity, "patient_id", None)
+            new_patient_id = fields["patient_id"]
+            for observation in (
+                *getattr(entity, "attribute_observations", ()),
+                *getattr(entity, "history_observations", ()),
+            ):
+                if getattr(observation, "patient_id", None) == old_patient_id:
+                    updates.append((observation, {"patient_id": new_patient_id}))
+        elif kind == "exam" and "accession_number" in fields:
+            old_accession = getattr(entity, "accession_number", None)
+            new_accession = fields["accession_number"]
+            for observation in getattr(entity, "attribute_observations", ()):
+                if getattr(observation, "accession_number", None) == old_accession:
+                    updates.append(
+                        (observation, {"accession_number": new_accession})
+                    )
+        return tuple(updates)
+
+    @staticmethod
     def _detached_member_renames(
         members: Iterable[Any],
     ) -> Dict[Tuple[str, Any], Tuple[str, Any]]:
@@ -562,6 +596,7 @@ class DatasetGraph:
                         continue
                     if obj is not entity and getattr(obj, name, None) == getattr(entity, name):
                         proposals.setdefault(id(obj), {})[name] = fields[name]
+        embedded_context = self._embedded_context_changes(entity, fields)
         staged = []
         source_proposals = []
         for oid, changes in proposals.items():
@@ -603,6 +638,9 @@ class DatasetGraph:
             if kind_of(obj) == "image" and "image_id" in changes:
                 for landmark in obj.landmarks:
                     object.__setattr__(landmark, "image_id", obj.image_id)
+        for obj, changes in embedded_context:
+            for field, value in changes.items():
+                object.__setattr__(obj, field, value)
         for obj, previous, new, changes in staged:
             self._rewrite_references(kind_of(obj), previous, new)
             for pid in tuple(self._parents[id(obj)]):
