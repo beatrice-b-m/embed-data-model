@@ -175,10 +175,13 @@ class DatasetGraph:
             image = self.image(obj.image_id)
             if image is not None and image.derived_from is not None:
                 return
-            path = getattr(obj, "source_path", None)
+            paths = {getattr(obj, "source_path", None)}
+            if image is not None:
+                paths.update(image.source_paths)
             position = getattr(obj, "collection_position", None)
-            if path is not None and position is not None:
-                self._source_rois[path, position] = obj
+            for path in paths:
+                if path is not None and position is not None:
+                    self._source_rois[path, position] = obj
 
     def _resolve_member(self, obj: Any) -> None:
         kind, key = kind_of(obj), key_of(obj)
@@ -353,14 +356,17 @@ class DatasetGraph:
                      "image": {"image_id", "accession_number"}, "roi": {"image_id", "roi_key"}}
         if set(fields) & protected[kind_of(entity)]:
             return self.rekey(entity, **fields)
-        for field, value in fields.items():
-            setattr(entity, field, value)
+        self._unindex_source(entity)
+        try:
+            for field, value in fields.items():
+                setattr(entity, field, value)
+        finally:
+            self._index_source(entity)
         if "laterality" in fields:
             for pid in tuple(self._parents[id(entity)]):
                 parent = self._objects[pid]
                 parent._detach_local(entity)
                 parent._attach_local(entity)
-        self._index_source(entity)
         self.operation_counts["updated"] += 1
         return entity
 
@@ -403,6 +409,8 @@ class DatasetGraph:
                 if kind_of(parent) == parent_kind:
                     self._detach(parent, entity)
             self.clear_references(kind, key_of(entity), "parent")
+        for obj, previous, new, changes in staged:
+            self._unindex_source(obj)
         for obj, previous, new, changes in staged:
             registry = self._registries[kind_of(obj)]
             registry.pop(previous)

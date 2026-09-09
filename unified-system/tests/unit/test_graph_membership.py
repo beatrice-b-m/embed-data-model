@@ -166,3 +166,16 @@ def test_explicit_owner_clear_detaches_and_foreign_assignment_is_rejected():
     with pytest.raises(ValueError, match="belong"):
         DatasetGraph().assign_patient(exam, "Q")
     assert exam.graph is graph and exam.patient_id is None
+def test_source_field_updates_remove_old_aliases_and_pop_removes_current_ones():
+    from embed_toolkit import DatasetGraph, MammogramImage, RegionOfInterest
+    graph = DatasetGraph()
+    image = graph.register(MammogramImage("I", source_sop_instance_uid="S1", source_paths={"/old"}))
+    roi = image.add_roi(RegionOfInterest((0, 0, 1, 1), "I", "0", source_path="/old", collection_position=0))
+    roi.update(source_path="/new", collection_position=1)
+    assert graph.roi_at_source("/old", 0) is None
+    image.update(source_sop_instance_uid="S2", source_paths={"/new"})
+    assert graph.source_image("S1") is None and graph.image_at_path("/old") is None
+    assert graph.source_image("S2") is image and graph.roi_at_source("/new", 1) is roi
+    graph.pop(image)
+    assert graph.source_image("S2") is None and graph.image_at_path("/new") is None
+    assert graph.roi_at_source("/new", 1) is None
