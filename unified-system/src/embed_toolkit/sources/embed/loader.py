@@ -1,46 +1,43 @@
-"""Patient and exam ingestion for the EMBED source."""
+"""Semantic-grain EMBED loading with mutable refresh and merge semantics."""
 
 from __future__ import annotations
 
 import ast
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-import json
 from math import isfinite
 from numbers import Integral, Real
-from typing import Any, Callable, Iterator, Mapping, Optional, Union
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
-from embed_toolkit.core.tables import (
-    TableNormalizationError,
-    TableRecord,
-    iter_records,
-)
-from embed_toolkit.clinical.associations import AssociationLink, AttributionStatus
-from embed_toolkit.clinical.attributes import PatientAttributeName
+from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.findings import (
+    Finding,
     FindingNormalizationEvidence,
     FindingNormalizationWarning,
     FindingRecordType,
 )
+from embed_toolkit.clinical.histories import (
+    MedicationHistoryObservation,
+    ProcedureHistoryObservation,
+)
+from embed_toolkit.clinical.interpretations import ImagingInterpretation
+from embed_toolkit.clinical.patients import Patient
 from embed_toolkit.core.anatomy import AnatomicalPosition, Quadrant
 from embed_toolkit.core.graph import DatasetGraph
-from embed_toolkit.core.primitives import ImageModality, Laterality, ViewPosition
-from embed_toolkit.core.source import Issue, SourceRef
+from embed_toolkit.core.primitives import Laterality
+from embed_toolkit.core.source import Issue, IssueSeverity, SourceRef
+from embed_toolkit.core.tables import TableNormalizationError, TableRecord, iter_records
 from embed_toolkit.sources.embed.columns import resolve_columns
 from embed_toolkit.sources.embed.histories import (
     normalize_medication_history,
     normalize_procedure_history,
 )
 from embed_toolkit.sources.embed.magview import normalize_magview_location
-from embed_toolkit.sources.embed.procedures_pathology import (
-    normalize_pathology,
-    normalize_procedure,
-)
 
 
 SourceKeySelector = Union[str, Callable[[Mapping[str, Any]], Any]]
-_MAGVIEW_SOURCE_KEY = object()
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -50,6 +47,16 @@ class LoadReport:
     graph: DatasetGraph
     issues: tuple[Issue, ...]
     source_scope: str
+
+
+@dataclass(frozen=True)
+class _InputRow:
+    """One materialized source mapping and optional physical diagnostics."""
+
+    table: str
+    mapping: Mapping[str, Any]
+    source: Optional[SourceRef]
+    ordinal: int
 
 
 def load_embed(
@@ -64,27 +71,35 @@ def load_embed(
     procedures: Any = None,
     pathology: Any = None,
     magview: Any = None,
+    registry: Any = None,
+    registry_rows: Any = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
     source_keys: Optional[Mapping[str, SourceKeySelector]] = None,
     columns: Optional[Mapping[str, Mapping[str, Optional[str]]]] = None,
-    mode: str = "audit",
+    mode: str = "refresh",
     retain_raw: bool = False,
 ) -> LoadReport:
-    """Load any supplied EMBED clinical grain tables into one graph.
+    """Load optional EMBED tables into one mutable semantic graph.
 
-    Tables may be pandas DataFrames or iterables of row mappings. Every table
-    is optional, and an exam is safe to load without either a patient table or
-    a populated patient reference.
+    One invocation is one complete grouped snapshot.  ``refresh`` resets the
+    bound adapter-managed fields for each addressed grain; ``merge`` applies
+    supplied non-null fields and requires explicit collection identifiers where
+    equality cannot be established.  A missing table never refreshes that
+    grain, and a child projection only ensures its parents.
     """
 
     if into is not None and not isinstance(into, DatasetGraph):
         raise TypeError("into must be a DatasetGraph or None")
-    if mode not in {"audit", "strict"}:
-        raise ValueError("mode must be 'audit' or 'strict'")
+    if mode not in {"refresh", "merge"}:
+        raise ValueError("mode must be 'refresh' or 'merge'")
     if not isinstance(retain_raw, bool):
         raise TypeError("retain_raw must be a bool")
+    if registry is not None and registry_rows is not None:
+        raise TypeError("use either registry or registry_rows, not both")
+    if registry is None:
+        registry = registry_rows
     if source_scope is not None and (
         not isinstance(source_scope, str) or not source_scope.strip()
     ):
@@ -95,10 +110,7 @@ def load_embed(
         raise ValueError("identity_namespace must be a non-empty string or None")
 
     column_maps = resolve_columns(columns)
-    key_selectors = _resolve_source_keys(source_keys)
-
-    # Identity metadata is immutable. Check this before opening a transaction
-    # or even consuming a possibly stateful input iterable.
+    selectors = _resolve_source_keys(source_keys)
     if (
         into is not None
         and identity_namespace is not None
@@ -111,115 +123,102 @@ def load_embed(
         source_scope=source_scope,
     )
     resolved_scope = source_scope or graph.source_scope
+    issues: list[Issue] = []
 
-    with graph.transaction(mode=mode) as transaction:
-        _load_patients(
-            patients,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["patients"],
-            columns=column_maps["patients"],
-            retain_raw=retain_raw,
+    materialized = {
+        table: _materialize(
+            value,
+            table,
+            selectors[table],
+            resolved_scope,
+            issues,
         )
-        _load_exams(
-            exams,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["exams"],
-            columns=column_maps["exams"],
-            retain_raw=retain_raw,
+        for table, value in (
+            ("patients", patients),
+            ("exams", exams),
+            ("findings", findings),
+            ("images", images),
+            ("rois", rois),
+            ("hormone_history", hormone_history),
+            ("procedure_history", procedure_history),
+            ("procedures", procedures),
+            ("pathology", pathology),
+            ("magview", magview),
+            ("registry", registry),
         )
-        _load_findings(
-            findings,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["findings"],
-            columns=column_maps["findings"],
-            retain_raw=retain_raw,
-        )
-        _load_images(
-            images,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["images"],
-            columns=column_maps["images"],
-            retain_raw=retain_raw,
-        )
-        _load_rois(
-            rois,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["rois"],
-            columns=column_maps["rois"],
-            retain_raw=retain_raw,
-        )
-        _load_histories(
-            hormone_history,
-            table_name="hormone_history",
-            normalizer=normalize_medication_history,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["hormone_history"],
-            columns=column_maps["hormone_history"],
-            retain_raw=retain_raw,
-        )
-        _load_magview(
-            magview,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["magview"],
-            column_maps=column_maps,
-            retain_raw=retain_raw,
-        )
-        _load_procedures(
-            procedures,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["procedures"],
-            columns=column_maps["procedures"],
-            retain_raw=retain_raw,
-        )
-        _load_pathology(
-            pathology,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["pathology"],
-            columns=column_maps["pathology"],
-            retain_raw=retain_raw,
-        )
-        _load_histories(
-            procedure_history,
-            table_name="procedure_history",
-            normalizer=normalize_procedure_history,
-            transaction=transaction,
-            source_scope=resolved_scope,
-            source_key=key_selectors["procedure_history"],
-            columns=column_maps["procedure_history"],
-            retain_raw=retain_raw,
-        )
+    }
 
-    return LoadReport(
-        graph=graph,
-        issues=tuple(transaction.issues),
-        source_scope=resolved_scope,
+    magview_rows = materialized["magview"]
+    projected = _project_core_rows(magview_rows, column_maps)
+    core_rows = {
+        "patients": materialized["patients"] + projected["patients"],
+        "exams": materialized["exams"] + projected["exams"],
+        "findings": materialized["findings"] + projected["findings"],
+    }
+    _load_patients(core_rows["patients"], graph, column_maps["patients"], mode, issues)
+    _load_exams(core_rows["exams"], graph, column_maps["exams"], mode, issues)
+    _load_findings(core_rows["findings"], graph, column_maps["findings"], mode, issues, resolved_scope)
+
+    _load_history(
+        materialized["hormone_history"],
+        graph,
+        column_maps["hormone_history"],
+        mode,
+        issues,
+        kind="medication",
     )
+    _load_history(
+        materialized["procedure_history"],
+        graph,
+        column_maps["procedure_history"],
+        mode,
+        issues,
+        kind="reported_procedure",
+    )
+
+    # Source adapters share the one normalized invocation snapshot.
+    from embed_toolkit.sources.embed.clinical import load_clinical
+    from embed_toolkit.sources.embed.imaging import load_imaging
+
+    load_clinical(
+        procedures=[dict(item.mapping) for item in materialized["procedures"]],
+        pathology=[dict(item.mapping) for item in materialized["pathology"]],
+        magview=[dict(item.mapping) for item in materialized["magview"]],
+        registry=[dict(item.mapping) for item in materialized["registry"]],
+        graph=graph,
+        columns=column_maps,
+        mode=mode,
+        issues=issues,
+    )
+    load_imaging(
+        images=[dict(item.mapping) for item in materialized["images"]],
+        rois=None if rois is None else [dict(item.mapping) for item in materialized["rois"]],
+        graph=graph,
+        columns=column_maps,
+        mode=mode,
+        issues=issues,
+    )
+
+    return LoadReport(graph=graph, issues=tuple(issues), source_scope=resolved_scope)
 
 
 def _resolve_source_keys(
     source_keys: Optional[Mapping[str, SourceKeySelector]],
 ) -> dict[str, Optional[SourceKeySelector]]:
-    resolved: dict[str, Optional[SourceKeySelector]] = {
-        "patients": None,
-        "exams": None,
-        "findings": None,
-        "images": None,
-        "rois": None,
-        "hormone_history": None,
-        "procedure_history": None,
-        "procedures": None,
-        "pathology": None,
-        "magview": None,
-    }
+    tables = (
+        "patients",
+        "exams",
+        "findings",
+        "images",
+        "rois",
+        "hormone_history",
+        "procedure_history",
+        "procedures",
+        "pathology",
+        "magview",
+        "registry",
+    )
+    resolved: dict[str, Optional[SourceKeySelector]] = {table: None for table in tables}
     if source_keys is None:
         return resolved
     if not isinstance(source_keys, Mapping):
@@ -239,451 +238,637 @@ def _resolve_source_keys(
     return resolved
 
 
-def _load_magview(
+def _materialize(
     table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
+    table_name: str,
     source_key: Optional[SourceKeySelector],
-    column_maps: Mapping[str, Mapping[str, Optional[str]]],
-    retain_raw: bool,
-) -> None:
-    """Project one normalized wide row stream through existing grain loaders."""
+    source_scope: str,
+    issues: list[Issue],
+) -> list[_InputRow]:
+    if table is None:
+        return []
+    try:
+        records = iter_records(table, key=source_key)
+        result: list[_InputRow] = []
+        for record in records:
+            source = _record_source(record, source_scope, table_name)
+            for table_issue in record.issues:
+                issues.append(
+                    Issue(
+                        code=table_issue.code,
+                        message=table_issue.message,
+                        severity=IssueSeverity(table_issue.severity),
+                        source=source,
+                        context={
+                            "table": table_name,
+                            "ordinal": table_issue.ordinal,
+                            "key_name": table_issue.key_name,
+                            "raw_key": table_issue.raw_key,
+                        },
+                    )
+                )
+            result.append(
+                _InputRow(
+                    table=table_name,
+                    mapping=dict(record.mapping),
+                    source=source,
+                    ordinal=record.ordinal,
+                )
+            )
+        return result
+    except TableNormalizationError as error:
+        issues.append(
+            Issue(
+                code=error.code,
+                message=str(error),
+                severity=IssueSeverity.ERROR,
+                context={"table": table_name, "ordinal": error.ordinal},
+            )
+        )
+        return []
 
-    projected: dict[str, list[Mapping[Any, Any]]] = {
+
+def _record_source(
+    record: TableRecord,
+    source_scope: str,
+    table_name: str,
+) -> Optional[SourceRef]:
+    if record.source_key is None:
+        return None
+    return SourceRef(source_scope, table_name, record.source_key)
+
+
+def _project_core_rows(
+    rows: Sequence[_InputRow],
+    columns: Mapping[str, Mapping[str, Optional[str]]],
+) -> dict[str, list[_InputRow]]:
+    result: dict[str, list[_InputRow]] = {
         "patients": [],
         "exams": [],
         "findings": [],
-        "procedures": [],
-        "pathology": [],
     }
-    for record in _table_records(table, source_key, "magview", transaction):
-        source = _record_source(record, source_scope, "magview")
-        if not _add_table_issues(record, source, transaction):
-            continue
-        row = dict(record.mapping)
-        row[_MAGVIEW_SOURCE_KEY] = record.source_key
-        if _has_semantic_value(row, column_maps["patients"], "patient_id"):
-            projected["patients"].append(row)
-        if _has_semantic_value(row, column_maps["exams"], "accession"):
-            projected["exams"].append(row)
-        if _has_semantic_value(row, column_maps["findings"], "finding_number"):
-            projected["findings"].append(row)
-        if any(
-            _has_semantic_value(row, column_maps["procedures"], semantic)
-            for semantic in ("performed_date", "procedure_type", "laterality")
+    for row in rows:
+        for grain, identity in (
+            ("patients", ("patient_id",)),
+            ("exams", ("accession",)),
+            ("findings", ("accession", "finding_number")),
         ):
-            projected["procedures"].append(row)
-        if any(
-            _has_semantic_value(row, column_maps["pathology"], semantic)
-            for semantic in (
-                "diagnosis",
-                "result_category",
-                "malignant",
-                "severity",
-                "report_documented_date",
-                *(f"descriptor_{index}" for index in range(1, 11)),
-            )
-        ):
-            projected["pathology"].append(row)
-
-    def selector(row: Mapping[Any, Any]) -> Any:
-        return row[_MAGVIEW_SOURCE_KEY]
-
-    common = {
-        "transaction": transaction,
-        "source_scope": source_scope,
-        "source_key": selector,
-        "retain_raw": retain_raw,
-        "source_table": "magview",
-    }
-    _load_patients(projected["patients"], columns=column_maps["patients"], **common)
-    _load_exams(projected["exams"], columns=column_maps["exams"], **common)
-    _load_findings(projected["findings"], columns=column_maps["findings"], **common)
-    _load_procedures(
-        projected["procedures"], columns=column_maps["procedures"], **common
-    )
-    _load_pathology(
-        projected["pathology"], columns=column_maps["pathology"], **common
-    )
-
-
-def _has_semantic_value(
-    row: Mapping[Any, Any],
-    columns: Mapping[str, Optional[str]],
-    semantic: str,
-) -> bool:
-    column = columns[semantic]
-    return column is not None and not _is_missing(row.get(column))
+            cmap = columns[grain]
+            if _semantic_key(row.mapping, cmap, identity) is not None:
+                result[grain].append(row)
+    return result
 
 
 def _load_patients(
-    table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
+    rows: Sequence[_InputRow],
+    graph: DatasetGraph,
     columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-    source_table: str = "patients",
+    mode: str,
+    issues: list[Issue],
 ) -> None:
-    patient_column = columns["patient_id"]
-    assert patient_column is not None
-    for record in _table_records(table, source_key, source_table, transaction):
-        source = _record_source(record, source_scope, source_table)
-        if not _add_table_issues(record, source, transaction):
-            continue
-        raw_identifier = record.mapping.get(patient_column)
-        patient_id = _normalize_identifier(raw_identifier)
-        if patient_id is None:
-            transaction.add_issue(
-                _identity_issue("patient_id", raw_identifier, source, patient_column)
-            )
-            continue
-        values = {"patient_id": patient_id}
-        attributes: dict[PatientAttributeName, Any] = {}
-        sex_column = columns["sex"]
-        if sex_column is not None and sex_column in record.mapping:
-            attributes[PatientAttributeName.SEX] = _mapped_text(
-                record.mapping, sex_column
-            )
-        birth_year_column = columns["birth_year"]
-        if birth_year_column is not None and birth_year_column in record.mapping:
-            raw_birth_year = _mapped_value(record.mapping, birth_year_column)
-            if raw_birth_year is None:
-                attributes[PatientAttributeName.BIRTH_YEAR] = None
-            else:
-                birth_year = _exact_integer(raw_birth_year)
-                if birth_year is None:
-                    transaction.add_issue(
-                        Issue(
-                            code="invalid_patient_attribute_value",
-                            message="birth_year must represent an exact finite integer",
-                            source=source,
-                            context={
-                                "attribute": "birth_year",
-                                "column": birth_year_column,
-                                "value": raw_birth_year,
-                            },
-                        )
-                    )
-                else:
-                    attributes[PatientAttributeName.BIRTH_YEAR] = birth_year
-        context_column = columns["context_date"]
-        raw_context = _mapped_value(record.mapping, context_column)
-        context_date = _calendar_date(raw_context)
-        if raw_context is not None and context_date is None and attributes:
-            transaction.add_issue(
-                Issue(
-                    code="invalid_patient_attribute_context_date",
-                    message="patient attribute context date could not be parsed",
-                    source=source,
-                    context={"column": context_column, "value": raw_context},
-                )
-            )
-        transaction.upsert_patient(
-            patient_id,
-            source,
-            values=values,
-            metadata=_evidence(record.mapping, retain_raw),
-            attributes=attributes,
-            context_date=context_date,
+    groups = _group_rows(rows, columns, ("patient_id",), "patient", issues)
+    for key in sorted(groups, key=repr):
+        group = groups[key]
+        patient = _ensure_patient(graph, key)
+        fields, conflicts = _combine_fields(
+            group,
+            columns,
+            {
+                "sex": _text_value,
+                "birth_year": _birth_year_value,
+                "context_date": _date_value,
+            },
+            "patient",
+            key,
+            issues,
         )
+        updates = _updates_for_mode(fields, conflicts, columns, mode)
+        if updates:
+            _update_entity(graph, patient, updates)
 
 
 def _load_exams(
-    table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
+    rows: Sequence[_InputRow],
+    graph: DatasetGraph,
     columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-    source_table: str = "exams",
+    mode: str,
+    issues: list[Issue],
 ) -> None:
-    accession_column = columns["accession"]
-    assert accession_column is not None
-    for record in _table_records(table, source_key, source_table, transaction):
-        source = _record_source(record, source_scope, source_table)
-        if not _add_table_issues(record, source, transaction):
-            continue
-        raw_accession = record.mapping.get(accession_column)
-        accession = _normalize_identifier(raw_accession)
-        if accession is None:
-            transaction.add_issue(
-                _identity_issue("accession", raw_accession, source, accession_column)
-            )
-            continue
-
-        patient_column = columns["patient_id"]
-        raw_patient_id = (
-            record.mapping.get(patient_column) if patient_column is not None else None
+    groups = _group_rows(rows, columns, ("accession",), "exam", issues)
+    for key in sorted(groups, key=repr):
+        group = groups[key]
+        exam = _ensure_exam(graph, key)
+        fields, conflicts = _combine_fields(
+            group,
+            columns,
+            {"exam_date": _text_value, "exam_description": _text_value},
+            "exam",
+            key,
+            issues,
         )
-        patient_id = _normalize_identifier(raw_patient_id)
-        if (
-            patient_column is not None
-            and not _is_missing(raw_patient_id)
-            and patient_id is None
-        ):
-            transaction.add_issue(
-                Issue(
-                    code="invalid_patient_id",
-                    message=(
-                        "patient_id is not a supported EMBED identifier; "
-                        "the exam was retained without a patient link"
-                    ),
-                    severity="error",
-                    source=source,
-                    context={
-                        "column": patient_column,
-                        "value": raw_patient_id,
-                    },
-                )
-            )
-        exam_date = _mapped_text(record.mapping, columns["exam_date"])
-        description = _mapped_text(record.mapping, columns["exam_description"])
-        values = {
-            "accession": accession,
-            "patient_id": patient_id,
-            "exam_date": exam_date,
-            "exam_description": description,
-            "exam_date_present": (
-                columns["exam_date"] is not None
-                and columns["exam_date"] in record.mapping
-            ),
-            "exam_description_present": (
-                columns["exam_description"] is not None
-                and columns["exam_description"] in record.mapping
-            ),
-        }
-        transaction.upsert_exam(
-            accession,
-            source,
-            patient_id=patient_id,
-            exam_date=exam_date,
-            description=description,
-            values=values,
-            metadata=_evidence(record.mapping, retain_raw),
+        updates = _updates_for_mode(
+            {
+                "exam_date": fields.get("exam_date"),
+                "description": fields.get("exam_description"),
+            },
+            {
+                "exam_date": conflicts.get("exam_date", False),
+                "description": conflicts.get("exam_description", False),
+            },
+            {
+                "exam_date": columns.get("exam_date"),
+                "description": columns.get("exam_description"),
+            },
+            mode,
         )
+        if updates:
+            _update_entity(graph, exam, updates)
+        _claim_exam_from_rows(graph, exam, group, columns)
 
 
 def _load_findings(
-    table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
+    rows: Sequence[_InputRow],
+    graph: DatasetGraph,
     columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-    source_table: str = "findings",
+    mode: str,
+    issues: list[Issue],
+    source_scope: str,
 ) -> None:
-    accession_column = columns["accession"]
-    number_column = columns["finding_number"]
-    assert accession_column is not None and number_column is not None
-    for record in _table_records(table, source_key, source_table, transaction):
-        source = _record_source(record, source_scope, source_table)
-        if not _add_table_issues(record, source, transaction):
-            continue
-        raw_accession = record.mapping.get(accession_column)
-        accession = _normalize_identifier(raw_accession)
-        if accession is None:
-            transaction.add_issue(
-                _identity_issue("accession", raw_accession, source, accession_column)
-            )
-            continue
-        raw_number = record.mapping.get(number_column)
-        finding_number = _normalize_identifier(raw_number)
-        if finding_number is None:
-            transaction.add_issue(
-                _identity_issue("finding_number", raw_number, source, number_column)
-            )
-            continue
-
-        laterality_column = columns["laterality"]
-        raw_laterality = (
-            record.mapping.get(laterality_column)
-            if laterality_column is not None
-            else None
-        )
-        laterality = Laterality.coerce(_plain_scalar(raw_laterality))
-        if not _is_missing(raw_laterality) and laterality is Laterality.UNKNOWN:
-            transaction.add_issue(
-                Issue(
-                    code="unsupported_finding_laterality",
-                    message="finding laterality was retained as unknown",
-                    severity="warning",
-                    source=source,
-                    context={"column": laterality_column, "value": raw_laterality},
-                )
-            )
-        values = {
-            "accession": accession,
-            "finding_number": finding_number,
-            "laterality": laterality.value,
-            "finding_type": _mapped_text(record.mapping, columns["finding_type"]),
-            "record_type": (
-                FindingRecordType.SYNTHETIC_CONTRALATERAL_NEGATIVE.value
-                if finding_number == "-9"
-                else FindingRecordType.FINDING.value
-            ),
-            "assessment": _mapped_text(record.mapping, columns["assessment"]),
-            "recommendation": _mapped_text(record.mapping, columns["recommendation"]),
-        }
-        anatomy = _finding_anatomy(
-            record.mapping,
+    groups = _group_rows(
+        rows,
+        columns,
+        ("accession", "finding_number"),
+        "finding",
+        issues,
+    )
+    for key in sorted(groups, key=repr):
+        group = groups[key]
+        accession, finding_number = key
+        exam = _ensure_exam(graph, accession)
+        _claim_exam_from_rows(graph, exam, group, columns)
+        fields, conflicts = _combine_fields(
+            group,
             columns,
-            source,
-            laterality,
-            transaction,
+            {
+                "laterality": lambda value: Laterality.coerce(value),
+                "finding_type": _text_value,
+                "assessment": _text_value,
+                "recommendation": _text_value,
+                "record_type": _text_value,
+                "location": _raw_value,
+                "depth": _raw_value,
+                "distance": _raw_value,
+                "descriptors": _literal_value,
+            },
+            "finding",
+            key,
+            issues,
         )
-        transaction.upsert_finding(
+        if fields.get("laterality") is None:
+            laterality = Laterality.UNKNOWN
+        else:
+            laterality = fields["laterality"]
+        record_type = _finding_record_type(fields.get("record_type"), finding_number)
+        interpretation = _interpretation(
             accession,
             finding_number,
-            source,
-            laterality=laterality,
-            finding_type=values["finding_type"],
-            record_type=FindingRecordType(values["record_type"]),
-            assessment=values["assessment"],
-            recommendation=values["recommendation"],
-            anatomical_position=anatomy["position"],
-            location_codes=anatomy["location_codes"],
-            depth_codes=anatomy["depth_codes"],
-            distance_codes=anatomy["distance_codes"],
-            anatomy_evidence=anatomy["evidence"],
-            anatomy_warnings=anatomy["warnings"],
-            values=values,
-            metadata=_evidence(record.mapping, retain_raw),
+            fields.get("assessment"),
+            fields.get("recommendation"),
+            _semantic_source(group, source_scope, "finding", key),
         )
+        anatomy = _finding_anatomy(
+            fields,
+            laterality,
+            group,
+            source_scope,
+            key,
+            issues,
+        )
+        source = _semantic_source(group, source_scope, "finding", key)
+        evidence = anatomy["evidence"] if source is not None else ()
+        warnings = anatomy["warnings"] if source is not None else ()
+        descriptors = fields.get("descriptors")
+        if descriptors is None:
+            descriptor_map: dict[str, Any] = {}
+        elif isinstance(descriptors, Mapping):
+            descriptor_map = dict(descriptors)
+        else:
+            descriptor_map = {"value": descriptors}
+        updates = {
+            "laterality": laterality,
+            "finding_type": fields.get("finding_type"),
+            "interpretation": interpretation,
+            "anatomical_position": anatomy["position"],
+            "source_location_codes": anatomy["location_codes"],
+            "source_depth_codes": anatomy["depth_codes"],
+            "source_distance_codes": anatomy["distance_codes"],
+            "normalization_evidence": evidence,
+            "normalization_warnings": warnings,
+            "descriptors": descriptor_map,
+            "record_type": record_type,
+        }
+        dependencies = {
+            "interpretation": ("assessment", "recommendation"),
+            "anatomical_position": ("location", "depth", "distance"),
+            "normalization_evidence": ("location", "depth", "distance"),
+            "normalization_warnings": ("location", "depth", "distance"),
+        }
+        managed_updates = {}
+        for name, value in updates.items():
+            semantics = dependencies.get(name, (_finding_field(name),))
+            if not any(columns.get(semantic) is not None for semantic in semantics):
+                continue
+            if mode == "refresh" or any(conflicts.get(semantic) or fields.get(semantic) is not None for semantic in semantics):
+                managed_updates[name] = value
+        updates = managed_updates
+        existing = graph.get("finding", key)
+        if existing is not None and "interpretation" in updates and existing.interpretation is not None:
+            # Interpretations share the finding grain; refresh their bound fields
+            # without discarding a consumer's live reference or extension state.
+            current = existing.interpretation
+            for name in ("assessment", "recommendation"):
+                if columns.get(name) is not None and (
+                    mode == "refresh" or conflicts.get(name) or fields.get(name) is not None
+                ):
+                    current.update(**{name: fields.get(name)})
+            updates["interpretation"] = current
+        if existing is None:
+            finding = Finding(
+                accession_number=accession,
+                laterality=laterality,
+                finding_number=finding_number,
+                finding_type=updates.get("finding_type"),
+                interpretation=updates.get("interpretation"),
+                anatomical_position=updates.get("anatomical_position"),
+                source_location_codes=updates.get("source_location_codes", {}),
+                source_depth_codes=updates.get("source_depth_codes", {}),
+                source_distance_codes=updates.get("source_distance_codes", {}),
+                normalization_evidence=updates.get("normalization_evidence", ()),
+                descriptors=updates.get("descriptors", {}),
+                normalization_warnings=updates.get("normalization_warnings", ()),
+                record_type=updates.get("record_type", record_type),
+                source=source,
+            )
+            finding = graph.register(finding)
+        elif updates:
+            _update_entity(graph, existing, updates)
+            finding = existing
+        else:
+            finding = existing
+        graph.reference("finding", key, "exam", accession, relation="parent")
+
+
+def _load_history(
+    rows: Sequence[_InputRow],
+    graph: DatasetGraph,
+    columns: Mapping[str, Optional[str]],
+    mode: str,
+    issues: list[Issue],
+    *,
+    kind: str,
+) -> None:
+    groups = _group_rows(rows, columns, ("patient_id",), f"{kind}_history", issues)
+    normalizer = (
+        normalize_medication_history
+        if kind == "medication"
+        else normalize_procedure_history
+    )
+    observation_type = (
+        MedicationHistoryObservation
+        if kind == "medication"
+        else ProcedureHistoryObservation
+    )
+    for patient_id in sorted(groups, key=repr):
+        patient = _ensure_patient(graph, patient_id)
+        observations: list[Any] = []
+        for row in groups[patient_id]:
+            source = row.source
+            record_id = _mapped_identifier(row.mapping, columns.get("record_id"))
+            observation, row_issues = normalizer(row.mapping, columns, source, patient_id, record_id=record_id)
+            issues.extend(row_issues)
+            if observation is not None and isinstance(observation, observation_type):
+                observations.append(observation)
+        if not observations and not groups[patient_id]:
+            continue
+        _apply_history_snapshot(
+            patient,
+            observations,
+            kind,
+            mode,
+            issues,
+        )
+
+
+def _apply_history_snapshot(
+    patient: Any,
+    incoming: Sequence[Any],
+    kind: str,
+    mode: str,
+    issues: list[Issue],
+) -> None:
+    current = list(patient.history_observations)
+    other = [item for item in current if not _history_kind(item, kind)]
+    old_facts = [item for item in current if _history_kind(item, kind) and item.record_id is None]
+    keyed = {item.record_id: item for item in current if _history_kind(item, kind) and item.record_id is not None}
+    incoming_groups: dict[str, list[Any]] = {}
+    facts = []
+    for item in incoming:
+        if item.record_id is None:
+            facts.append(item)
+        else:
+            incoming_groups.setdefault(item.record_id, []).append(item)
+    managed = ("category", "medication", "context_accession", "continuous", "current", "reported_duration", "started", "stopped", "comment") if kind == "medication" else ("category", "procedure", "detail", "context_accession", "laterality", "reported_result")
+    for record_id, observations in incoming_groups.items():
+        target = keyed.get(record_id)
+        updates: dict[str, Any] = {}
+        for field in managed:
+            candidates: list[tuple[Any, Any]] = []
+            for observation in observations:
+                value: Any = getattr(observation, field, None)
+                comparable = value.to_dict() if hasattr(value, "to_dict") else value
+                if value is not None and not any(_same(comparable, existing[0]) for existing in candidates):
+                    candidates.append((comparable, value))
+            if len(candidates) > 1:
+                issues.append(Issue("conflicting_history_field", "Conflicting reported record values become unknown", context={"patient_id":patient.patient_id,"record_id":record_id,"field":field}))
+                updates[field] = None
+            elif candidates:
+                updates[field] = candidates[0][1]
+            elif mode == "refresh":
+                updates[field] = None
+        if target is None:
+            target = observations[0]
+        target.update(**updates)
+        keyed[record_id] = target
+    if mode == "merge":
+        if facts:
+            issues.append(Issue("history_merge_requires_record_id", "Unkeyed history merge requires supplied record IDs; existing facts preserved", context={"patient_id":patient.patient_id,"kind":kind}))
+        facts = old_facts
+    elif not facts and incoming_groups:
+        facts = old_facts
+    _set_history_values(patient, other + list(keyed.values()) + facts)
+
+
+def _history_kind(item: Any, kind: str) -> bool:
+    if kind == "medication":
+        return isinstance(item, MedicationHistoryObservation)
+    return isinstance(item, ProcedureHistoryObservation)
+
+
+def _set_history_values(patient: Any, values: Sequence[Any]) -> None:
+    patient.replace_history("medication", [item for item in values if isinstance(item, MedicationHistoryObservation)])
+    patient.replace_history("reported_procedure", [item for item in values if isinstance(item, ProcedureHistoryObservation)])
+
+
+def _ensure_patient(graph: DatasetGraph, patient_id: str) -> Any:
+    patient = graph.get("patient", patient_id)
+    if patient is not None:
+        return patient
+    return graph.register(Patient(patient_id))
+
+
+def _ensure_exam(graph: DatasetGraph, accession: str) -> Any:
+    exam = graph.get("exam", accession)
+    if exam is not None:
+        return exam
+    return graph.register(Exam(accession))
+
+
+def _claim_exam_from_rows(
+    graph: DatasetGraph,
+    exam: Any,
+    rows: Sequence[_InputRow],
+    columns: Mapping[str, Optional[str]],
+) -> None:
+    patient_column = columns.get("patient_id")
+    claims = {
+        identifier
+        for row in rows
+        if (identifier := _mapped_identifier(row.mapping, patient_column)) is not None
+    }
+    for patient_id in claims:
+        _ensure_patient(graph, patient_id)
+    if claims:
+        graph.claim_patient(exam, claims)
+
+
+def _group_rows(
+    rows: Sequence[_InputRow],
+    columns: Mapping[str, Optional[str]],
+    identity: Sequence[str],
+    grain: str,
+    issues: list[Issue],
+) -> dict[Any, list[_InputRow]]:
+    result: dict[Any, list[_InputRow]] = {}
+    for row in rows:
+        key = _semantic_key(row.mapping, columns, identity)
+        if key is None:
+            fields = ", ".join(identity)
+            issues.append(
+                Issue(
+                    code=f"missing_{grain}_identity",
+                    message=f"{grain} row has no usable semantic identity ({fields})",
+                    severity=IssueSeverity.ERROR,
+                    source=row.source,
+                    context={"table": row.table, "ordinal": row.ordinal},
+                )
+            )
+            continue
+        result.setdefault(key, []).append(row)
+    return result
+
+
+def _semantic_key(
+    row: Mapping[str, Any],
+    columns: Mapping[str, Optional[str]],
+    identity: Sequence[str],
+) -> Any:
+    values = tuple(_mapped_identifier(row, columns.get(field)) for field in identity)
+    if any(value is None for value in values):
+        return None
+    return values[0] if len(values) == 1 else values
+
+
+def _combine_fields(
+    rows: Sequence[_InputRow],
+    columns: Mapping[str, Optional[str]],
+    converters: Mapping[str, Callable[[Any], Any]],
+    grain: str,
+    key: Any,
+    issues: list[Issue],
+) -> tuple[dict[str, Any], dict[str, bool]]:
+    values: dict[str, Any] = {}
+    conflicts: dict[str, bool] = {}
+    for semantic, converter in converters.items():
+        physical = columns.get(semantic)
+        if physical is None:
+            continue
+        candidates: list[Any] = []
+        for row in rows:
+            if physical not in row.mapping:
+                continue
+            raw = _plain_scalar(row.mapping.get(physical))
+            if _is_missing(raw):
+                continue
+            try:
+                candidate = converter(raw)
+            except (TypeError, ValueError, OverflowError, InvalidOperation):
+                candidate = None
+            if candidate is not None and not any(_same(candidate, item) for item in candidates):
+                candidates.append(candidate)
+        candidates.sort(key=repr)
+        if len(candidates) > 1:
+            conflicts[semantic] = True
+            values[semantic] = None
+            issues.append(
+                Issue(
+                    code=f"conflicting_{grain}_{semantic}",
+                    message="Conflicting populated values became unknown",
+                    severity=IssueSeverity.WARNING,
+                    context={"identity": key, "field": semantic, "values": candidates},
+                )
+            )
+        else:
+            conflicts[semantic] = False
+            values[semantic] = candidates[0] if candidates else None
+    return values, conflicts
+
+
+def _updates_for_mode(
+    fields: Mapping[str, Any],
+    conflicts: Mapping[str, bool],
+    columns: Mapping[str, Optional[str]],
+    mode: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for semantic, value in fields.items():
+        if columns.get(semantic) is None:
+            continue
+        if mode == "refresh" or conflicts.get(semantic, False) or value is not None:
+            result[semantic] = value
+    return result
+
+
+def _update_entity(graph: DatasetGraph, entity: Any, updates: Mapping[str, Any]) -> None:
+    prepared: dict[str, Any] = {}
+    private_fields = {
+        "source_location_codes": "_source_location_codes",
+        "source_depth_codes": "_source_depth_codes",
+        "source_distance_codes": "_source_distance_codes",
+        "normalization_evidence": "_normalization_evidence",
+        "normalization_warnings": "_normalization_warnings",
+        "descriptors": "_descriptors",
+        "metadata": "_metadata",
+        "history_observations": "_history_observations",
+    }
+    for field, value in updates.items():
+        target = private_fields.get(field, field)
+        if target in {"_normalization_evidence", "_normalization_warnings"}:
+            value = list(value or ())
+        elif target == "_descriptors":
+            value = dict(value or {})
+        elif target == "_metadata":
+            value = dict(value or {})
+        prepared[target] = value
+    graph.update(entity, **prepared)
 
 
 def _finding_anatomy(
-    row: Mapping[str, Any],
-    columns: Mapping[str, Optional[str]],
-    source: SourceRef,
+    fields: Mapping[str, Any],
     laterality: Laterality,
-    transaction: Any,
+    rows: Sequence[_InputRow],
+    source_scope: str,
+    key: Any,
+    issues: list[Issue],
 ) -> dict[str, Any]:
-    location_column = columns["location"]
-    depth_column = columns["depth"]
-    distance_column = columns["distance"]
-    side_column = columns["laterality"]
-    location_present = location_column is not None and location_column in row
-    depth_present = depth_column is not None and depth_column in row
-    distance_present = distance_column is not None and distance_column in row
-    location_value = row.get(location_column) if location_present else None
-    depth_value = row.get(depth_column) if depth_present else None
-    distance_value = row.get(distance_column) if distance_present else None
-    location_codes = {location_column: location_value} if location_present else {}
-    depth_codes = {depth_column: depth_value} if depth_present else {}
-    distance_codes = {distance_column: distance_value} if distance_present else {}
+    location = fields.get("location")
+    depth = fields.get("depth")
+    distance_raw = fields.get("distance")
+    location_codes = {"location": location} if location is not None else {}
+    depth_codes = {"depth": depth} if depth is not None else {}
+    distance_codes = {"distance": distance_raw} if distance_raw is not None else {}
+    has_anatomy = any(value is not None for value in (location, depth, distance_raw))
+    position: Optional[AnatomicalPosition] = None
     evidence: list[FindingNormalizationEvidence] = []
     warnings: list[FindingNormalizationWarning] = []
-    position: Optional[AnatomicalPosition] = None
-    has_location = location_present and not _is_missing(location_value)
-    has_depth = depth_present and not _is_missing(depth_value)
-    if has_location or has_depth:
+    source = _semantic_source(rows, source_scope, "finding", key)
+    if has_anatomy:
         normalized = normalize_magview_location(
             laterality=laterality,
-            location_code=location_value if has_location else None,
-            depth_code=depth_value if has_depth else None,
+            location_code=location,
+            depth_code=depth,
         )
-        source_fields = {
-            "location_code": (location_column, location_value),
-            "depth_code": (depth_column, depth_value),
-            "laterality": (side_column, row.get(side_column)),
-        }
-        for item in normalized.evidence:
-            source_field, raw_value = source_fields[item.field]
-            if source_field is not None:
+        position = normalized.position
+        if source is not None:
+            source_fields = {
+                "location_code": ("location", location),
+                "depth_code": ("depth", depth),
+                "laterality": ("laterality", laterality.value),
+            }
+            for item in normalized.evidence:
+                source_field, raw_value = source_fields.get(
+                    item.field, (item.field, item.raw_value)
+                )
                 evidence.append(
                     FindingNormalizationEvidence(
                         source=source,
                         source_field=source_field,
                         raw_value=raw_value,
                         normalized_kind=item.normalized_kind,
-                        normalized_value=(
-                            item.normalized_value
-                            if laterality.is_unilateral
-                            else None
-                        ),
+                        normalized_value=item.normalized_value,
                     )
                 )
-        for warning in normalized.warnings:
-            source_field, raw_value = source_fields.get(
-                warning.field, (None, warning.raw_value)
-            )
-            warnings.append(
-                FindingNormalizationWarning(
-                    source=source,
-                    source_field=source_field,
-                    raw_value=raw_value,
-                    code=warning.code,
-                    message=warning.message,
+            for warning in normalized.warnings:
+                source_field, raw_value = source_fields.get(
+                    warning.field or "", (warning.field or "location", warning.raw_value)
                 )
-            )
-        position = (
-            normalized.position
-            if laterality.is_unilateral
-            else AnatomicalPosition(
-                laterality=laterality,
-                quadrant=Quadrant(laterality=laterality),
-            )
-        )
-
-    has_distance = distance_present and not _is_missing(distance_value)
-    if has_distance:
-        distance: Optional[float]
+                warnings.append(
+                    FindingNormalizationWarning(
+                        source=source,
+                        source_field=source_field,
+                        raw_value=raw_value,
+                        code=warning.code,
+                        message=warning.message,
+                    )
+                )
+            for warning in normalized.warnings:
+                issues.append(
+                    Issue(
+                        code=warning.code,
+                        message=warning.message,
+                        severity=IssueSeverity.WARNING,
+                        source=source,
+                        context={"identity": key},
+                    )
+                )
+    distance: Optional[float] = None
+    if distance_raw is not None:
         try:
-            if isinstance(distance_value, bool):
-                raise ValueError
-            distance = float(distance_value)
-            if not isfinite(distance) or distance < 0:
+            distance = float(distance_raw)
+            if not isfinite(distance):
                 raise ValueError
         except (TypeError, ValueError, OverflowError):
-            distance = None
-            transaction.add_issue(
+            issues.append(
                 Issue(
                     code="invalid_finding_distance",
-                    message="finding distance must be finite and nonnegative",
+                    message="finding distance could not be parsed as a finite number",
+                    severity=IssueSeverity.WARNING,
                     source=source,
-                    context={
-                        "source_field": distance_column,
-                        "raw_value": distance_value,
-                    },
+                    context={"identity": key, "value": distance_raw},
                 )
             )
-        assert distance_column is not None
-        evidence.append(
-            FindingNormalizationEvidence(
-                source=source,
-                source_field=distance_column,
-                raw_value=distance_value,
-                normalized_kind="distance_from_nipple_cm",
-                normalized_value=distance,
-            )
-        )
-        if position is None and distance is not None and laterality.is_unilateral:
+        if distance is not None and position is None and laterality is not Laterality.UNKNOWN:
             position = AnatomicalPosition(
                 laterality=laterality,
                 quadrant=Quadrant(laterality=laterality),
             )
-        if position is not None and distance is not None:
-            position = replace(position, distance_from_nipple_cm=distance)
-
-    if (
-        (has_location or has_depth or has_distance)
-        and not laterality.is_unilateral
-        and not any(warning.code == "unsupported_laterality" for warning in warnings)
-    ):
-        warnings.append(
-            FindingNormalizationWarning(
-                source=source,
-                source_field=side_column,
-                raw_value=row.get(side_column) if side_column is not None else None,
-                code="unsupported_laterality",
-                message="finding anatomy requires left or right laterality",
+        if distance is not None and position is not None:
+            position = AnatomicalPosition(
+                laterality=position.laterality,
+                quadrant=position.quadrant,
+                clock_position=position.clock_position,
+                location_category=position.location_category,
+                distance_from_nipple_cm=distance,
             )
-        )
     return {
         "position": position,
         "location_codes": location_codes,
@@ -694,643 +879,111 @@ def _finding_anatomy(
     }
 
 
-def _load_images(
-    table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
-    columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-) -> None:
-    image_column = columns["image_id"]
-    assert image_column is not None
-    for record in _table_records(table, source_key, "images", transaction):
-        source = _record_source(record, source_scope, "images")
-        if not _add_table_issues(record, source, transaction):
-            continue
-        raw_image_id = record.mapping.get(image_column)
-        image_id = _normalize_identifier(raw_image_id)
-        if image_id is None:
-            transaction.add_issue(
-                _identity_issue("image_id", raw_image_id, source, image_column)
-            )
-            continue
-        patient_id = _mapped_identifier(record.mapping, columns["patient_id"])
-        accession = _mapped_identifier(record.mapping, columns["accession"])
-        raw_laterality = _mapped_value(record.mapping, columns["laterality"])
-        raw_view = _mapped_value(record.mapping, columns["view_position"])
-        laterality = Laterality.coerce(raw_laterality)
-        view_position = ViewPosition.coerce(raw_view)
-        source_modality = _mapped_text(record.mapping, columns["modality"])
-        derived_image_type = _mapped_text(
-            record.mapping, columns["derived_image_type"]
-        )
-        modality = ImageModality.coerce(source_modality)
-        if modality is ImageModality.UNKNOWN:
-            modality = ImageModality.coerce(derived_image_type)
-        for semantic, raw_value, normalized in (
-            ("laterality", raw_laterality, laterality),
-            ("view_position", raw_view, view_position),
-        ):
-            if not _is_missing(raw_value) and normalized.value == "UNKNOWN":
-                transaction.add_issue(
-                    Issue(
-                        code=f"unsupported_image_{semantic}",
-                        message=f"image {semantic} was retained as unknown",
-                        severity="warning",
-                        source=source,
-                        context={"value": raw_value},
-                    )
-                )
-        values = {
-            "image_id": image_id,
-            "patient_id": patient_id,
-            "accession": accession,
-            "laterality": laterality.value,
-            "view_position": view_position.value,
-            "modality": modality.value,
-            "source_modality": source_modality,
-            "derived_image_type": derived_image_type,
-            "height": _mapped_positive_int(
-                record.mapping, columns["height"], "height", source, transaction
-            ),
-            "width": _mapped_positive_int(
-                record.mapping, columns["width"], "width", source, transaction
-            ),
-            "frame_count": _mapped_positive_int(
-                record.mapping,
-                columns["frame_count"],
-                "frame_count",
-                source,
-                transaction,
-            ),
-            "study_instance_uid": _mapped_text(
-                record.mapping, columns["study_instance_uid"]
-            ),
-            "series_instance_uid": _mapped_text(
-                record.mapping, columns["series_instance_uid"]
-            ),
-            "sop_instance_uid": _mapped_text(
-                record.mapping, columns["sop_instance_uid"]
-            ),
-            "coordinate_frame_id": _mapped_text(
-                record.mapping, columns["coordinate_frame_id"]
-            ),
-        }
-        transaction.upsert_image(
-            image_id,
-            source,
-            patient_id=patient_id,
-            accession=accession,
-            laterality=laterality,
-            view_position=view_position,
-            modality=modality,
-            source_modality=source_modality,
-            derived_image_type=derived_image_type,
-            height=values["height"],
-            width=values["width"],
-            frame_count=values["frame_count"],
-            study_instance_uid=values["study_instance_uid"],
-            series_instance_uid=values["series_instance_uid"],
-            sop_instance_uid=values["sop_instance_uid"],
-            coordinate_frame_id=values["coordinate_frame_id"],
-            values=values,
-            metadata=_evidence(record.mapping, retain_raw),
-        )
-
-
-def _load_rois(
-    table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
-    columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-) -> None:
-    image_column = columns["image_id"]
-    coordinates_column = columns["coordinates"]
-    assert image_column is not None and coordinates_column is not None
-    for record in _table_records(table, source_key, "rois", transaction):
-        source = _record_source(record, source_scope, "rois")
-        if not _add_table_issues(record, source, transaction):
-            continue
-        raw_image_id = record.mapping.get(image_column)
-        image_id = _normalize_identifier(raw_image_id)
-        if image_id is None:
-            transaction.add_issue(
-                _identity_issue("image_id", raw_image_id, source, image_column)
-            )
-            continue
-        base_roi_key = _mapped_identifier(record.mapping, columns["roi_key"])
-        if base_roi_key is None:
-            base_roi_key = json.dumps(
-                source.key.to_dict(), sort_keys=True, separators=(",", ":")
-            )
-        raw_coordinates = record.mapping.get(coordinates_column)
-        coordinate_collection = _coordinate_collection(raw_coordinates)
-        if coordinate_collection is None:
-            transaction.add_issue(
-                Issue(
-                    code="invalid_roi_coordinates",
-                    message="ROI coordinates must contain four finite ordered values",
-                    severity="error",
-                    source=source,
-                    context={
-                        "column": coordinates_column,
-                        "value": raw_coordinates,
-                    },
-                )
-            )
-            continue
-        raw_frames = _mapped_value(record.mapping, columns["frame_indices"])
-        frame_collections = _roi_frame_collections(
-            raw_frames, len(coordinate_collection)
-        )
-        if frame_collections is None:
-            transaction.add_issue(
-                Issue(
-                    code="invalid_roi_frames",
-                    message="ROI frame indices must be unique non-negative integers",
-                    severity="error",
-                    source=source,
-                )
-            )
-            frame_collections = tuple(() for _ in coordinate_collection)
-        derived_flags = _roi_derived_flags(
-            _mapped_value(record.mapping, columns["depth_derived"]),
-            len(coordinate_collection),
-        )
-        if derived_flags is None:
-            transaction.add_issue(
-                Issue(
-                    code="invalid_roi_depth_derived",
-                    message="ROI derived-depth flags must align with ROI coordinates",
-                    severity="warning",
-                    source=source,
-                )
-            )
-            derived_flags = tuple(False for _ in coordinate_collection)
-        confidence = _optional_confidence(
-            _mapped_value(record.mapping, columns["confidence"])
-        )
-        annotation_source = _mapped_text(
-            record.mapping, columns["annotation_source"]
-        )
-        coordinate_frame_id = _mapped_text(
-            record.mapping, columns["coordinate_frame_id"]
-        )
-        for ordinal, (source_coordinates, frame_indices, derived) in enumerate(
-            zip(coordinate_collection, frame_collections, derived_flags)
-        ):
-            roi_key = (
-                base_roi_key
-                if len(coordinate_collection) == 1
-                else f"{base_roi_key}:{ordinal}"
-            )
-            y_min, x_min, y_max, x_max = source_coordinates
-            coordinates = (y_min, x_min, y_max + 1.0, x_max + 1.0)
-            frame_provenance = (
-                "derived"
-                if derived
-                else "source_supplied"
-                if frame_indices
-                else "unavailable"
-            )
-            derivation_method = "embed_roi_depth_derived" if derived else None
-            values = {
-                "image_id": image_id,
-                "roi_key": roi_key,
-                "coordinates": coordinates,
-                "frame_indices": frame_indices,
-                "annotation_source": annotation_source,
-                "confidence": confidence,
-                "coordinate_frame_id": coordinate_frame_id,
-                "source_coordinates": source_coordinates,
-                "source_coordinate_convention": "inclusive_maxima",
-                "frame_provenance": frame_provenance,
-                "frame_derivation_method": derivation_method,
-            }
-            transaction.upsert_roi(
-                image_id,
-                roi_key,
-                source,
-                coordinates=coordinates,
-                frame_indices=frame_indices,
-                annotation_source=annotation_source,
-                confidence=confidence,
-                coordinate_frame_id=coordinate_frame_id,
-                source_coordinates=source_coordinates,
-                source_coordinate_convention="inclusive_maxima",
-                frame_provenance=frame_provenance,
-                frame_derivation_method=derivation_method,
-                values=values,
-                metadata=_evidence(record.mapping, retain_raw),
-            )
-
-
-def _load_histories(
-    table: Any,
-    *,
-    table_name: str,
-    normalizer: Callable[..., Any],
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
-    columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-) -> None:
-    patient_column = columns["patient_id"]
-    assert patient_column is not None
-    for record in _table_records(table, source_key, table_name, transaction):
-        source = _record_source(record, source_scope, table_name)
-        if not _add_table_issues(record, source, transaction):
-            continue
-        raw_patient_id = record.mapping.get(patient_column)
-        patient_id = _normalize_identifier(raw_patient_id)
-        if patient_id is None:
-            transaction.add_issue(
-                _identity_issue("patient_id", raw_patient_id, source, patient_column)
-            )
-            continue
-        transaction.upsert_patient(
-            patient_id,
-            source,
-            values={"patient_id": patient_id},
-            metadata=_evidence(record.mapping, retain_raw),
-        )
-        observation, issues = normalizer(
-            record.mapping, columns, source, patient_id
-        )
-        for issue in issues:
-            transaction.add_issue(issue)
-        if observation is None:
-            continue
-        values = dict(observation.to_dict())
-        values.pop("source", None)
-        transaction.upsert_history(
-            observation,
-            source,
-            values=values,
-            metadata=_evidence(record.mapping, retain_raw),
-        )
-
-
-def _load_procedures(
-    table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
-    columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-    source_table: str = "procedures",
-) -> None:
-    for record in _table_records(table, source_key, source_table, transaction):
-        source = _record_source(record, source_scope, source_table)
-        if not _add_table_issues(record, source, transaction):
-            continue
-        patient_id = _mapped_identifier(record.mapping, columns["patient_id"])
-        if patient_id is not None:
-            transaction.upsert_patient(
-                patient_id,
-                source,
-                values={"patient_id": patient_id},
-                metadata=_evidence(record.mapping, retain_raw),
-            )
-        procedure, issues = normalize_procedure(record.mapping, columns, source)
-        for issue in issues:
-            transaction.add_issue(issue)
-        if procedure is None:
-            continue
-        transaction.upsert_procedure(
-            procedure,
-            source,
-            values=procedure.identity.to_dict(),
-            metadata=_evidence(record.mapping, retain_raw),
-        )
-        procedure_identity = procedure.identity
-        source_identity = (
-            procedure_identity.patient_id,
-            procedure_identity.performed_date,
-            procedure_identity.procedure_type,
-            procedure_identity.laterality.value,
-        )
-        for target_kind, target_identity in _clinical_targets(
-            record.mapping, columns, include_procedure=False
-        ):
-            transaction.add_link(
-                AssociationLink(
-                    source_kind="procedure",
-                    source_identity=source_identity,
-                    target_kind=target_kind,
-                    target_identity=target_identity,
-                    status=AttributionStatus.SOURCE_COLOCATED,
-                    source=source,
-                ),
-                source,
-            )
-
-
-def _load_pathology(
-    table: Any,
-    *,
-    transaction: Any,
-    source_scope: str,
-    source_key: Optional[SourceKeySelector],
-    columns: Mapping[str, Optional[str]],
-    retain_raw: bool,
-    source_table: str = "pathology",
-) -> None:
-    for record in _table_records(table, source_key, source_table, transaction):
-        source = _record_source(record, source_scope, source_table)
-        if not _add_table_issues(record, source, transaction):
-            continue
-        diagnosis, observations, issues = normalize_pathology(
-            record.mapping, columns, source
-        )
-        for issue in issues:
-            transaction.add_issue(issue)
-        if diagnosis is not None:
-            values = {
-                "diagnosis": diagnosis.diagnosis,
-                "result_category": diagnosis.result_category,
-                "malignant": diagnosis.malignant,
-                "severity": (
-                    int(diagnosis.severity)
-                    if diagnosis.severity is not None
-                    else None
-                ),
-                "raw_severity": diagnosis.raw_severity,
-                "report_documented_date": diagnosis.report_documented_date,
-            }
-            transaction.upsert_pathology_diagnosis(
-                diagnosis,
-                source,
-                values=values,
-                metadata=_evidence(record.mapping, retain_raw),
-            )
-            _add_pathology_links(
-                transaction,
-                record.mapping,
-                columns,
-                source,
-                source_kind="pathology_diagnosis",
-                source_identity=("diagnosis", _source_identity_text(source)),
-            )
-        for observation in observations:
-            transaction.upsert_pathology_observation(
-                observation,
-                source,
-                values={
-                    "descriptor": observation.descriptor,
-                    "source_slot": observation.source_slot,
-                    "source_ordinal": observation.source_ordinal,
-                },
-                metadata=_evidence(record.mapping, retain_raw),
-            )
-            _add_pathology_links(
-                transaction,
-                record.mapping,
-                columns,
-                source,
-                source_kind="pathology_observation",
-                source_identity=(
-                    "observation",
-                    observation.source_slot,
-                    _source_identity_text(source),
-                ),
-            )
-
-
-def _add_pathology_links(
-    transaction: Any,
-    row: Mapping[str, Any],
-    columns: Mapping[str, Optional[str]],
-    source: SourceRef,
-    *,
-    source_kind: str,
-    source_identity: tuple[str, ...],
-) -> None:
-    for target_kind, target_identity in _clinical_targets(
-        row, columns, include_procedure=True
-    ):
-        transaction.add_link(
-            AssociationLink(
-                source_kind=source_kind,
-                source_identity=source_identity,
-                target_kind=target_kind,
-                target_identity=target_identity,
-                status=AttributionStatus.SOURCE_COLOCATED,
-                source=source,
-            ),
-            source,
-        )
-
-
-def _clinical_targets(
-    row: Mapping[str, Any],
-    columns: Mapping[str, Optional[str]],
-    *,
-    include_procedure: bool,
-) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    targets: list[tuple[str, tuple[str, ...]]] = []
-    patient_id = _mapped_identifier(row, columns.get("patient_id"))
-    accession = _mapped_identifier(row, columns.get("accession"))
-    finding_number = _mapped_identifier(row, columns.get("finding_number"))
-    raw_laterality = _mapped_text(row, columns.get("laterality"))
-    laterality = Laterality.coerce(raw_laterality)
-    if patient_id is not None:
-        targets.append(("patient", (patient_id,)))
-    if accession is not None:
-        targets.append(("exam", (accession,)))
-        if laterality.is_unilateral:
-            targets.append(("breast_side", (accession, laterality.value)))
-        if finding_number is not None:
-            targets.append(("finding", (accession, finding_number)))
-    if include_procedure and patient_id is not None and laterality is not Laterality.UNKNOWN:
-        procedure_date = _mapped_text(row, columns.get("procedure_date"))
-        procedure_type = _mapped_text(row, columns.get("procedure_type"))
-        if procedure_date is not None and procedure_type is not None:
-            targets.append(
-                (
-                    "procedure",
-                    (
-                        patient_id,
-                        procedure_date,
-                        procedure_type,
-                        laterality.value,
-                    ),
-                )
-            )
-    return tuple(targets)
-
-
-def _source_identity_text(source: SourceRef) -> str:
-    return json.dumps(source.to_dict(), sort_keys=True, separators=(",", ":"))
-
-
-def _record_source(
-    record: TableRecord, source_scope: str, source_table: str
-) -> Optional[SourceRef]:
-    if record.source_key is None:
-        return None
-    return SourceRef(source_scope, source_table, record.source_key)
-
-
-def _table_records(
-    table: Any,
-    source_key: Optional[SourceKeySelector],
-    source_table: str,
-    transaction: Any,
-) -> Iterator[TableRecord]:
-    """Turn table-wide normalization failures into invocation issues."""
-
-    try:
-        yield from iter_records(table, key=source_key)
-    except TableNormalizationError as error:
-        transaction.add_issue(
-            Issue(
-                code=error.code,
-                message=str(error),
-                severity="error",
-                context={
-                    "source_table": source_table,
-                    "ordinal": error.ordinal,
-                },
-            )
-        )
-
-
-def _add_table_issues(
-    record: TableRecord,
-    source: Optional[SourceRef],
-    transaction: Any,
-) -> bool:
-    for table_issue in record.issues:
-        transaction.add_issue(
-            Issue(
-                code=table_issue.code,
-                message=table_issue.message,
-                severity=table_issue.severity,
-                source=source,
-                context={
-                    "ordinal": table_issue.ordinal,
-                    "key_name": table_issue.key_name,
-                    "raw_key": table_issue.raw_key,
-                },
-            )
-        )
-    return source is not None
-
-
-def _identity_issue(
+def _source_code_map(
+    rows: Sequence[_InputRow],
     semantic: str,
-    raw_value: Any,
+) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for row in rows:
+        value = row.mapping.get(semantic)
+        if value is not None:
+            values[semantic] = value
+    return values
+
+
+def _interpretation(
+    accession: str,
+    finding_number: str,
+    assessment: Any,
+    recommendation: Any,
     source: Optional[SourceRef],
-    physical_column: str,
-) -> Issue:
-    missing = _is_missing(raw_value)
-    return Issue(
-        code=f"{'missing' if missing else 'invalid'}_{semantic}",
-        message=(
-            f"{semantic} is required to construct this source row's grain"
-            if missing
-            else f"{semantic} is not a supported EMBED identifier"
-        ),
-        severity="error",
-        source=source,
-        context={"column": physical_column, "value": raw_value},
+) -> Optional[ImagingInterpretation]:
+    if assessment is None and recommendation is None:
+        return None
+    return ImagingInterpretation(
+        accession_number=accession,
+        finding_number=finding_number,
+        sources=(source,) if source is not None else (),
+        assessment=assessment,
+        recommendation=recommendation,
     )
 
 
-def _normalize_identifier(value: Any) -> Optional[str]:
-    value = _plain_scalar(value)
-    if _is_missing(value) or isinstance(value, bool):
-        return None
-    if isinstance(value, str):
-        stripped = value.strip()
-        return stripped or None
-    if isinstance(value, Integral):
-        return str(int(value))
-    if isinstance(value, Real):
-        numeric = float(value)
-        if not isfinite(numeric):
-            return None
-        if numeric.is_integer():
-            return str(int(numeric))
-        return str(value)
+def _finding_record_type(value: Any, finding_number: str) -> FindingRecordType:
+    if value is None and finding_number == "-9":
+        return FindingRecordType.SYNTHETIC_CONTRALATERAL_NEGATIVE
+    if value is None:
+        return FindingRecordType.FINDING
+    try:
+        return FindingRecordType(value)
+    except ValueError:
+        return FindingRecordType.FINDING
+
+
+def _finding_field(name: str) -> str:
+    return {
+        "laterality": "laterality",
+        "finding_type": "finding_type",
+        "interpretation": "assessment",
+        "anatomical_position": "location",
+        "source_location_codes": "location",
+        "source_depth_codes": "depth",
+        "source_distance_codes": "distance",
+        "normalization_evidence": "location",
+        "normalization_warnings": "location",
+        "descriptors": "descriptors",
+        "record_type": "record_type",
+    }.get(name, name)
+
+
+def _all_values_absent(
+    fields: Mapping[str, Any],
+    columns: Mapping[str, Optional[str]],
+    semantic: str,
+) -> bool:
+    return columns.get(semantic) is not None and fields.get(semantic) is None
+
+
+def _semantic_source(
+    rows: Sequence[_InputRow],
+    source_scope: str,
+    grain: str,
+    key: Any,
+) -> Optional[SourceRef]:
+    for row in rows:
+        if row.source is not None:
+            return row.source
     return None
 
 
-def _mapped_text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
+def _mapped_identifier(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
     if column is None:
         return None
-    value = _plain_scalar(row.get(column))
+    return _normalize_identifier(row.get(column))
+
+
+def _text_value(value: Any) -> Optional[str]:
     if _is_missing(value):
         return None
+    text = str(value).strip()
+    return text or None
+
+
+def _raw_value(value: Any) -> Any:
+    return None if _is_missing(value) else _plain_scalar(value)
+
+
+def _literal_value(value: Any) -> Any:
+    value = _raw_value(value)
     if isinstance(value, str):
-        value = value.strip()
-        return value or None
-    if isinstance(value, bool):
-        return str(value)
-    if isinstance(value, Integral):
-        return str(int(value))
-    if isinstance(value, Real) and float(value).is_integer():
-        return str(int(value))
-    if hasattr(value, "isoformat"):
-        return str(value.isoformat())
-    return str(value)
+        try:
+            return ast.literal_eval(value)
+        except (SyntaxError, ValueError):
+            return value
+    return value
 
 
-def _mapped_value(row: Mapping[str, Any], column: Optional[str]) -> Any:
-    if column is None:
-        return None
-    value = _plain_scalar(row.get(column))
-    return None if _is_missing(value) else value
-
-
-def _mapped_identifier(
-    row: Mapping[str, Any], column: Optional[str]
-) -> Optional[str]:
-    return _normalize_identifier(_mapped_value(row, column))
-
-
-def _mapped_positive_int(
-    row: Mapping[str, Any],
-    column: Optional[str],
-    semantic: str,
-    source: Optional[SourceRef],
-    transaction: Any,
-) -> Optional[int]:
-    value = _mapped_value(row, column)
-    if value is None:
-        return None
-    value = _plain_scalar(value)
-    if isinstance(value, bool):
-        normalized = None
-    elif isinstance(value, Integral):
-        normalized = int(value)
-    elif isinstance(value, Real) and float(value).is_integer():
-        normalized = int(value)
-    else:
-        normalized = None
-    if normalized is None or normalized <= 0:
-        transaction.add_issue(
-            Issue(
-                code=f"invalid_image_{semantic}",
-                message=f"image {semantic} must be a positive integer",
-                severity="error",
-                source=source,
-                context={"column": column, "value": value},
-            )
-        )
-        return None
-    return normalized
-
-
-def _exact_integer(value: Any) -> Optional[int]:
+def _birth_year_value(value: Any) -> Optional[int]:
     value = _plain_scalar(value)
     if isinstance(value, bool):
         return None
@@ -1341,15 +994,14 @@ def _exact_integer(value: Any) -> Optional[int]:
         return int(numeric) if isfinite(numeric) and numeric.is_integer() else None
     if isinstance(value, str):
         try:
-            numeric = Decimal(value.strip())
+            decimal_numeric = Decimal(value.strip())
         except InvalidOperation:
             return None
-        if numeric.is_finite() and numeric == numeric.to_integral():
-            return int(numeric)
+        return int(decimal_numeric) if decimal_numeric.is_finite() and decimal_numeric == decimal_numeric.to_integral() else None
     return None
 
 
-def _calendar_date(value: Any) -> Optional[date]:
+def _date_value(value: Any) -> Optional[date]:
     value = _plain_scalar(value)
     if isinstance(value, datetime):
         return value.date()
@@ -1358,154 +1010,15 @@ def _calendar_date(value: Any) -> Optional[date]:
     if value is None:
         return None
     text = str(value).strip()
-    try:
-        if len(text) == 8 and text.isdigit():
+    if len(text) == 8 and text.isdigit():
+        try:
             return date(int(text[:4]), int(text[4:6]), int(text[6:]))
+        except ValueError:
+            return None
+    try:
         return date.fromisoformat(text)
     except ValueError:
         return None
-
-
-def _literal_sequence(value: Any) -> Any:
-    value = _plain_scalar(value)
-    if isinstance(value, str):
-        value = value.strip()
-        if not value:
-            return None
-        try:
-            return ast.literal_eval(value)
-        except (SyntaxError, ValueError):
-            return None
-    return value
-
-
-def _coordinate_tuple(value: Any) -> Optional[tuple[float, float, float, float]]:
-    value = _literal_sequence(value)
-    if not isinstance(value, (list, tuple)) or len(value) != 4:
-        return None
-    try:
-        coordinates = tuple(float(item) for item in value)
-    except (TypeError, ValueError):
-        return None
-    if not all(isfinite(item) for item in coordinates):
-        return None
-    if coordinates[2] < coordinates[0] or coordinates[3] < coordinates[1]:
-        return None
-    return coordinates
-
-
-def _coordinate_collection(
-    value: Any,
-) -> Optional[tuple[tuple[float, float, float, float], ...]]:
-    parsed = _literal_sequence(value)
-    single = _coordinate_tuple(parsed)
-    if single is not None:
-        return (single,)
-    if not isinstance(parsed, (list, tuple)) or not parsed:
-        return None
-    coordinates = tuple(_coordinate_tuple(item) for item in parsed)
-    if any(item is None for item in coordinates):
-        return None
-    return tuple(item for item in coordinates if item is not None)
-
-
-def _roi_frame_collections(
-    value: Any, count: int
-) -> Optional[tuple[tuple[int, ...], ...]]:
-    if value is None:
-        return tuple(() for _ in range(count))
-    parsed = _literal_sequence(value)
-    if count == 1:
-        if (
-            isinstance(parsed, (list, tuple))
-            and len(parsed) == 1
-            and isinstance(parsed[0], (list, tuple))
-        ):
-            parsed = parsed[0]
-        frames = _nonnegative_int_tuple(parsed)
-        return None if frames is None else (frames,)
-    if not isinstance(parsed, (list, tuple)) or len(parsed) != count:
-        return None
-    collections = tuple(_nonnegative_int_tuple(item) for item in parsed)
-    if any(item is None for item in collections):
-        return None
-    return tuple(item for item in collections if item is not None)
-
-
-def _roi_derived_flags(value: Any, count: int) -> Optional[tuple[bool, ...]]:
-    if value is None:
-        return tuple(False for _ in range(count))
-    parsed = _literal_sequence(value)
-    if parsed is None and isinstance(value, str):
-        parsed = value
-    if isinstance(parsed, (list, tuple)):
-        if len(parsed) != count:
-            return None
-        flags = tuple(_derived_flag(item) for item in parsed)
-    else:
-        flag = _derived_flag(parsed)
-        flags = tuple(flag for _ in range(count))
-    return None if any(flag is None for flag in flags) else tuple(bool(flag) for flag in flags)
-
-
-def _derived_flag(value: Any) -> Optional[bool]:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, Real) and not isinstance(value, bool):
-        if float(value) == 1.0:
-            return True
-        if float(value) == 0.0:
-            return False
-    text = "" if value is None else str(value).strip().upper()
-    if text in {"Y", "YES", "TRUE", "DERIVED"}:
-        return True
-    if text in {"N", "NO", "FALSE", "SOURCE", "SOURCE_SUPPLIED", ""}:
-        return False
-    return None
-
-
-def _nonnegative_int_tuple(value: Any) -> Optional[tuple[int, ...]]:
-    if value is None:
-        return ()
-    value = _literal_sequence(value)
-    if not isinstance(value, (list, tuple)):
-        value = (value,)
-    normalized: list[int] = []
-    for item in value:
-        item = _plain_scalar(item)
-        if isinstance(item, bool):
-            return None
-        if isinstance(item, Integral):
-            integer = int(item)
-        elif isinstance(item, Real) and float(item).is_integer():
-            integer = int(item)
-        else:
-            return None
-        if integer < 0:
-            return None
-        normalized.append(integer)
-    if len(set(normalized)) != len(normalized):
-        return None
-    return tuple(normalized)
-
-
-def _optional_confidence(value: Any) -> Optional[float]:
-    if value is None or isinstance(value, bool) or not isinstance(value, Real):
-        return None
-    normalized = float(value)
-    return normalized if isfinite(normalized) and 0.0 <= normalized <= 1.0 else None
-
-
-def _plain_scalar(value: Any) -> Any:
-    """Unbox NumPy-like scalars without importing an optional dependency."""
-
-    item = getattr(value, "item", None)
-    if callable(item) and not isinstance(value, (str, bytes)):
-        try:
-            return item()
-        except (TypeError, ValueError, OverflowError):
-            return value
-    return value
 
 
 def _is_missing(value: Any) -> bool:
@@ -1515,26 +1028,53 @@ def _is_missing(value: Any) -> bool:
         return not value.strip()
     try:
         unequal = value != value
-        return isinstance(unequal, bool) and unequal
+        if type(unequal) is bool:
+            return unequal
+        item = getattr(unequal, "item", None)
+        if callable(item):
+            scalar = item()
+            return type(scalar) is bool and scalar
     except (TypeError, ValueError):
         return False
+    return False
 
 
-def _evidence(
-    row: Mapping[str, Any],
-    retain_raw: bool,
-) -> Optional[Mapping[str, Any]]:
-    if retain_raw:
-        return {
-            "raw": {
-                key: value
-                for key, value in row.items()
-                if key is not _MAGVIEW_SOURCE_KEY
-            }
-        }
-    # Normalized consumed fields are already retained by ``values``. Avoid a
-    # second copy unless the caller explicitly requests the complete row.
+def _plain_scalar(value: Any) -> Any:
+    item = getattr(value, "item", None)
+    if callable(item) and not isinstance(value, (str, bytes)):
+        try:
+            return item()
+        except (TypeError, ValueError, OverflowError):
+            return value
+    return value
+
+
+def _normalize_identifier(value: Any) -> Optional[str]:
+    value = _plain_scalar(value)
+    if _is_missing(value) or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, Integral):
+        return str(int(value))
+    if isinstance(value, Real):
+        numeric = float(value)
+        if not isfinite(numeric):
+            return None
+        return str(int(numeric)) if numeric.is_integer() else str(value)
     return None
+
+
+def _same(left: Any, right: Any) -> bool:
+    try:
+        equal = left == right
+        if type(equal) is bool:
+            return equal
+        item = getattr(equal, "item", None)
+        return bool(item()) if callable(item) else False
+    except (TypeError, ValueError):
+        return repr(left) == repr(right)
 
 
 __all__ = ["LoadReport", "load_embed"]
