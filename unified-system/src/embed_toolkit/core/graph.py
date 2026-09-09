@@ -430,6 +430,8 @@ class DatasetGraph:
             name = {"patient": "patient_id", "exam": "accession_number", "image": "image_id"}[kind]
             if name in fields:
                 for obj in affected.values():
+                    if kind == "patient" and kind_of(obj) != "exam":
+                        continue
                     if obj is not entity and getattr(obj, name, None) == getattr(entity, name):
                         proposals.setdefault(id(obj), {})[name] = fields[name]
         staged = []
@@ -461,6 +463,8 @@ class DatasetGraph:
             registry.pop(previous)
             for field, value in changes.items():
                 object.__setattr__(obj, field, value)
+            if kind == "patient" and kind_of(obj) == "exam" and "patient_id" in changes:
+                object.__setattr__(obj, "_owner_explicit", True)
             registry[new] = obj
             if kind_of(obj) == "exam" and "accession_number" in changes:
                 for side in obj.breast_sides.values():

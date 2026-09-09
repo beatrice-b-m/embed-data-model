@@ -151,3 +151,29 @@ def test_register_preserves_explicit_exam_owner_without_new_source_claim() -> No
     assert exam.asserted_patient_ids == {"P"}
     assert graph.patient("Q").exams == (exam,)
     assert not graph.unresolved_references
+
+
+def test_registered_patient_rekey_preserves_source_scoped_child_identities() -> None:
+    patient = Patient("P")
+    exam = patient.add_exam(Exam("A", asserted_patient_ids=("P",)))
+    image = exam.add_image(MammogramImage("I", accession_number="A", patient_id="P"))
+    entry = exam.add_registry_entry(CancerRegistryEntry("P", "R"))
+
+    graph = DatasetGraph()
+    graph.register(patient)
+    graph.rekey(patient, patient_id="Q")
+
+    assert exam.patient_id == "Q"
+    assert exam.owner_explicit
+    assert exam.asserted_patient_ids == {"P"}
+    assert image.patient_id == "P"
+    assert entry.identity == ("P", "R")
+
+    moved = graph.pop(patient)
+    destination = DatasetGraph()
+    destination.register(moved)
+    assert destination.exam("A").asserted_patient_ids == {"P"}
+    assert destination.exam("A").patient_id == "Q"
+    assert destination.image("I").patient_id == "P"
+    assert destination.registry_entry("P", "R") is entry
+    assert not destination.unresolved_references
