@@ -1,4 +1,9 @@
-"""Small, table-local column maps for the EMBED source loader."""
+"""Small, table-local column maps for the EMBED source loader.
+
+The maps bind only source facts that are established at this adapter boundary.
+In particular, registry payload fields and future image identity fields remain
+explicitly configurable instead of being guessed from similarly named columns.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,7 @@ from typing import Mapping, Optional
 
 
 ColumnMap = Mapping[str, Optional[str]]
+
 
 DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
     {
@@ -34,14 +40,22 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "finding_type": None,
                 "assessment": "asses",
                 "recommendation": "recc",
+                "interpretation": None,
                 "location": "location",
                 "depth": "depth",
                 "distance": "distance",
+                "clock_position": None,
+                "record_type": None,
+                "descriptors": None,
             }
         ),
         "images": MappingProxyType(
             {
-                "image_id": "anon_dicom_path",
+                # These three identities are intentionally unbound until the
+                # imaging adapter qualifies its physical source convention.
+                "image_id": None,
+                "source_path": None,
+                "source_sop_instance_uid": None,
                 "patient_id": "empi_anon",
                 "accession": "acc_anon",
                 "laterality": "ImageLateralityFinal",
@@ -53,13 +67,13 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "frame_count": "ImagesInAcquisition",
                 "study_instance_uid": None,
                 "series_instance_uid": "SeriesInstanceUID",
-                "sop_instance_uid": "anon_dicom_path",
                 "coordinate_frame_id": None,
             }
         ),
         "rois": MappingProxyType(
             {
-                "image_id": "anon_dicom_path",
+                "image_id": None,
+                "source_path": None,
                 "roi_key": None,
                 "coordinates": "ROI_coords",
                 "frame_indices": "ROI_frames",
@@ -72,6 +86,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
         "hormone_history": MappingProxyType(
             {
                 "patient_id": "empi_anon",
+                "record_id": None,
                 "accession": "acc_anon",
                 "category": "type",
                 "medication": "code",
@@ -90,6 +105,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
         "procedure_history": MappingProxyType(
             {
                 "patient_id": "empi_anon",
+                "record_id": None,
                 "accession": "acc_anon",
                 "category": "type",
                 "procedure": "pcode",
@@ -100,6 +116,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
         "procedures": MappingProxyType(
             {
                 "patient_id": "empi_anon",
+                "record_id": None,
                 "performed_date": "procdate_anon",
                 "procedure_type": "type",
                 "laterality": "bside",
@@ -110,6 +127,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
         "pathology": MappingProxyType(
             {
                 "patient_id": "empi_anon",
+                "record_id": None,
                 "accession": "acc_anon",
                 "finding_number": "numfind",
                 "laterality": "bside",
@@ -123,21 +141,48 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 **{f"descriptor_{index}": f"path{index}" for index in range(1, 11)},
             }
         ),
+        "registry": MappingProxyType(
+            {
+                "patient_id": "empi_anon",
+                "registry_id": "cancer_registry_id",
+                "record_id": None,
+                "diagnosis": None,
+                "result_category": None,
+                "malignant": None,
+                "severity": None,
+                "report_documented_date": None,
+                **{f"descriptor_{index}": None for index in range(1, 11)},
+            }
+        ),
+        "magview": MappingProxyType(
+            {
+                "patient_id": "empi_anon",
+                "accession": "acc_anon",
+                "finding_number": "numfind",
+                "registry_assignment": "cancer_outcome_registry_id",
+                "linked_accession": "linkedaccession_anon",
+            }
+        ),
     }
 )
+
 
 _REQUIRED = {
     "patients": frozenset({"patient_id"}),
     "exams": frozenset({"accession"}),
     "findings": frozenset({"accession", "finding_number"}),
-    "images": frozenset({"image_id"}),
-    "rois": frozenset({"image_id", "coordinates"}),
+    # Image identity can be supplied by toolkit ID, source path, or source
+    # SOP UID.  The imaging adapter reports when none of those are bound.
+    "images": frozenset(),
+    "rois": frozenset({"coordinates"}),
     "hormone_history": frozenset({"patient_id", "category", "medication"}),
     "procedure_history": frozenset({"patient_id", "category", "procedure"}),
     "procedures": frozenset(
         {"patient_id", "performed_date", "procedure_type", "laterality"}
     ),
     "pathology": frozenset(),
+    "registry": frozenset({"patient_id", "registry_id"}),
+    "magview": frozenset(),
 }
 
 
