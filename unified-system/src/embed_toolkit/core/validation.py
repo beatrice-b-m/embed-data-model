@@ -120,6 +120,13 @@ def _quality(obj: Any) -> Iterable[Issue]:
                     yield issue("date_plausibility", "Supplied date is outside the plausibility range", field=field, value=value)
     severity = getattr(obj, "severity", None)
     raw = getattr(obj, "raw_severity", None)
+    if raw is not None:
+        try:
+            raw_valid = float(raw) in range(6)
+        except (TypeError, ValueError):
+            raw_valid = False
+        if not raw_valid:
+            yield issue("pathology_raw_severity", "Supplied raw severity is outside the represented 0–5 scale", value=raw)
     if severity is not None and (not isinstance(severity, Real) or severity not in range(6)):
         yield issue("pathology_severity", "Pathology severity is outside the represented 0–5 scale", value=severity)
     if severity is not None and raw is not None:

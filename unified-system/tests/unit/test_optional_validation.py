@@ -4,6 +4,13 @@ from embed_toolkit.core.source import Issue, IssueSeverity
 from embed_toolkit.core.validation import validate
 
 
+def test_invalid_raw_pathology_severity_remains_available_to_validation():
+    from embed_toolkit import Pathology
+    record = Pathology("P", "record", raw_severity=9)
+    assert record.raw_severity == 9
+    assert "pathology_raw_severity" in {issue.code for issue in validate(record).issues}
+
+
 def test_geometry_and_confidence_are_representable_before_inspection():
     image = MammogramImage("I", height=10, width=10)
     roi = image.add_roi(RegionOfInterest((3, -1, 2, 20), "I", "0", confidence=2))
