@@ -1,6 +1,8 @@
 # Mutable EMBED scaffold: implementation plan
 
-Status: proposed implementation handoff; no runtime changes made.
+Status: W0–W9 implemented and locally qualified on 2026-09-09.
+Qualifying runtime revision: `90bb604`; wheel version: `0.1.0`.
+See [qualification evidence](mutable-scaffold-qualification.md) for results and limits.
 Reviewed: 2026-09-09 against `f55ecfe62a0e8de9ba2247299be65271e86228a2`.
 Authority: [mutable scaffold target contract](mutable-scaffold-contract.md).
 
@@ -11,13 +13,13 @@ transaction or source-row identity architecture. Complete the public scaffold
 contract before porting matching or transfer into separate repositories.
 
 This plan distinguishes established requirements from proposed decisions. The
-decisions below are recommendations for the implementation kickoff, not new
-maintainer-confirmed requirements. The orchestration agent should record their
-resolution before dispatching dependent implementation. This document supersedes
+decisions below preserve the kickoff proposals. Their accepted resolutions are
+recorded in the [API specification](mutable-scaffold-api.md), including the
+maintainer-approved initial registry identity mapping. This document supersedes
 the implementation sequence in the September assessment for this work; historical
 assessment results remain evidence about their reviewed revision.
 
-## 1. Current implementation and gaps
+## 1. Pre-cutover implementation and gaps (historical baseline)
 
 Paths in the table are relative to `unified-system/src/embed_toolkit/`. Symbols
 identify the reviewed code even after nearby line numbers change.
@@ -118,7 +120,10 @@ their refresh grain, or require a semantic key for event-level identity; do not
 continue claiming that physical row identity is clinical identity. This is a
 bounded schema decision, not a reason to restore an evidence ledger.
 
-Registry entries have a settled logical key `(empi_anon, registry_id)`. W5 must
+Registry entries have a settled logical key `(empi_anon, registry_id)`. The
+maintainer supplied `empi_anon` and `cancer_registry_id` for initial implementation,
+explicitly deferring other payload values; see the API specification. The original
+W5 qualification requirement follows. W5 must
 bind the physical registry key and payload columns using an authoritative schema
 or supplied adapter mapping. Synthetic mappings can verify the generic adapter
 first; the real EMBED binding cannot be declared complete without that evidence.
