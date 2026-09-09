@@ -1,7 +1,8 @@
 # Mutable scaffold API decisions
 
 Implementation specification, 2026-09-09. The target contract governs; this
-specification resolves implementation-plan D1–D8. Qualification is separate.
+specification resolves implementation-plan D1–D8. See the completed
+[qualification record](mutable-scaffold-qualification.md).
 
 ## Identity, ownership, and mutation
 
@@ -25,6 +26,8 @@ serialization emits semantic references for repeated objects and linked cycles.
 
 Pop retains exclusive Python objects. Descendants needed outside the selected
 subtree remain original there and are independently copied into the popped tree.
+Source UID/path and ROI-position changes use `update` so prior aliases are removed;
+location sets supplied by metadata reload deliberately union old and new paths.
 Crossing associations retain semantic references. Partition independently copies
 once per output, adds labeled ancestor context, and includes only selected branches.
 `select(level=..., predicate=...)` is explicitly a non-owning view. Copy failures
@@ -85,7 +88,8 @@ updates. Old attribution/locator/ledger types have no required public compatibil
 `image_id` is toolkit identity; `source_sop_instance_uid` is original identity;
 `source_paths` stores location aliases. Parse trailing
 cohortN/patient/study/series/SOP.dcm. Explicit UID wins over disagreement and the
-conflicting path UID is not an alias. Derivatives require explicit toolkit IDs and
+conflicting path UID is not a SOP alias; the supplied path remains a location alias
+for the explicit UID. Derivatives require explicit toolkit IDs and
 `derived_from`; source reload follows the original even after toolkit rekey.
 
 Image metadata automatically projects ROI collections. Missing/null ROI input
@@ -94,7 +98,10 @@ Explicit rois input overrides automatic projection for addressed images. Both
 refresh and merge replace the complete addressed image collection, including manual
 ROIs. Save/pop manual annotations before replacement to retain them. Ordinals start
 at zero, including singletons; equal boxes remain separate. Individual `roi.update`
-preserves its reference, while collection replacement need not.
+preserves its reference, while collection replacement need not. Supplied depth flags
+may be scalar or position-aligned lists; malformed/misaligned flags preserve the
+previous collection with an issue. Derivative ROIs cannot replace the original
+source collection or its source-address lookups.
 
 Registry assignments group by accession, source patient and registry ID, independent
 of findings. They remain confirmed when endpoints are missing. Refresh replaces
@@ -129,4 +136,4 @@ replay with the plan's named contract families. Replace pathology/history physic
 row identity with the explicit keys and unresolved/fact rules above. Retire locator
 and patch-workflow expectations when their obsolete APIs are removed, documenting
 case-level replacement rather than ignoring suites. W8 measurements and W9 installed
-API/full-suite/static checks remain required before declaring implementation complete.
+API/full-suite/static checks are recorded in the qualification document.
