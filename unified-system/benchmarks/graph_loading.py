@@ -1,79 +1,106 @@
-"""Representative DatasetGraph loading and raw-retention measurements."""
-
+"""Multi-grain synthetic construction and fixed-patient update measurements."""
 from __future__ import annotations
 
+import argparse
 import gc
 import json
+import platform
+import statistics
 import tracemalloc
-from dataclasses import asdict, dataclass
 from time import perf_counter
+from typing import Any, Dict
 
 from embed_toolkit import load_embed
 
 
-@dataclass(frozen=True)
-class LoadBenchmark:
-    row_count: int
-    retain_raw: bool
-    load_seconds: float
-    lookup_seconds: float
-    current_bytes: int
-    peak_bytes: int
+def fixture(patient_count: int) -> Dict[str, list[dict[str, Any]]]:
+    tables: Dict[str, list[dict[str, Any]]] = {name: [] for name in ("magview", "images", "registry")}
+    for index in range(patient_count):
+        patient, accession = "P" + str(index), "A" + str(index)
+        for finding in (1, 2):
+            for procedure in (1, 2):
+                tables["magview"].append({
+                    "empi_anon": patient, "acc_anon": accession,
+                    "numfind": finding, "side": "L", "bside": "L",
+                    "procdate_anon": "2020-01-0" + str(procedure), "type": "biopsy",
+                    "pdate_anon": "2020-02-0" + str(procedure), "path1": "reported finding",
+                    "cancer_outcome_registry_id": 1,
+                    "linkedaccession_anon": "A" + str(index + 1) if index + 1 < patient_count else None,
+                })
+        tables["images"].append({
+            "empi_anon": patient, "acc_anon": accession,
+            "anon_dicom_path": f"/data/cohort1/{patient}/study/series/SOP{index}.dcm",
+            "ImageLateralityFinal": "L", "ViewPosition": "CC", "Modality": "MG",
+            "Rows": 1000, "Columns": 1000, "ROI_coords": "[(1, 2, 10, 20), (1, 2, 10, 20)]",
+        })
+        tables["registry"].append({"empi_anon": patient, "cancer_registry_id": 1})
+    return tables
 
 
-def measure_graph_load(
-    *,
-    row_count: int = 2_000,
-    lookup_count: int = 10_000,
-    retain_raw: bool = False,
-) -> LoadBenchmark:
-    """Measure a patient-grain load with a realistic unknown research column."""
+def assert_cardinality(graph: Any, size: int) -> Dict[str, int]:
+    counts = {name: len(getattr(graph, name)) for name in (
+        "patients", "exams", "findings", "procedures", "pathology", "images", "rois", "registry_entries")}
+    expected = dict(patients=size, exams=size, findings=2 * size, procedures=2 * size,
+                    pathology=2 * size, images=size, rois=2 * size, registry_entries=size)
+    assert counts == expected, (counts, expected)
+    assert len(graph.patient("P0").procedures) == 2
+    assert len(graph.exam("A0").registry_pathology) == 1
+    return counts
 
-    rows = [
-        {
-            "empi_anon": f"P-{index:06d}",
-            "unknown_research_field": f"row-{index:06d}-" + ("x" * 512),
-        }
-        for index in range(row_count)
-    ]
-    gc.collect()
-    tracemalloc.start()
-    load_started = perf_counter()
-    report = load_embed(
-        patients=rows,
-        source_scope="benchmark",
-        identity_namespace="benchmark-release",
-        retain_raw=retain_raw,
-    )
-    load_seconds = perf_counter() - load_started
 
-    lookup_started = perf_counter()
-    for index in range(lookup_count):
-        patient = report.graph.patient(f"P-{index % row_count:06d}")
-        if patient is None:
-            raise AssertionError("benchmark lookup lost a loaded patient")
-    lookup_seconds = perf_counter() - lookup_started
-    current_bytes, peak_bytes = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-
-    if len(report.graph.patients) != row_count or report.issues:
-        raise AssertionError("benchmark load did not preserve its input cardinality")
-    return LoadBenchmark(
-        row_count=row_count,
-        retain_raw=retain_raw,
-        load_seconds=load_seconds,
-        lookup_seconds=lookup_seconds,
-        current_bytes=current_bytes,
-        peak_bytes=peak_bytes,
-    )
+def measure(size: int, repeats: int = 3) -> Dict[str, Any]:
+    tables = fixture(size)  # Input setup excluded from timed work and memory.
+    elapsed, peaks, retained, updates, subsets, batches, deferred = [], [], [], [], [], [], []
+    counts: Dict[str, int] = {}
+    for _ in range(repeats):
+        gc.collect()
+        tracemalloc.start()
+        started = perf_counter()
+        graph = load_embed(**tables).graph
+        elapsed.append(perf_counter() - started)
+        current, peak = tracemalloc.get_traced_memory()
+        retained.append(current)
+        peaks.append(peak)
+        tracemalloc.stop()
+        counts = assert_cardinality(graph, size)
+        update_rows = [{"acc_anon": "A0", "desc": "reviewed"}]
+        started = perf_counter()
+        for _ in range(50):
+            load_embed(exams=update_rows, into=graph)
+        updates.append((perf_counter() - started) / 50)
+        # Complete patient groups: each invocation is a distinct refresh snapshot.
+        started = perf_counter()
+        subset = load_embed(magview=tables["magview"][:4], images=tables["images"][:1], registry=tables["registry"][:1]).graph
+        subsets.append(perf_counter() - started)
+        assert_cardinality(subset, 1)
+        batch_graph = load_embed().graph
+        started = perf_counter()
+        for offset in range(0, size, 25):
+            load_embed(magview=tables["magview"][offset * 4:(offset + 25) * 4],
+                       images=tables["images"][offset:offset + 25],
+                       registry=tables["registry"][offset:offset + 25], into=batch_graph)
+        batches.append(perf_counter() - started)
+        assert_cardinality(batch_graph, size)
+        late_graph = load_embed(magview=tables["magview"], images=tables["images"]).graph
+        started = perf_counter()
+        load_embed(registry=tables["registry"], into=late_graph)
+        deferred.append(perf_counter() - started)
+        assert_cardinality(late_graph, size)
+    return {"patients": size, "rows": sum(map(len, tables.values())), "objects": counts,
+            "edges": sum(len(parents) for parents in graph._parents.values()) + sum(len(exam.linked_exams) for exam in graph.exams) // 2, "repeats": repeats,
+            "median_seconds": statistics.median(elapsed),
+            "median_peak_bytes": statistics.median(peaks),
+            "median_retained_bytes": statistics.median(retained),
+            "fixed_patient_update_seconds": statistics.median(updates),
+            "patient_subset_seconds": statistics.median(subsets),
+            "batched_seconds": statistics.median(batches),
+            "late_registry_seconds": statistics.median(deferred)}
 
 
 if __name__ == "__main__":
-    print(json.dumps(asdict(measure_graph_load()), indent=2, sort_keys=True))
-    print(
-        json.dumps(
-            asdict(measure_graph_load(retain_raw=True)),
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base", type=int, default=100)
+    parser.add_argument("--repeats", type=int, default=3)
+    args = parser.parse_args()
+    print(json.dumps({"environment": {"python": platform.python_version(), "platform": platform.platform()},
+                      "measurements": [measure(args.base * factor, args.repeats) for factor in (1, 2, 4)]}, indent=2))
