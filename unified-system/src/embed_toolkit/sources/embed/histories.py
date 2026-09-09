@@ -12,7 +12,7 @@ from embed_toolkit.clinical.histories import (
     ProcedureHistoryObservation,
 )
 from embed_toolkit.core.primitives import Laterality
-from embed_toolkit.core.source import Issue, SourceRef
+from embed_toolkit.core.source import Issue, IssueSeverity, SourceRef
 
 
 _MEDICATION_CATEGORIES = {"H": "hormone", "T": "therapy", "O": "contraceptive"}
@@ -87,7 +87,7 @@ _UNKNOWN_FLAGS = {"", "U", "NA", "N/A", "NAN", "UNKNOWN"}
 def normalize_medication_history(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
-    source: SourceRef,
+    source: Optional[SourceRef],
     patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[MedicationHistoryObservation], tuple[Issue, ...]]:
@@ -109,7 +109,7 @@ def normalize_medication_history(
             Issue(
                 code="unknown_medication_history_category",
                 message="medication history category is not in the EMBED vocabulary",
-                severity="warning",
+                severity=IssueSeverity.WARNING,
                 source=source,
                 context={"category": raw_category},
             )
@@ -119,7 +119,7 @@ def normalize_medication_history(
             Issue(
                 code="unknown_medication_history_code",
                 message="medication history code is not in the EMBED vocabulary",
-                severity="warning",
+                severity=IssueSeverity.WARNING,
                 source=source,
                 context={"category": raw_category, "code": raw_code},
             )
@@ -159,7 +159,7 @@ def normalize_medication_history(
 def normalize_procedure_history(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
-    source: SourceRef,
+    source: Optional[SourceRef],
     patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[ProcedureHistoryObservation], tuple[Issue, ...]]:
@@ -181,7 +181,7 @@ def normalize_procedure_history(
             Issue(
                 code="unknown_procedure_history_category",
                 message="procedure history category is not in the EMBED vocabulary",
-                severity="warning",
+                severity=IssueSeverity.WARNING,
                 source=source,
                 context={"category": raw_category},
             )
@@ -191,7 +191,7 @@ def normalize_procedure_history(
             Issue(
                 code="unknown_procedure_history_code",
                 message="procedure history code is not in the EMBED vocabulary",
-                severity="warning",
+                severity=IssueSeverity.WARNING,
                 source=source,
                 context={"category": raw_category, "code": raw_code},
             )
@@ -205,7 +205,7 @@ def normalize_procedure_history(
             Issue(
                 code="unknown_procedure_history_result",
                 message="procedure history result is not in the EMBED vocabulary",
-                severity="warning",
+                severity=IssueSeverity.WARNING,
                 source=source,
                 context={"result": raw_result},
             )
@@ -250,7 +250,7 @@ def _upper(row: Mapping[str, Any], column: Optional[str]) -> str:
 def _flag(
     row: Mapping[str, Any],
     column: Optional[str],
-    source: SourceRef,
+    source: Optional[SourceRef],
     semantic: str,
     issues: list[Issue],
 ) -> Optional[bool]:
@@ -265,7 +265,7 @@ def _flag(
         Issue(
             code="unrecognized_history_flag",
             message="patient-history boolean flag was not recognized",
-            severity="warning",
+            severity=IssueSeverity.WARNING,
             source=source,
             context={"field": semantic, "value": value},
         )
@@ -276,7 +276,7 @@ def _flag(
 def _number(
     row: Mapping[str, Any],
     column: Optional[str],
-    source: SourceRef,
+    source: Optional[SourceRef],
     semantic: str,
     issues: list[Issue],
     *,
@@ -304,7 +304,7 @@ def _number(
             Issue(
                 code="invalid_history_time_component",
                 message="patient-history time component could not be normalized",
-                severity="warning",
+                severity=IssueSeverity.WARNING,
                 source=source,
                 context={"field": semantic, "value": text},
             )
@@ -318,7 +318,7 @@ def _number(
 def _time_estimate(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
-    source: SourceRef,
+    source: Optional[SourceRef],
     issues: list[Issue],
     *,
     prefix: str,
