@@ -107,8 +107,12 @@ The internal catalog was queried on 2026-09-09. Its
 internal-v2.technical.cancer_registry_record_identifier and
 internal-v2.magview-representation-context#cancer-registry-reference confirm
 patient-scoped references but explicitly lack a physical registry binding.
-A configurable adapter can be qualified synthetically. A real binding requires a
-maintainer-supplied mapping or authoritative table schema; it must not be invented.
+The maintainer subsequently supplied the initial registry mapping for this task:
+patient_id maps to empi_anon and registry_id maps to cancer_registry_id. Prioritize
+these identity columns; other registry values are explicitly deferred. Caller-supplied
+registry inputs do not require a physical table name. MagView assignment IDs remain
+cancer_outcome_registry_id. Synthetic qualification covers this approved mapping;
+private-data qualification remains separate.
 
 ## Acceptance and old tests
 
