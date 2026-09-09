@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 import pytest
 
@@ -35,24 +34,26 @@ def test_finding_identity_uses_accession_and_number_with_side_as_attribute() -> 
 def test_exam_deduplicates_findings_by_stable_identity() -> None:
     exam = Exam("ACC-1")
     first = exam.add_finding(Finding("ACC-1", "L", 7))
-    duplicate = exam.add_finding(Finding("ACC-1", Laterality.LEFT, "7"))
+    duplicate = exam.add_finding(first)
+    with pytest.raises(ValueError, match="Distinct"):
+        exam.add_finding(Finding("ACC-1", Laterality.LEFT, "7"))
 
     assert duplicate is first
-    assert exam.findings == [first]
+    assert exam.findings == (first,)
 
 
-def test_exam_rejects_conflicting_finding_merge_atomically() -> None:
+def test_exam_rejects_distinct_finding_key_collision() -> None:
     exam = Exam("ACC-1")
     first = exam.add_finding(Finding("ACC-1", "L", 7, finding_type="mass"))
     observation = Finding("ACC-1", "R", 7, finding_type="calc")
 
     with pytest.raises(
         ValueError,
-        match="laterality, finding_type",
+        match="Distinct",
     ):
         exam.add_finding(observation)
 
-    assert exam.findings == [first]
+    assert exam.findings == (first,)
     assert first.laterality is Laterality.LEFT
     assert first.finding_type == "mass"
     assert "source_row_count" not in first.metadata
@@ -71,9 +72,9 @@ def test_breast_side_contains_findings_without_attribution_edges() -> None:
     side = BreastSide("ACC-2", Laterality.RIGHT)
     side.add_finding(finding)
 
-    assert side.findings == [finding]
+    assert side.findings == (finding,)
     assert not hasattr(side, "procedures")
-    assert not hasattr(finding, "procedures")
+    assert finding.procedures == ()
 
 
 def test_breast_side_rejects_wrong_side_finding() -> None:
@@ -100,13 +101,13 @@ def test_procedure_owns_resolved_source_evidence_not_finding_references() -> Non
     procedure = Procedure(identity=identity, sources=[source])
 
     assert procedure.identity is identity
-    assert procedure.sources == [source]
+    assert procedure.sources == (source,)
     assert not hasattr(procedure, "finding_number")
     assert not hasattr(procedure, "finding_references")
     assert procedure.to_dict()["sources"] == [source.to_dict()]
 
 
-def test_exam_aggregates_side_views_without_procedure_containment() -> None:
+def test_exam_aggregates_side_views_independently_of_procedures() -> None:
     left = Finding("ACC-5", Laterality.LEFT, 1)
     right = Finding("ACC-5", Laterality.RIGHT, 2)
 
@@ -115,9 +116,9 @@ def test_exam_aggregates_side_views_without_procedure_containment() -> None:
 
     sides = exam.breast_sides
     assert set(sides) == {Laterality.LEFT, Laterality.RIGHT}
-    assert sides[Laterality.LEFT].findings == [left]
-    assert sides[Laterality.RIGHT].findings == [right]
-    assert not hasattr(exam, "procedures")
+    assert sides[Laterality.LEFT].findings == (left,)
+    assert sides[Laterality.RIGHT].findings == (right,)
+    assert exam.procedures == ()
 
 
 def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> None:
@@ -153,7 +154,7 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
         ],
     )
 
-    serialized = asdict(finding)
+    serialized = finding.to_dict()
     plain = finding.to_dict()
 
     assert serialized["source_location_codes"] == {"loc": "C2"}
