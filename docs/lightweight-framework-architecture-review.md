@@ -1,7 +1,12 @@
 # Lightweight framework architecture review and recovery record
 
 Date: 2026-08-26
-Status: implemented on 2026-08-26
+Status: historical recovery implemented on 2026-08-26; target superseded.
+
+The maintainer-directed [mutable scaffold contract](mutable-scaffold-contract.md)
+now governs future work. It replaces conflicting requirements below, including
+strict atomic transactions, immutable graph membership, and DataFrame-index
+source identity. The new target is not yet implemented.
 
 ## Current architecture outcome
 
@@ -13,8 +18,8 @@ the package root exposes a bounded facade, and optional workflows live in
 repo-only examples. The replacement-test matrix is recorded in
 [lightweight-framework-test-traceability.md](lightweight-framework-test-traceability.md).
 
-The governing requirements, target construction model, dependency rule, and
-global acceptance criteria below remain the current architecture contract. The
+The requirements, target construction model, dependency rule, and global
+acceptance criteria below describe the earlier architecture contract. The
 assessment, topology, findings, risks, and phased plan are retained as the
 historical recovery record, not as descriptions of the current tree.
 

@@ -5,8 +5,12 @@ The repository’s only active Python project intentionally lives under
 tests, examples, and benchmarks move together; repository-level `docs/` and CI
 remain outside the distributable project.
 
-The governing architecture and completed recovery record is
-[`docs/lightweight-framework-architecture-review.md`](docs/lightweight-framework-architecture-review.md).
+The target architecture is recorded in
+[`docs/mutable-scaffold-contract.md`](docs/mutable-scaffold-contract.md).
+It reflects the maintainer review and is not yet implemented. The
+[earlier architecture recovery record](docs/lightweight-framework-architecture-review.md)
+describes the preceding design; installation and commands below apply to the
+current implementation.
 
 ## Install
 

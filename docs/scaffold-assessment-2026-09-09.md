@@ -1,6 +1,14 @@
 # EMBED scaffold assessment — 9 September 2026
 
 Reviewed revision: `15fd8b7` (clean working tree at review start).
+
+Subsequent maintainer decisions are recorded in the
+[mutable scaffold contract](mutable-scaffold-contract.md). They supersede this
+assessment's conflicting recommendations and priority judgments, including
+strict rollback, immutable membership, preserved DataFrame indexes, mandatory
+validation, and attribute-provenance requirements. Reproductions below remain
+evidence about the reviewed revision, not the accepted target design.
+
 Scope: active `unified-system` package, source adapters, domain objects, graph
 transactions, tests, packaging, examples, architecture records, and workflow
 removal history. This is a current-state assessment, not an implementation plan
