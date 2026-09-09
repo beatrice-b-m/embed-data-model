@@ -1,17 +1,39 @@
-"""Clinical finding objects independent of source-code adapters."""
+"""Mutable finding entities and source-neutral finding normalizers."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from embed_toolkit.clinical.interpretations import ImagingInterpretation
 from embed_toolkit.clinical.procedures import _to_plain
 from embed_toolkit.core.anatomy import AnatomicalPosition
+from embed_toolkit.core.entity import (
+    MutableEntity,
+    readonly_mapping,
+    serialize_entity,
+)
 from embed_toolkit.core.primitives import Laterality
 from embed_toolkit.core.provenance import SourceLocator
 from embed_toolkit.core.source import SourceRef
+
+if TYPE_CHECKING:
+    from embed_toolkit.clinical.pathology import Pathology
+    from embed_toolkit.clinical.procedures import Procedure
+
+
+SourceValue = Union[SourceLocator, SourceRef]
 
 
 class FindingRecordType(str, Enum):
@@ -25,7 +47,7 @@ class FindingRecordType(str, Enum):
 class FindingNormalizationEvidence:
     """Source-scoped evidence supporting one normalized finding attribute."""
 
-    source: object
+    source: SourceValue
     source_field: str
     raw_value: Any
     normalized_kind: str
@@ -53,7 +75,7 @@ class FindingNormalizationEvidence:
 class FindingNormalizationWarning:
     """Source-scoped warning emitted while normalizing finding anatomy."""
 
-    source: object
+    source: SourceValue
     code: str
     message: str
     source_field: Optional[str] = None
@@ -81,67 +103,120 @@ class FindingNormalizationWarning:
         }
 
 
-@dataclass
-class Finding:
-    """A stable clinical finding at EMBED accession/finding-number grain."""
+class Finding(MutableEntity):
+    """A mutable clinical finding at accession/finding-number grain."""
 
-    accession_number: str
-    laterality: Laterality
-    finding_number: str
-    finding_type: Optional[str] = None
-    interpretation: Optional[ImagingInterpretation] = None
-    anatomical_position: Optional[AnatomicalPosition] = None
-    source_location_codes: Dict[str, Any] = field(default_factory=dict)
-    source_depth_codes: Dict[str, Any] = field(default_factory=dict)
-    source_distance_codes: Dict[str, Any] = field(default_factory=dict)
-    normalization_evidence: List[FindingNormalizationEvidence] = field(
-        default_factory=list
-    )
-    descriptors: Dict[str, Any] = field(default_factory=dict)
-    normalization_warnings: List[FindingNormalizationWarning] = field(
-        default_factory=list
-    )
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    record_type: FindingRecordType = FindingRecordType.FINDING
+    __key_fields__ = ("accession_number", "finding_number")
 
-    def __post_init__(self) -> None:
-        self.laterality = Laterality.coerce(self.laterality)
-        self.finding_number = str(self.finding_number)
-        self.record_type = FindingRecordType(self.record_type)
-        if (
-            self.interpretation is not None
-            and self.interpretation.identity != self.identity
-        ):
+    def __init__(
+        self,
+        accession_number: str,
+        laterality: Laterality,
+        finding_number: str,
+        finding_type: Optional[str] = None,
+        interpretation: Optional[ImagingInterpretation] = None,
+        anatomical_position: Optional[AnatomicalPosition] = None,
+        source_location_codes: Optional[Dict[str, Any]] = None,
+        source_depth_codes: Optional[Dict[str, Any]] = None,
+        source_distance_codes: Optional[Dict[str, Any]] = None,
+        normalization_evidence: Optional[Iterable[FindingNormalizationEvidence]] = None,
+        descriptors: Optional[Mapping[str, Any]] = None,
+        normalization_warnings: Optional[Iterable[FindingNormalizationWarning]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+        record_type: FindingRecordType = FindingRecordType.FINDING,
+        procedures: Optional[Iterable["Procedure"]] = None,
+        source: Optional[object] = None,
+    ) -> None:
+        super().__init__()
+        self.accession_number = _required_text(accession_number, "accession_number")
+        self.laterality = Laterality.coerce(laterality)
+        self.finding_number = _identifier_text(finding_number, "finding_number")
+        self.finding_type = finding_type
+        self.interpretation = interpretation
+        if interpretation is not None and interpretation.identity != self.identity:
             raise ValueError("Finding interpretation identity must match Finding")
-        if any(
-            not isinstance(item, FindingNormalizationEvidence)
-            for item in self.normalization_evidence
-        ):
-            raise TypeError(
-                "normalization_evidence must contain FindingNormalizationEvidence"
-            )
-        if any(
-            not isinstance(item, FindingNormalizationWarning)
-            for item in self.normalization_warnings
-        ):
-            raise TypeError(
-                "normalization_warnings must contain FindingNormalizationWarning"
-            )
+        self.anatomical_position = anatomical_position
+        self._source_location_codes = dict(source_location_codes or {})
+        self._source_depth_codes = dict(source_depth_codes or {})
+        self._source_distance_codes = dict(source_distance_codes or {})
+        self._normalization_evidence = list(normalization_evidence or ())
+        self._descriptors = dict(descriptors or {})
+        self._normalization_warnings = list(normalization_warnings or ())
+        self._metadata = dict(metadata or {})
+        self.record_type = FindingRecordType(record_type)
+        self.source = source
+        self._procedures: List["Procedure"] = []
+        for procedure in procedures or ():
+            self._attach_local(procedure)
+        self._finish_initialization()
 
     @property
     def identity(self) -> Tuple[str, str]:
         """Source-stable identity: accession and finding number."""
 
-        return (self.accession_number, self.finding_number)
+        return self.accession_number, self.finding_number
 
     @property
     def finding_id(self) -> str:
-        """Compact string form suitable for logs, dict keys, and exports."""
-
         return ":".join((self.accession_number, self.finding_number))
 
+    @property
+    def source_location_codes(self) -> Dict[str, Any]:
+        return readonly_mapping(self._source_location_codes)  # type: ignore[return-value]
+
+    @property
+    def source_depth_codes(self) -> Dict[str, Any]:
+        return readonly_mapping(self._source_depth_codes)  # type: ignore[return-value]
+
+    @property
+    def source_distance_codes(self) -> Dict[str, Any]:
+        return readonly_mapping(self._source_distance_codes)  # type: ignore[return-value]
+
+    @property
+    def normalization_evidence(self) -> Tuple[FindingNormalizationEvidence, ...]:
+        return tuple(self._normalization_evidence)
+
+    @property
+    def descriptors(self) -> Dict[str, Any]:
+        return self._descriptors
+
+    @descriptors.setter
+    def descriptors(self, values: Mapping[str, Any]) -> None:
+        self._descriptors = dict(values)
+
+    @property
+    def normalization_warnings(self) -> Tuple[FindingNormalizationWarning, ...]:
+        return tuple(self._normalization_warnings)
+
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return self._metadata
+
+    @metadata.setter
+    def metadata(self, values: Dict[str, Any]) -> None:
+        self._metadata = dict(values)
+
+    @property
+    def procedures(self) -> Tuple["Procedure", ...]:
+        return tuple(self._procedures)
+
+    @property
+    def pathologies(self) -> Tuple["Pathology", ...]:
+        result: List["Pathology"] = []
+        seen = set()
+        for procedure in self._procedures:
+            for pathology in procedure.pathologies:
+                if id(pathology) not in seen:
+                    seen.add(id(pathology))
+                    result.append(pathology)
+        return tuple(result)
+
+    @property
+    def pathology(self) -> Tuple["Pathology", ...]:
+        return self.pathologies
+
     def merge_observation(self, observation: "Finding") -> None:
-        """Merge a compatible repeated observation atomically."""
+        """Merge a compatible repeated observation in place."""
 
         if not isinstance(observation, Finding):
             raise TypeError("observation must be a Finding")
@@ -159,40 +234,77 @@ class Finding:
                 "Finding observations conflict on populated attributes: "
                 + ", ".join(conflicts)
             )
-        for attribute in ("laterality", "finding_type"):
-            current = getattr(self, attribute)
-            observed = getattr(observation, attribute)
-            if current is None and observed is not None:
-                setattr(self, attribute, observed)
-        self.metadata["source_row_count"] = int(
-            self.metadata.get("source_row_count", 1)
+        if self.finding_type is None:
+            self.finding_type = observation.finding_type
+        self._metadata["source_row_count"] = int(
+            self._metadata.get("source_row_count", 1)
         ) + 1
 
-    def to_dict(self) -> Dict[str, Any]:
+    def add_procedure(self, procedure: "Procedure") -> "Procedure":
+        if self.graph is not None:
+            result = self.graph.attach(self, procedure)
+            return procedure if result is None else result
+        return self._attach_local(procedure)
+
+    def _children(self) -> Tuple[MutableEntity, ...]:
+        return tuple(self._procedures)
+
+    def _attach_local(self, child: MutableEntity) -> "Procedure":
+        from embed_toolkit.clinical.procedures import Procedure
+
+        if not isinstance(child, Procedure):
+            raise TypeError("Finding children must be Procedure entities")
+        for existing in self._procedures:
+            if existing.identity == child.identity:
+                if existing is child:
+                    return existing
+                raise ValueError(
+                    "Distinct Procedure objects cannot share an identity in a Finding"
+                )
+        self._procedures.append(child)
+        return child
+
+    def _detach_local(self, child: MutableEntity) -> MutableEntity:
+        for index, existing in enumerate(self._procedures):
+            if existing is child:
+                return self._procedures.pop(index)
+        return child  # idempotent graph recomposition
+
+    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
         return {
             "accession_number": self.accession_number,
-            "laterality": self.laterality.value,
+            "laterality": self.laterality,
             "finding_number": self.finding_number,
             "finding_type": self.finding_type,
-            "interpretation_reference": (
-                {
-                    "accession_number": self.interpretation.accession_number,
-                    "finding_number": self.interpretation.finding_number,
-                }
-                if self.interpretation is not None
-                else None
-            ),
-            "anatomical_position": _to_plain(self.anatomical_position),
-            "source_location_codes": _to_plain(self.source_location_codes),
-            "source_depth_codes": _to_plain(self.source_depth_codes),
-            "source_distance_codes": _to_plain(self.source_distance_codes),
-            "normalization_evidence": [
-                item.to_dict() for item in self.normalization_evidence
-            ],
-            "descriptors": _to_plain(self.descriptors),
-            "normalization_warnings": [
-                warning.to_dict() for warning in self.normalization_warnings
-            ],
-            "metadata": _to_plain(self.metadata),
-            "record_type": self.record_type.value,
+            "interpretation": self.interpretation,
+            "anatomical_position": self.anatomical_position,
+            "source_location_codes": self._source_location_codes,
+            "source_depth_codes": self._source_depth_codes,
+            "source_distance_codes": self._source_distance_codes,
+            "normalization_evidence": self.normalization_evidence,
+            "descriptors": self._descriptors,
+            "normalization_warnings": self.normalization_warnings,
+            "metadata": self._metadata,
+            "record_type": self.record_type,
+            "source": self.source,
+            "procedures": self.procedures,
+            "pathology": self.pathology,
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        return serialize_entity(self)
+
+
+def _required_text(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    return value.strip()
+
+
+def _identifier_text(value: Any, name: str) -> str:
+    if value is None:
+        raise ValueError(f"{name} must be populated")
+    normalized = str(value).strip()
+    if not normalized:
+        raise ValueError(f"{name} must be populated")
+    return normalized
