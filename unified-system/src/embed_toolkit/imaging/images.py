@@ -26,6 +26,29 @@ class MammogramImage(MutableEntity):
     through ``derived_from``.  No source path parsing occurs in this class.
     """
 
+    image_id: str
+    laterality: Laterality
+    view_position: ViewPosition
+    source_paths: Set[str]
+    modality: ImageModality
+    source_sop_instance_uid: Optional[str]
+    derived_from: Optional[Any]
+    source_modality: Optional[str]
+    derived_image_type: Optional[str]
+    height: Optional[int]
+    width: Optional[int]
+    frame_count: Optional[int]
+    accession_number: Optional[str]
+    patient_id: Optional[str]
+    study_instance_uid: Optional[str]
+    series_instance_uid: Optional[str]
+    patient_orientation: Optional[PatientOrientation]
+    coordinate_frame_id: Optional[str]
+    metadata: Dict[str, Any]
+
+    _rois: list[RegionOfInterest]
+    _landmarks: Tuple[ImageLandmark, ...]
+
     __key_fields__ = ("image_id",)
 
     def __init__(
@@ -182,7 +205,8 @@ class MammogramImage(MutableEntity):
         if self.graph is not None:
             result = self.graph.attach(self, roi)
             return roi if result is None else result
-        return self._attach_local(roi)
+        self._attach_local(roi)
+        return roi
 
     def with_landmark(self, landmark: ImageLandmark) -> "MammogramImage":
         """Return a standalone shallow image copy with one more landmark."""
