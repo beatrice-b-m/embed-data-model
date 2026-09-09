@@ -89,6 +89,7 @@ def normalize_medication_history(
     columns: Mapping[str, Optional[str]],
     source: SourceRef,
     patient_id: str,
+    record_id: Optional[str] = None,
 ) -> tuple[Optional[MedicationHistoryObservation], tuple[Issue, ...]]:
     issues: list[Issue] = []
     raw_category = _upper(row, columns["category"])
@@ -148,6 +149,10 @@ def normalize_medication_history(
         ),
         comment=_text(row, columns["comment"]),
     )
+    _set_record_id(
+        observation,
+        record_id if record_id is not None else _text(row, columns.get("record_id")),
+    )
     return observation, tuple(issues)
 
 
@@ -156,6 +161,7 @@ def normalize_procedure_history(
     columns: Mapping[str, Optional[str]],
     source: SourceRef,
     patient_id: str,
+    record_id: Optional[str] = None,
 ) -> tuple[Optional[ProcedureHistoryObservation], tuple[Issue, ...]]:
     issues: list[Issue] = []
     raw_category = _upper(row, columns["category"])
@@ -204,8 +210,7 @@ def normalize_procedure_history(
                 context={"result": raw_result},
             )
         )
-    return (
-        ProcedureHistoryObservation(
+    observation = ProcedureHistoryObservation(
             patient_id=patient_id,
             source=source,
             category=category,
@@ -214,9 +219,12 @@ def normalize_procedure_history(
             context_accession=_text(row, columns["accession"]),
             laterality=Laterality.coerce(_text(row, columns["laterality"])),
             reported_result=result,
-        ),
-        tuple(issues),
+        )
+    _set_record_id(
+        observation,
+        record_id if record_id is not None else _text(row, columns.get("record_id")),
     )
+    return observation, tuple(issues)
 
 
 def _text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
@@ -276,6 +284,14 @@ def _number(
     maximum: float,
     integer: bool,
 ) -> Optional[float]:
+    """Parse a numeric fact without applying clinical plausibility rules.
+
+    ``minimum``, ``maximum``, and ``integer`` remain in the private signature
+    for callers from the pre-validation adapter, but range and integral checks
+    belong to W7 validation.  A finite numeric value is retained even when it
+    is clinically implausible.
+    """
+
     text = _text(row, column)
     if text is None:
         return None
@@ -283,9 +299,7 @@ def _number(
         value = float(text)
     except ValueError:
         value = float("nan")
-    if not isfinite(value) or not minimum <= value <= maximum or (
-        integer and not value.is_integer()
-    ):
+    if not isfinite(value):
         issues.append(
             Issue(
                 code="invalid_history_time_component",
@@ -296,6 +310,8 @@ def _number(
             )
         )
         return None
+    if integer and value.is_integer():
+        return int(value)
     return value
 
 
@@ -339,10 +355,24 @@ def _time_estimate(
     )
     estimate = HistoryTimeEstimate(
         age=age,
-        month=int(month) if month is not None else None,
-        year=int(year) if year is not None else None,
+        month=month if month is not None else None,
+        year=year if year is not None else None,
     )
     return None if estimate.is_empty else estimate
+
+
+def _set_record_id(observation: Any, record_id: Optional[str]) -> None:
+    """Attach an explicit semantic record identifier when the domain supports it."""
+
+    if record_id is None:
+        return
+    normalized = str(record_id).strip()
+    if not normalized:
+        return
+    # The mutable history domain is being updated alongside this adapter.  The
+    # object-level fallback keeps this normalizer usable during that cutover
+    # without deriving an event identity from a source row or ordinal.
+    object.__setattr__(observation, "record_id", normalized)
 
 
 __all__ = ["normalize_medication_history", "normalize_procedure_history"]
