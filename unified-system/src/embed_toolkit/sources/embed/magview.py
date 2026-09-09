@@ -551,7 +551,7 @@ def _iter_codes(value: Any) -> Tuple[str, ...]:
             return ()
         return tuple(part for part in re.split(r"[,;/|]+", text) if part.strip())
     if isinstance(value, Iterable):
-        codes = []
+        codes: list[str] = []
         for item in value:
             codes.extend(_iter_codes(item))
         return tuple(codes)
