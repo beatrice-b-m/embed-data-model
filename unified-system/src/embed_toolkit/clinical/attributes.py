@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import date
 from enum import Enum
 from numbers import Integral
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Iterable, Optional, Tuple, Union, cast
 
-from embed_toolkit.core.build_policy import BuildPolicy
+from embed_toolkit.core.entity import MutableEntity, serialize_entity
 from embed_toolkit.core.provenance import (
     BuildIssue,
     IssueSeverity,
@@ -16,6 +16,9 @@ from embed_toolkit.core.provenance import (
     SourceLocator,
 )
 from embed_toolkit.core.source import SourceRef
+
+
+SourceValue = Union[SourceLocator, SourceRef]
 
 
 class PatientAttributeName(str, Enum):
@@ -45,85 +48,104 @@ class UndatedObservationPolicy(str, Enum):
     EXCLUDE = "exclude"
 
 
-@dataclass(frozen=True)
-class ExamAttributeObservation:
+def _optional_source(source: Optional[object]) -> Optional[SourceValue]:
+    if source is not None and not isinstance(source, (SourceLocator, SourceRef)):
+        raise TypeError("source must be a SourceRef or SourceLocator")
+    return source
+
+
+def _source_dict(source: Optional[SourceValue]) -> Optional[dict[str, object]]:
+    return None if source is None else source.to_dict()
+
+
+class ExamAttributeObservation(MutableEntity):
     """One source-attributed observation of an invariant exam fact."""
 
-    accession_number: str
-    attribute: ExamAttributeName
-    value: Optional[str]
-    source: object
+    __key_fields__ = ("accession_number", "attribute", "source")
 
-    def __post_init__(self) -> None:
-        if (
-            not isinstance(self.accession_number, str)
-            or not self.accession_number.strip()
-        ):
+    def __init__(
+        self,
+        accession_number: str,
+        attribute: ExamAttributeName,
+        value: Optional[str],
+        source: Optional[object] = None,
+    ) -> None:
+        super().__init__()
+        if not isinstance(accession_number, str) or not accession_number.strip():
             raise ValueError("accession_number must be a non-empty string")
-        object.__setattr__(self, "attribute", ExamAttributeName(self.attribute))
-        if self.value is not None:
-            if not isinstance(self.value, str) or not self.value.strip():
+        self.accession_number = accession_number.strip()
+        self.attribute = ExamAttributeName(attribute)
+        if value is not None:
+            if not isinstance(value, str) or not value.strip():
                 raise TypeError("exam attribute value must be a string or None")
-            object.__setattr__(self, "value", self.value.strip())
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
+            value = value.strip()
+        self.value = value
+        self.source = _optional_source(source)
+        self._finish_initialization()
 
     @property
-    def identity(self) -> Tuple[str, ExamAttributeName, object]:
+    def identity(self) -> Tuple[str, ExamAttributeName, Optional[SourceValue]]:
         return self.accession_number, self.attribute, self.source
 
     def reference_dict(self) -> dict[str, object]:
         return {
             "accession_number": self.accession_number,
             "attribute": self.attribute.value,
-            "source": self.source.to_dict(),
+            "source": _source_dict(self.source),
         }
 
-    def to_dict(self) -> dict[str, object]:
+    def _to_dict_data(self, state: Any) -> dict[str, object]:
         return {**self.reference_dict(), "value": self.value}
 
+    def to_dict(self) -> dict[str, object]:
+        return serialize_entity(self)
 
-@dataclass(frozen=True)
-class PatientAttributeObservation:
+
+class PatientAttributeObservation(MutableEntity):
     """One source-attributed patient value, including an explicit null."""
 
-    patient_id: str
-    attribute: PatientAttributeName
-    value: Any
-    source: object
-    context_date: Optional[date]
-    time_basis: PatientObservationTimeBasis
+    __key_fields__ = ("patient_id", "attribute", "source")
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.patient_id, str) or not self.patient_id.strip():
+    def __init__(
+        self,
+        patient_id: str,
+        attribute: PatientAttributeName,
+        value: Any,
+        source: Optional[object] = None,
+        context_date: Optional[date] = None,
+        time_basis: PatientObservationTimeBasis = (
+            PatientObservationTimeBasis.EXAM_DATE_CONTEXT
+        ),
+    ) -> None:
+        super().__init__()
+        if not isinstance(patient_id, str) or not patient_id.strip():
             raise ValueError("patient_id must be a non-empty string")
-        object.__setattr__(self, "attribute", PatientAttributeName(self.attribute))
-        object.__setattr__(
-            self,
-            "time_basis",
-            PatientObservationTimeBasis(self.time_basis),
-        )
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
-        if self.context_date is not None and type(self.context_date) is not date:
+        self.patient_id = patient_id.strip()
+        self.attribute = PatientAttributeName(attribute)
+        self.time_basis = PatientObservationTimeBasis(time_basis)
+        if context_date is not None and type(context_date) is not date:
             raise TypeError("context_date must be a date or None")
+        self.context_date = context_date
+        self.source = _optional_source(source)
         if self.attribute is PatientAttributeName.SEX:
-            if self.value is not None and (
-                not isinstance(self.value, str) or not self.value.strip()
+            if value is not None and (
+                not isinstance(value, str) or not value.strip()
             ):
                 raise TypeError("sex observation value must be a string or None")
-            if isinstance(self.value, str):
-                object.__setattr__(self, "value", self.value.strip())
-        elif self.value is not None:
-            if isinstance(self.value, bool) or not isinstance(self.value, Integral):
+            if isinstance(value, str):
+                value = value.strip()
+        elif value is not None:
+            if isinstance(value, bool) or not isinstance(value, Integral):
                 raise TypeError(
                     "birth_year observation value must be an integral value or None"
                 )
-            object.__setattr__(self, "value", int(self.value))
+            value = int(value)
+        self.value = value
+        self._finish_initialization()
 
     @property
-    def identity(self) -> Tuple[str, PatientAttributeName, object]:
-        """Governed identity preserving distinct physical source observations."""
+    def identity(self) -> Tuple[str, PatientAttributeName, Optional[SourceValue]]:
+        """Governed identity for one attributed observation."""
 
         return self.patient_id, self.attribute, self.source
 
@@ -133,12 +155,10 @@ class PatientAttributeObservation:
         return {
             "patient_id": self.patient_id,
             "attribute": self.attribute.value,
-            "source": self.source.to_dict(),
+            "source": _source_dict(self.source),
         }
 
-    def to_dict(self) -> dict[str, object]:
-        """Return a JSON-ready attributed observation."""
-
+    def _to_dict_data(self, state: Any) -> dict[str, object]:
         return {
             **self.reference_dict(),
             "value": self.value,
@@ -149,6 +169,11 @@ class PatientAttributeObservation:
             ),
             "time_basis": self.time_basis.value,
         }
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a JSON-ready attributed observation."""
+
+        return serialize_entity(self)
 
 
 @dataclass(frozen=True)
@@ -187,7 +212,7 @@ class PatientAttributeSelection:
     resolution_state: ResolutionState
     selected_value: Any = None
     selected_context_date: Optional[date] = None
-    supporting_sources: Tuple[object, ...] = ()
+    supporting_sources: Tuple[Optional[SourceValue], ...] = ()
     reason: str = ""
     issues: Tuple[BuildIssue, ...] = ()
 
@@ -209,10 +234,12 @@ class PatientAttributeSelection:
             raise TypeError("selected_context_date must be a date or None")
         sources = tuple(self.supporting_sources)
         if any(
-            not isinstance(source, (SourceLocator, SourceRef)) for source in sources
+            source is not None
+            and not isinstance(source, (SourceLocator, SourceRef))
+            for source in sources
         ):
             raise TypeError(
-                "supporting_sources must contain SourceRef or SourceLocator values"
+                "supporting_sources must contain SourceRef, SourceLocator, or None"
             )
         if len(set(sources)) != len(sources):
             raise ValueError("supporting_sources must be unique")
@@ -277,7 +304,7 @@ class PatientAttributeSelection:
                 else None
             ),
             "supporting_sources": [
-                source.to_dict() for source in self.supporting_sources
+                _source_dict(source) for source in self.supporting_sources
             ],
             "reason": self.reason,
             "issues": [issue.to_dict() for issue in self.issues],
@@ -290,7 +317,6 @@ def select_patient_attribute_as_of(
     patient_id: str,
     attribute: PatientAttributeName,
     policy: PatientAttributeAsOfPolicy,
-    build_policy: Optional[BuildPolicy] = None,
 ) -> PatientAttributeSelection:
     """Select an attributed value only under an explicit temporal policy."""
 
@@ -299,9 +325,6 @@ def select_patient_attribute_as_of(
     selected_attribute = PatientAttributeName(attribute)
     if not isinstance(policy, PatientAttributeAsOfPolicy):
         raise TypeError("policy must be a PatientAttributeAsOfPolicy")
-    issue_policy = build_policy or BuildPolicy()
-    if not isinstance(issue_policy, BuildPolicy):
-        raise TypeError("build_policy must be a BuildPolicy")
     candidates = tuple(observations)
     if any(not isinstance(item, PatientAttributeObservation) for item in candidates):
         raise TypeError(
@@ -324,7 +347,7 @@ def select_patient_attribute_as_of(
                     "the as-of policy."
                 ),
                 severity=IssueSeverity.ERROR,
-                source=item.source,
+                source=cast(SourceLocator, item.source),
                 context={
                     "patient_id": patient_id,
                     "attribute": selected_attribute.value,
@@ -332,9 +355,8 @@ def select_patient_attribute_as_of(
                 },
             )
             for item in undated
+            if item.source is not None
         )
-        for issue in issues:
-            issue_policy.handle_issue(issue)
         return PatientAttributeSelection(
             patient_id=patient_id,
             attribute=selected_attribute,
@@ -359,7 +381,9 @@ def select_patient_attribute_as_of(
             resolution_state=ResolutionState.UNRESOLVED,
             reason="no_eligible_observation",
         )
-    selected_date = max(item.context_date for item in dated)
+    selected_date = max(
+        item.context_date for item in dated if item.context_date is not None
+    )
     latest = tuple(item for item in dated if item.context_date == selected_date)
     distinct_values = []
     for item in latest:
@@ -367,22 +391,29 @@ def select_patient_attribute_as_of(
             distinct_values.append(item.value)
     sources = _unique_sources(latest)
     if len(distinct_values) > 1:
-        issue = BuildIssue(
-            code="conflicting_patient_attribute_as_of",
-            message=(
-                "Patient attribute observations conflict at the latest "
-                "eligible context date."
-            ),
-            severity=IssueSeverity.ERROR,
-            source=latest[0].source,
-            context={
-                "patient_id": patient_id,
-                "attribute": selected_attribute.value,
-                "context_date": selected_date.isoformat(),
-                "values": distinct_values,
-            },
+        issue_source = next(
+            (item.source for item in latest if item.source is not None),
+            None,
         )
-        issue_policy.handle_issue(issue)
+        issue = (
+            BuildIssue(
+                code="conflicting_patient_attribute_as_of",
+                message=(
+                    "Patient attribute observations conflict at the latest "
+                    "eligible context date."
+                ),
+                severity=IssueSeverity.ERROR,
+                source=cast(SourceLocator, issue_source),
+                context={
+                    "patient_id": patient_id,
+                    "attribute": selected_attribute.value,
+                    "context_date": selected_date.isoformat(),
+                    "values": distinct_values,
+                },
+            )
+            if issue_source is not None
+            else None
+        )
         return PatientAttributeSelection(
             patient_id=patient_id,
             attribute=selected_attribute,
@@ -390,7 +421,7 @@ def select_patient_attribute_as_of(
             resolution_state=ResolutionState.UNRESOLVED,
             supporting_sources=sources,
             reason="conflicting_latest_observations",
-            issues=(issue,),
+            issues=() if issue is None else (issue,),
         )
     return PatientAttributeSelection(
         patient_id=patient_id,
@@ -406,7 +437,7 @@ def select_patient_attribute_as_of(
 
 def _unique_sources(
     observations: Iterable[PatientAttributeObservation],
-) -> Tuple[object, ...]:
+) -> Tuple[Optional[SourceValue], ...]:
     sources = []
     for observation in observations:
         if observation.source not in sources:
