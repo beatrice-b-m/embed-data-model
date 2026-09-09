@@ -1,17 +1,51 @@
-# Graph loading baseline
+# Mutable scaffold loading measurements
 
-Run `uv run python -m benchmarks.graph_loading` from `unified-system/` to
-measure a 2,000-patient load and 10,000 keyed lookups. The harness uses
-`tracemalloc`; timings are diagnostic rather than pass/fail thresholds.
+Measured 2026-09-09 against `7b56af5` (wheel version `0.1.0`).
+Python 3.13.11, macOS-26.5.1-arm64-arm-64bit-Mach-O.
 
-Initial 2026-08-26 baseline on the development Mac with Python 3.13:
+```bash
+uv run --frozen python -m benchmarks.graph_loading --base 100 --repeats 3
+```
 
-| Raw policy | Load | Lookups | Current traced memory | Peak traced memory |
-|---|---:|---:|---:|---:|
-| `retain_raw=False` | 0.050 s | 0.023 s | 2,284,867 B | 2,467,899 B |
-| `retain_raw=True` | 0.051 s | 0.023 s | 2,876,876 B | 3,059,748 B |
+Each patient contributes six input rows: four repeated finding/procedure MagView
+rows, one image row containing two equal ROI slots, and one registry entry.
+Expected objects per patient: one patient, one exam, two findings, two procedures,
+two pathology bundles, one image, two ROIs, and one registry entry (12 total).
+Edges count actual parent associations once, including exam/registry edges, plus
+each reciprocal linked-exam pair once. The last exam has no linked successor.
 
-For these rows, retaining the otherwise unknown 512-character research field
-increased current traced graph memory by about 26%. The integration test checks
-the stable architectural claims—cardinality, keyed lookup, and higher retained
-memory—without asserting machine-specific timing or byte totals.
+| Patients | Rows | Objects | Edges | Full load (s) | Peak bytes | Retained bytes |
+|---:|---:|---:|---:|---:|---:|---:|
+| 100 | 600 | 1200 | 1399 | 0.1691 | 3,406,545 | 2,803,382 |
+| 200 | 1200 | 2400 | 2799 | 0.3394 | 6,610,054 | 5,411,034 |
+| 400 | 2400 | 4800 | 5599 | 0.6801 | 13,188,302 | 10,602,370 |
+
+| Patients | Fixed-patient update (µs) | One-patient subset (ms) | Batched load (s) | Late registry resolution (ms) |
+|---:|---:|---:|---:|---:|
+| 100 | 15.37 | 0.428 | 0.0295 | 0.752 |
+| 200 | 15.16 | 0.444 | 0.0590 | 1.611 |
+| 400 | 15.17 | 0.466 | 0.1186 | 3.099 |
+
+All values are medians of three repetitions. Full loads use `tracemalloc`; input
+fixture construction is excluded from both time and memory. Retained memory is
+measured after loading; peak includes transient load allocations. Other operations
+are timed without tracing, so their absolute timings are not directly comparable
+to the traced full-load column. Fixed updates average 50 same-patient refreshes per
+repetition; subset setup uses prebuilt slices. Deferred resolution excludes graph
+construction and times only the later registry input.
+
+Full-load doubling ratios were 2.01× and 2.00×, below the provisional 3× gate.
+Peak and retained object memory grew roughly linearly. Fixed-patient update time
+stayed near 15 µs as unrelated data quadrupled. These measurements support the
+deterministic regression that prohibits iteration of unrelated registry dictionaries
+during a fixed update; timing is diagnostic, not a fragile absolute CI threshold.
+
+Batches contain 25 complete patient groups. A refresh invocation is one snapshot:
+callers must assemble all rows for a repeated semantic grain before applying it.
+Arbitrarily splitting one object across refresh calls changes the snapshot and is
+not a streaming merge. Full and batched cardinalities are checked at every size.
+
+These are synthetic scale results, not qualification on the full private EMBED
+dataset, real pixels, or every source schema. Representative private-data testing
+requires data supplied through an authorized path. Registry payload beyond the
+approved patient/registry-ID mapping is deferred.
