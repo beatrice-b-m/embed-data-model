@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import copy
 import math
-from dataclasses import dataclass, replace
-from typing import Any, Dict, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
-from embed_toolkit.core.provenance import SourceLocator
-from embed_toolkit.core.source import SourceRef
-from embed_toolkit.imaging.roi_provenance import RoiLocator, RoiSourceProvenance
+from embed_toolkit.core.entity import MutableEntity
 
 
 CoordinateBox = Tuple[float, float, float, float]
@@ -16,7 +15,12 @@ CoordinateBox = Tuple[float, float, float, float]
 
 @dataclass(frozen=True)
 class Box:
-    """Plain half-open image geometry without source or audit machinery."""
+    """Immutable half-open image geometry.
+
+    A box keeps four numeric coordinates in ``[y_min, x_min, y_stop,
+    x_stop]`` order.  Bounds and ordering are inspected by optional
+    validation; construction preserves those raw facts.
+    """
 
     y_min: float
     x_min: float
@@ -24,13 +28,9 @@ class Box:
     x_stop: float
 
     def __post_init__(self) -> None:
-        values = tuple(float(value) for value in self.as_tuple())
-        if not all(math.isfinite(value) for value in values):
-            raise ValueError("Box coordinates must be finite")
-        if values[2] < values[0] or values[3] < values[1]:
-            raise ValueError("Box stop coordinates must not precede minima")
         for attribute, value in zip(
-            ("y_min", "x_min", "y_stop", "x_stop"), values
+            ("y_min", "x_min", "y_stop", "x_stop"),
+            _numeric_box((self.y_min, self.x_min, self.y_stop, self.x_stop)),
         ):
             object.__setattr__(self, attribute, value)
 
@@ -38,29 +38,106 @@ class Box:
         return self.y_min, self.x_min, self.y_stop, self.x_stop
 
 
-@dataclass(frozen=True)
-class RegionOfInterest:
-    """One scoped ROI observation on exactly one image.
+class RegionOfInterest(MutableEntity):
+    """One mutable, image-local ROI.
 
-    Geometry uses canonical half-open ``[y_min, x_min, y_stop, x_stop]``
-    edges. Identity is always the structured, release-scoped ``locator``;
-    neither ``image_id`` nor a generated string is an ROI identity.
+    ``(image_id, roi_key)`` is the toolkit identity.  Source location fields
+    are optional lookup aliases and do not participate in identity.
     """
 
-    coordinates: Union[CoordinateBox, Box]
-    image_id: str
-    roi_key: Optional[str] = None
-    locator: Optional[RoiLocator] = None
-    source_provenance: Optional[RoiSourceProvenance] = None
-    sources: Tuple[object, ...] = ()
-    annotation_source: Optional[str] = None
-    confidence: Optional[float] = None
-    coordinate_frame_id: Optional[str] = None
-    source_coordinates: Optional[CoordinateBox] = None
-    source_coordinate_convention: Optional[str] = None
-    source_frame_indices: Tuple[int, ...] = ()
-    frame_provenance: Optional[str] = None
-    frame_derivation_method: Optional[str] = None
+    __key_fields__ = ("image_id", "roi_key")
+
+    def __init__(
+        self,
+        coordinates: Union[CoordinateBox, Box],
+        image_id: str,
+        roi_key: str,
+        *,
+        source_path: Optional[str] = None,
+        collection_position: Optional[int] = None,
+        annotation_source: Optional[str] = None,
+        confidence: Optional[float] = None,
+        coordinate_frame_id: Optional[str] = None,
+        source_coordinates: Optional[CoordinateBox] = None,
+        source_coordinate_convention: Optional[str] = None,
+        source_frame_indices: Tuple[int, ...] = (),
+        frame_provenance: Optional[str] = None,
+        frame_derivation_method: Optional[str] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        super().__init__()
+        _require_image_id(image_id)
+        _require_roi_key(roi_key)
+        object.__setattr__(self, "coordinates", _numeric_box(coordinates))
+        object.__setattr__(self, "image_id", image_id)
+        object.__setattr__(self, "roi_key", roi_key)
+        object.__setattr__(self, "source_path", source_path)
+        object.__setattr__(self, "collection_position", collection_position)
+        object.__setattr__(self, "annotation_source", annotation_source)
+        object.__setattr__(
+            self,
+            "confidence",
+            None if confidence is None else float(confidence),
+        )
+        object.__setattr__(self, "coordinate_frame_id", coordinate_frame_id)
+        object.__setattr__(
+            self,
+            "source_coordinates",
+            None
+            if source_coordinates is None
+            else _numeric_box(source_coordinates),
+        )
+        object.__setattr__(
+            self,
+            "source_coordinate_convention",
+            source_coordinate_convention,
+        )
+        object.__setattr__(
+            self,
+            "source_frame_indices",
+            tuple(source_frame_indices),
+        )
+        object.__setattr__(self, "frame_provenance", frame_provenance)
+        object.__setattr__(self, "frame_derivation_method", frame_derivation_method)
+        object.__setattr__(self, "metadata", dict(metadata or {}))
+        self._finish_initialization()
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "coordinates":
+            value = _numeric_box(value)
+        elif name == "source_coordinates" and value is not None:
+            value = _numeric_box(value)
+        elif name == "source_frame_indices" and value is not None:
+            value = tuple(value)
+        elif name == "confidence" and value is not None:
+            value = float(value)
+        super().__setattr__(name, value)
+
+    def _children(self) -> Tuple[MutableEntity, ...]:
+        return ()
+
+    def _attach_local(self, child: MutableEntity) -> MutableEntity:
+        raise TypeError("RegionOfInterest does not contain domain children")
+
+    def _detach_local(self, child: MutableEntity) -> MutableEntity:
+        raise TypeError("RegionOfInterest does not contain domain children")
+
+    def update(self, **fields: object) -> "RegionOfInterest":
+        """Update this ROI while preserving graph delegation."""
+
+        prepared: Dict[str, object] = dict(fields)
+        if "coordinates" in prepared:
+            prepared["coordinates"] = _numeric_box(prepared["coordinates"])
+        if "source_coordinates" in prepared and prepared["source_coordinates"] is not None:
+            prepared["source_coordinates"] = _numeric_box(
+                prepared["source_coordinates"]
+            )
+        if "source_frame_indices" in prepared and prepared["source_frame_indices"] is not None:
+            prepared["source_frame_indices"] = tuple(prepared["source_frame_indices"])
+        if "confidence" in prepared and prepared["confidence"] is not None:
+            prepared["confidence"] = float(prepared["confidence"])
+        result = super().update(**prepared)
+        return self if result is None else result
 
     @classmethod
     def from_embed_coordinates(
@@ -68,11 +145,9 @@ class RegionOfInterest:
         coordinates: CoordinateBox,
         **metadata: object,
     ) -> "RegionOfInterest":
-        """Normalize EMBED inclusive maxima to canonical exclusive stops."""
+        """Convert EMBED inclusive maxima to canonical exclusive stops."""
 
-        y_min, x_min, y_max, x_max = tuple(float(value) for value in coordinates)
-        if y_max < y_min or x_max < x_min:
-            raise ValueError("EMBED ROI maxima must not precede minimum coordinates")
+        y_min, x_min, y_max, x_max = _numeric_box(coordinates)
         return cls(
             coordinates=(y_min, x_min, y_max + 1.0, x_max + 1.0),
             source_coordinates=(y_min, x_min, y_max, x_max),
@@ -80,141 +155,31 @@ class RegionOfInterest:
             **metadata,
         )
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.image_id, str) or not self.image_id.strip():
-            raise ValueError("image_id must be a non-empty string")
-        if self.roi_key is not None and (
-            not isinstance(self.roi_key, str) or not self.roi_key.strip()
-        ):
-            raise ValueError("roi_key must be a non-empty string when supplied")
-        if self.locator is None and self.roi_key is None:
-            raise ValueError("ROI requires an image-scoped roi_key or locator")
-        if self.locator is not None:
-            if not isinstance(self.locator, RoiLocator):
-                raise TypeError("locator must be a RoiLocator")
-            if not isinstance(self.source_provenance, RoiSourceProvenance):
-                raise TypeError(
-                    "source_provenance must accompany a governed RoiLocator"
-                )
-            self.source_provenance.validate_locator(self.locator)
-        elif self.source_provenance is not None and not isinstance(
-            self.source_provenance, RoiSourceProvenance
-        ):
-            raise TypeError("source_provenance must be RoiSourceProvenance or None")
-
-        sources = tuple(self.sources)
-        if any(
-            not isinstance(source, (SourceLocator, SourceRef)) for source in sources
-        ):
-            raise TypeError("sources must contain SourceRef or SourceLocator values")
-        if len(set(sources)) != len(sources):
-            raise ValueError("sources must contain unique SourceLocator values")
-        locator_source = self.locator.image_locator if self.locator is not None else None
-        if locator_source is not None and locator_source not in sources:
-            raise ValueError("locator image scope must occur in ROI sources")
-
-        coordinates = (
-            self.coordinates.as_tuple()
-            if isinstance(self.coordinates, Box)
-            else self.coordinates
-        )
-        if len(coordinates) != 4:
-            raise ValueError("ROI coordinates must contain four values")
-        y_min, x_min, y_stop, x_stop = tuple(float(value) for value in coordinates)
-        if not all(math.isfinite(value) for value in (y_min, x_min, y_stop, x_stop)):
-            raise ValueError("ROI coordinates must be finite")
-        if y_stop < y_min or x_stop < x_min:
-            raise ValueError("ROI stop coordinates must be greater than min coordinates")
-        if self.confidence is not None:
-            confidence = float(self.confidence)
-            if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
-                raise ValueError("ROI confidence must be finite and in [0, 1]")
-            object.__setattr__(self, "confidence", confidence)
-        object.__setattr__(self, "coordinates", (y_min, x_min, y_stop, x_stop))
-        object.__setattr__(self, "sources", sources)
-        frame_indices = tuple(self.source_frame_indices)
-        if any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 0
-            for value in frame_indices
-        ):
-            raise ValueError("source_frame_indices must be non-negative integers")
-        if len(set(frame_indices)) != len(frame_indices):
-            raise ValueError("source_frame_indices cannot contain duplicates")
-        object.__setattr__(self, "source_frame_indices", frame_indices)
-        if self.frame_provenance is not None and self.frame_provenance not in {
-            "source_supplied",
-            "derived",
-            "unavailable",
-        }:
-            raise ValueError("frame_provenance is not recognized")
-        if self.frame_provenance == "derived":
-            if (
-                not isinstance(self.frame_derivation_method, str)
-                or not self.frame_derivation_method.strip()
-            ):
-                raise ValueError("derived frame provenance requires a method")
-        elif self.frame_derivation_method is not None:
-            raise ValueError(
-                "frame_derivation_method is only valid for derived provenance"
-            )
-        if self.source_coordinates is not None:
-            source_coordinates = tuple(
-                float(value) for value in self.source_coordinates
-            )
-            if len(source_coordinates) != 4 or not all(
-                math.isfinite(value) for value in source_coordinates
-            ):
-                raise ValueError("source_coordinates must contain four finite values")
-            object.__setattr__(self, "source_coordinates", source_coordinates)
-
     @property
     def frame_indices(self) -> Tuple[int, ...]:
-        """Return governed DBT depth placement from source provenance."""
+        """Return supplied frame facts without inferring depth."""
 
-        return (
-            self.source_provenance.frame_indices
-            if self.source_provenance is not None
-            else self.source_frame_indices
-        )
+        return self.source_frame_indices
 
     @property
     def identity(self) -> Tuple[str, str]:
-        """Return image-scoped identity for manual and ingested ROIs."""
-
-        if self.roi_key is not None:
-            return self.image_id, self.roi_key
-        assert self.locator is not None
-        locator_key = (
-            self.locator.source_value
-            if self.locator.source_value is not None
-            else str(self.locator.source_ordinal)
-        )
-        return self.image_id, locator_key
-
-    def with_source(self, source: object) -> "RegionOfInterest":
-        """Return this ROI with an additional physical evidence occurrence."""
-
-        if not isinstance(source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
-        if source in self.sources:
-            return self
-        return replace(self, sources=(*self.sources, source))
+        return self.image_id, self.roi_key
 
     @property
     def y_min(self) -> float:
-        return self.coordinates[0]
+        return _numeric_box(self.coordinates)[0]
 
     @property
     def x_min(self) -> float:
-        return self.coordinates[1]
+        return _numeric_box(self.coordinates)[1]
 
     @property
     def y_max(self) -> float:
-        return self.coordinates[2]
+        return _numeric_box(self.coordinates)[2]
 
     @property
     def x_max(self) -> float:
-        return self.coordinates[3]
+        return _numeric_box(self.coordinates)[3]
 
     @property
     def height(self) -> float:
@@ -238,35 +203,21 @@ class RegionOfInterest:
         scale_y: float,
         scale_x: float,
         image_id: Optional[str] = None,
-        locator: Optional[RoiLocator] = None,
-        source_provenance: Optional[RoiSourceProvenance] = None,
-        sources: Optional[Tuple[SourceLocator, ...]] = None,
+        roi_key: Optional[str] = None,
         coordinate_frame_id: Optional[str] = None,
     ) -> "RegionOfInterest":
-        """Scale geometry, requiring governed scope for image reassignment."""
+        """Return a geometry-scaled standalone copy."""
 
-        if scale_y <= 0 or scale_x <= 0:
-            raise ValueError("Resize scales must be positive")
-        ownership = self._resolved_ownership(
-            image_id=image_id,
-            locator=locator,
-            source_provenance=source_provenance,
-            sources=sources,
-        )
-        resolved_coordinate_frame_id = self._resolved_coordinate_frame_id(
-            image_id=ownership["image_id"],
-            coordinate_frame_id=coordinate_frame_id,
-        )
-        return replace(
-            self,
+        return self._geometry_copy(
             coordinates=(
-                self.y_min * scale_y,
-                self.x_min * scale_x,
-                self.y_max * scale_y,
-                self.x_max * scale_x,
+                self.y_min * float(scale_y),
+                self.x_min * float(scale_x),
+                self.y_max * float(scale_y),
+                self.x_max * float(scale_x),
             ),
-            coordinate_frame_id=resolved_coordinate_frame_id,
-            **ownership,
+            image_id=image_id,
+            roi_key=roi_key,
+            coordinate_frame_id=coordinate_frame_id,
         )
 
     def realign(
@@ -277,82 +228,43 @@ class RegionOfInterest:
         scale_y: float = 1.0,
         scale_x: float = 1.0,
         image_id: Optional[str] = None,
-        locator: Optional[RoiLocator] = None,
-        source_provenance: Optional[RoiSourceProvenance] = None,
-        sources: Optional[Tuple[SourceLocator, ...]] = None,
+        roi_key: Optional[str] = None,
         coordinate_frame_id: Optional[str] = None,
     ) -> "RegionOfInterest":
-        """Scale and translate, requiring governed scope for reassignment."""
+        """Return a scaled and translated standalone copy."""
 
-        if scale_y <= 0 or scale_x <= 0:
-            raise ValueError("Realignment scales must be positive")
-        ownership = self._resolved_ownership(
+        return self._geometry_copy(
+            coordinates=(
+                self.y_min * float(scale_y) + float(offset_y),
+                self.x_min * float(scale_x) + float(offset_x),
+                self.y_max * float(scale_y) + float(offset_y),
+                self.x_max * float(scale_x) + float(offset_x),
+            ),
             image_id=image_id,
-            locator=locator,
-            source_provenance=source_provenance,
-            sources=sources,
-        )
-        resolved_coordinate_frame_id = self._resolved_coordinate_frame_id(
-            image_id=ownership["image_id"],
+            roi_key=roi_key,
             coordinate_frame_id=coordinate_frame_id,
         )
-        return replace(
-            self,
-            coordinates=(
-                self.y_min * scale_y + offset_y,
-                self.x_min * scale_x + offset_x,
-                self.y_max * scale_y + offset_y,
-                self.x_max * scale_x + offset_x,
-            ),
-            coordinate_frame_id=resolved_coordinate_frame_id,
-            **ownership,
-        )
 
-    def _resolved_ownership(
+    def _geometry_copy(
         self,
         *,
+        coordinates: CoordinateBox,
         image_id: Optional[str],
-        locator: Optional[RoiLocator],
-        source_provenance: Optional[RoiSourceProvenance],
-        sources: Optional[Tuple[SourceLocator, ...]],
-    ) -> Dict[str, object]:
-        resolved_image_id = self.image_id if image_id is None else image_id
-        changes_image = resolved_image_id != self.image_id
-        supplied_scope = any(
-            value is not None for value in (locator, source_provenance, sources)
-        )
-        if changes_image and not all(
-            value is not None for value in (locator, source_provenance, sources)
-        ):
-            raise ValueError(
-                "Changing ROI image ownership requires locator, provenance, and sources"
-            )
-        if not changes_image and supplied_scope:
-            raise ValueError(
-                "Governed ownership replacements require a different image_id"
-            )
-        return {
-            "image_id": resolved_image_id,
-            "locator": self.locator if locator is None else locator,
-            "source_provenance": (
-                self.source_provenance
-                if source_provenance is None
-                else source_provenance
-            ),
-            "sources": self.sources if sources is None else sources,
-        }
-
-    def _resolved_coordinate_frame_id(
-        self,
-        *,
-        image_id: object,
+        roi_key: Optional[str],
         coordinate_frame_id: Optional[str],
-    ) -> Optional[str]:
+    ) -> "RegionOfInterest":
+        clone = copy.copy(self)
+        object.__setattr__(clone, "_graph", None)
+        object.__setattr__(clone, "coordinates", _numeric_box(coordinates))
+        if image_id is not None:
+            _require_image_id(image_id)
+            object.__setattr__(clone, "image_id", image_id)
+        if roi_key is not None:
+            _require_roi_key(roi_key)
+            object.__setattr__(clone, "roi_key", roi_key)
         if coordinate_frame_id is not None:
-            return coordinate_frame_id
-        if image_id != self.image_id:
-            return None
-        return self.coordinate_frame_id
+            object.__setattr__(clone, "coordinate_frame_id", coordinate_frame_id)
+        return clone
 
     def intersection_area(self, other: "RegionOfInterest") -> float:
         y_overlap = max(0.0, min(self.y_max, other.y_max) - max(self.y_min, other.y_min))
@@ -374,25 +286,18 @@ class RegionOfInterest:
         other_y, other_x = other.centroid
         return math.hypot(self_y - other_y, self_x - other_x)
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a flat JSON-ready ROI representation."""
-
+    def _to_dict_data(self, state: Any = None) -> Dict[str, Any]:
         return {
             "roi_key": self.roi_key,
-            "locator": self.locator.to_dict() if self.locator is not None else None,
             "image_id": self.image_id,
-            "source_provenance": (
-                self.source_provenance.to_dict()
-                if self.source_provenance is not None
-                else None
-            ),
-            "source_references": [source.to_dict() for source in self.sources],
-            "coordinates": list(self.coordinates),
+            "source_path": self.source_path,
+            "collection_position": self.collection_position,
+            "coordinates": list(_numeric_box(self.coordinates)),
             "annotation_source": self.annotation_source,
             "confidence": self.confidence,
             "coordinate_frame_id": self.coordinate_frame_id,
             "source_coordinates": (
-                list(self.source_coordinates)
+                list(_numeric_box(self.source_coordinates))
                 if self.source_coordinates is not None
                 else None
             ),
@@ -400,4 +305,36 @@ class RegionOfInterest:
             "frame_indices": list(self.frame_indices),
             "frame_provenance": self.frame_provenance,
             "frame_derivation_method": self.frame_derivation_method,
+            "metadata": dict(self.metadata),
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a flat JSON-ready ROI representation."""
+
+        return self._to_dict_data()
+
+
+def _numeric_box(value: Union[CoordinateBox, Box, Any]) -> CoordinateBox:
+    if isinstance(value, Box):
+        values = value.as_tuple()
+    else:
+        try:
+            values = tuple(value)
+        except TypeError as exc:
+            raise TypeError("ROI coordinates must be an iterable of four numbers") from exc
+    if len(values) != 4:
+        raise ValueError("ROI coordinates must contain four values")
+    try:
+        return tuple(float(item) for item in values)  # type: ignore[return-value]
+    except (TypeError, ValueError) as exc:
+        raise TypeError("ROI coordinates must contain numeric values") from exc
+
+
+def _require_image_id(image_id: str) -> None:
+    if not isinstance(image_id, str) or not image_id.strip():
+        raise ValueError("image_id must be a non-empty string")
+
+
+def _require_roi_key(roi_key: str) -> None:
+    if not isinstance(roi_key, str) or not roi_key.strip():
+        raise ValueError("roi_key must be an explicit non-empty string")
