@@ -141,7 +141,7 @@ class MutableEntity:
         for name, value in self.__dict__.items():
             if name == "_graph":
                 continue
-            if name in {"_linked_exams", "_registry_entries"}:
+            if name == "_linked_exams":
                 object.__setattr__(result, name, {})
                 continue
             object.__setattr__(result, name, copy.deepcopy(value, memo))
