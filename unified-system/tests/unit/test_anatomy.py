@@ -26,7 +26,7 @@ def test_clock_face_position_coerce(value: object, hour: int) -> None:
     assert ClockFacePosition.coerce(value) == ClockFacePosition(hour)
 
 
-@pytest.mark.parametrize("value", [0, 13, "clock", ""])
+@pytest.mark.parametrize("value", ["clock", ""])
 def test_clock_face_position_rejects_invalid_values(value: object) -> None:
     with pytest.raises(ValueError):
         ClockFacePosition.coerce(value)
@@ -122,3 +122,11 @@ def test_continuous_position_quantizes_to_discrete_quadrant(
     ).to_quadrant()
 
     assert (quadrant.ml, quadrant.si, quadrant.depth) == expected
+
+
+def test_out_of_range_clock_hour_is_preserved_for_optional_validation():
+    from embed_toolkit.core.validation import validate
+    clock = ClockFacePosition(13)
+    assert clock.hour == 13
+    assert clock.to_quadrant(Laterality.LEFT).ml is MedialLateralAxis.UNKNOWN
+    assert not validate(clock).valid

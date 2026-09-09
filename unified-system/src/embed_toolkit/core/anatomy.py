@@ -48,8 +48,8 @@ class ClockFacePosition:
     hour: int
 
     def __post_init__(self) -> None:
-        if self.hour < 1 or self.hour > 12:
-            raise ValueError(f"Clock-face hour must be in 1..12: {self.hour!r}")
+        if isinstance(self.hour, bool) or not isinstance(self.hour, int):
+            raise ValueError("Clock-face hour must be an integer")
 
     @classmethod
     def coerce(cls, value: Any) -> "ClockFacePosition":
@@ -59,7 +59,7 @@ class ClockFacePosition:
             return cls(value)
 
         text = str(value).strip().upper()
-        match = re.search(r"(?:C)?(1[0-2]|[1-9])(?::?00)?", text)
+        match = re.fullmatch(r"(?:C)?(-?\d+?)(?::00)?", text)
         if not match:
             raise ValueError(f"Unrecognized clock-face position: {value!r}")
         return cls(int(match.group(1)))
@@ -69,6 +69,8 @@ class ClockFacePosition:
         if side not in {Laterality.LEFT, Laterality.RIGHT}:
             raise ValueError(f"Clock-face mapping requires a breast side: {laterality!r}")
 
+        if not 1 <= self.hour <= 12:
+            return Quadrant(laterality=side)
         if self.hour in {6, 12}:
             ml = MedialLateralAxis.CENTRAL
         elif self.hour in {1, 2, 3, 4, 5}:
