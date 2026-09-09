@@ -117,8 +117,8 @@ def test_landmarks_are_mutable_embedded_values_and_geometry_math_survives() -> N
     assert owned.y == 25.0
     assert owned.confidence == -1.0
     assert isinstance(geometry, BreastGeometry)
-    assert geometry.posterior_distance == 50.0
-    assert geometry.depth_value_for_point((20, 35)) == pytest.approx(1.0)
+    assert geometry.posterior_distance == pytest.approx((50 ** 2 + 5 ** 2) ** 0.5)
+    assert geometry.depth_value_for_point((22.5, 35)) == pytest.approx(1.0)
 
 
 def test_roi_add_delegates_to_an_owning_graph() -> None:
