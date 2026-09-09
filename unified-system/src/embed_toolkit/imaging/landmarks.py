@@ -6,7 +6,7 @@ import copy
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from embed_toolkit.core.anatomy import ContinuousAnatomicalPosition, DepthThird
 from embed_toolkit.core.entity import MutableEntity
@@ -29,6 +29,14 @@ class ImageLandmark(MutableEntity):
     clinical plausibility is a validation concern, so values outside an image
     or outside a confidence range remain representable here.
     """
+
+    y: float
+    x: float
+    landmark_type: LandmarkType
+    image_id: Optional[str]
+    source: Optional[str]
+    confidence: Optional[float]
+    provenance: Optional[str]
 
     __key_fields__ = ()
 
@@ -56,7 +64,7 @@ class ImageLandmark(MutableEntity):
         object.__setattr__(self, "provenance", provenance)
         self._finish_initialization()
 
-    def __setattr__(self, name: str, value: object) -> None:
+    def __setattr__(self, name: str, value: Any) -> None:
         if name in {"y", "x"}:
             value = float(value)
         elif name == "landmark_type":
@@ -68,16 +76,16 @@ class ImageLandmark(MutableEntity):
     def _children(self) -> Tuple[MutableEntity, ...]:
         return ()
 
-    def _attach_local(self, child: MutableEntity) -> None:
+    def _attach_local(self, child: MutableEntity) -> MutableEntity:
         raise TypeError("ImageLandmark does not contain domain children")
 
-    def _detach_local(self, child: MutableEntity) -> None:
+    def _detach_local(self, child: MutableEntity) -> MutableEntity:
         raise TypeError("ImageLandmark does not contain domain children")
 
-    def update(self, **fields: object) -> "ImageLandmark":
+    def update(self, **fields: Any) -> "ImageLandmark":
         """Update this landmark, delegating ownership handling to the base."""
 
-        prepared: Dict[str, object] = dict(fields)
+        prepared: Dict[str, Any] = dict(fields)
         if "y" in prepared:
             prepared["y"] = float(prepared["y"])
         if "x" in prepared:
@@ -86,8 +94,8 @@ class ImageLandmark(MutableEntity):
             prepared["landmark_type"] = LandmarkType(prepared["landmark_type"])
         if "confidence" in prepared and prepared["confidence"] is not None:
             prepared["confidence"] = float(prepared["confidence"])
-        result = super().update(**prepared)
-        return self if result is None else result
+        super().update(**prepared)
+        return self
 
     @property
     def point(self) -> Tuple[float, float]:
@@ -154,9 +162,10 @@ class BreastGeometry:
         if self.posterior_nipple_line is None or self.nipple is None:
             return None
         start, end = self.posterior_nipple_line
+        nipple = self.nipple
         return max(
             (start, end),
-            key=lambda landmark: _distance(self.nipple.point, landmark.point),
+            key=lambda landmark: _distance(nipple.point, landmark.point),
         )
 
     @property
