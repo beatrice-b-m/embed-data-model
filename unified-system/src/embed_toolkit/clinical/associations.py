@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, Union
 
 from embed_toolkit.clinical.procedures import ProcedureIdentity
 from embed_toolkit.core.provenance import SourceLocator
 from embed_toolkit.core.source import SourceRef
+
+
+SourceValue = Union[SourceLocator, SourceRef]
 
 
 class AttributionStatus(str, Enum):
@@ -69,7 +72,7 @@ class FindingProcedureLink:
     finding_number: str
     procedure: ProcedureIdentity
     status: AttributionStatus
-    source: object
+    source: SourceValue
 
     def __post_init__(self) -> None:
         for attribute in ("accession_number", "finding_number"):
@@ -102,7 +105,7 @@ class AssociationLink:
     target_kind: str
     target_identity: Tuple[str, ...]
     status: AttributionStatus
-    source: object
+    source: SourceValue
 
     def __post_init__(self) -> None:
         for attribute in ("source_kind", "target_kind"):
