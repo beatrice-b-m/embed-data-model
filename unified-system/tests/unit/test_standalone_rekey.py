@@ -151,6 +151,44 @@ def test_standalone_rekey_rewrites_carried_parent_targets() -> None:
     assert not destination.unresolved_references
 
 
+def test_standalone_rekey_rewrites_internal_link_collections() -> None:
+    source = DatasetGraph()
+    exam = source.register(Exam("A-1"))
+    source.set_linked_accessions(exam, ["A-1"])
+    detached = source.pop(exam)
+
+    detached.rekey(accession_number="B-1")
+
+    assert detached.linked_accessions == {"B-1"}
+    destination = DatasetGraph()
+    destination.register(detached)
+    assert detached.linked_exams == (detached,)
+    assert not destination.unresolved_references
+
+
+def test_standalone_rekey_preserves_external_link_targets() -> None:
+    source = DatasetGraph()
+    exam = source.register(Exam("A-1"))
+    source.set_linked_accessions(exam, ["external"])
+    detached = source.pop(exam)
+
+    detached.rekey(accession_number="B-1")
+
+    assert detached.linked_accessions == {"external"}
+
+
+def test_standalone_self_link_rekeys_before_first_registration() -> None:
+    exam = Exam("A-1", linked_accessions=("A-1",))
+
+    exam.rekey(accession_number="B-1")
+
+    assert exam.linked_accessions == {"B-1"}
+    graph = DatasetGraph()
+    graph.register(exam)
+    assert exam.linked_exams == (exam,)
+    assert not graph.unresolved_references
+
+
 def test_standalone_rekey_preflights_reachable_semantic_collisions() -> None:
     patient = Patient("P-1")
     exam = patient.add_exam(Exam("A-1"))

@@ -445,7 +445,9 @@ def _standalone_rekey(entity: MutableEntity, identifiers: Mapping[str, Any]) -> 
             )
     _preflight_standalone_collisions(containment, changes)
 
-    detached_rewrites = _detached_reference_rewrites(containment, changes)
+    renames = _standalone_identity_renames(containment, changes)
+    detached_rewrites = _detached_reference_rewrites(containment, renames)
+    semantic_rewrites = _standalone_semantic_rewrites(related, renames)
 
     # All collision-sensitive writes happen only after the complete plan has
     # passed preflight.  ``setattr`` preserves consumer subclass coercion and
@@ -460,6 +462,9 @@ def _standalone_rekey(entity: MutableEntity, identifiers: Mapping[str, Any]) -> 
             if id(candidate) == marker and _entity_role(candidate) == "exam":
                 object.__setattr__(candidate, "_owner_explicit", True)
                 break
+    for candidate, values in semantic_rewrites.items():
+        for field, value in values.items():
+            object.__setattr__(candidate, field, value)
     for candidate, references in detached_rewrites.items():
         object.__setattr__(candidate, "_detached_references", references)
 
@@ -515,11 +520,11 @@ def _standalone_semantic_address(
     return None
 
 
-def _detached_reference_rewrites(
+def _standalone_identity_renames(
     members: Tuple[MutableEntity, ...],
     changes: Mapping[int, Mapping[str, Any]],
-) -> Dict[MutableEntity, Tuple[Tuple[str, Any, str], ...]]:
-    """Rewrite carried target identities for keys changed in this subtree."""
+) -> Dict[Tuple[str, Any], Tuple[str, Any]]:
+    """Return semantic identity changes for members in this subtree."""
 
     renames: Dict[Tuple[str, Any], Tuple[str, Any]] = {}
     for member in members:
@@ -528,6 +533,14 @@ def _detached_reference_rewrites(
         if old is None or new is None or old == new:
             continue
         renames[old] = new
+    return renames
+
+
+def _detached_reference_rewrites(
+    members: Tuple[MutableEntity, ...],
+    renames: Mapping[Tuple[str, Any], Tuple[str, Any]],
+) -> Dict[MutableEntity, Tuple[Tuple[str, Any, str], ...]]:
+    """Rewrite carried target identities for keys changed in this subtree."""
 
     rewritten: Dict[MutableEntity, Tuple[Tuple[str, Any, str], ...]] = {}
     if not renames:
@@ -544,6 +557,47 @@ def _detached_reference_rewrites(
             else:
                 values.append((target[0], target[1], relation))
         rewritten[member] = tuple(values)
+    return rewritten
+
+
+def _standalone_semantic_rewrites(
+    members: Tuple[MutableEntity, ...],
+    renames: Mapping[Tuple[str, Any], Tuple[str, Any]],
+) -> Dict[MutableEntity, Dict[str, Any]]:
+    """Rewrite semantic collections whose endpoints changed locally."""
+
+    rewritten: Dict[MutableEntity, Dict[str, Any]] = {}
+    for member in members:
+        if _entity_role(member) != "exam":
+            continue
+        linked = getattr(member, "linked_accessions", None)
+        registry = getattr(member, "registry_references", None)
+        if linked is not None:
+            values = set(linked)
+            for (kind, old), (_, new) in renames.items():
+                if kind == "exam" and old in values:
+                    values.discard(old)
+                    values.add(new)
+            if values != set(linked):
+                rewritten.setdefault(member, {})["_linked_accessions"] = values
+        if registry is not None:
+            values = set(registry)
+            for (kind, old), (_, new) in renames.items():
+                if kind == "registry" and old in values:
+                    values.discard(old)
+                    values.add(new)
+            if values != set(registry):
+                rewritten.setdefault(member, {})["_registry_references"] = values
+        resolved_links = getattr(member, "_linked_exams", None)
+        if resolved_links:
+            resolved_values = {}
+            for old, target in resolved_links.items():
+                replacement = renames.get(("exam", old))
+                resolved_values[
+                    replacement[1] if replacement is not None else old
+                ] = target
+            if resolved_values != resolved_links:
+                rewritten.setdefault(member, {})["_linked_exams"] = resolved_values
     return rewritten
 
 
