@@ -50,3 +50,29 @@ def test_derivative_cannot_become_original_with_an_owned_source_sop() -> None:
 
     assert derivative.derived_from == "original"
     assert graph.source_image("S") is original
+
+
+def test_one_sided_link_rekey_removes_old_reverse_entry() -> None:
+    graph = DatasetGraph()
+    source = graph.register(Exam("A"))
+    target = graph.register(Exam("B"))
+    graph.set_linked_accessions(source, ["B"])
+
+    source.rekey(accession_number="C")
+
+    assert target.linked_exams == (source,)
+    graph.set_linked_accessions(source, [])
+    assert not target.linked_exams
+
+
+def test_self_link_rekey_moves_both_reference_endpoints() -> None:
+    graph = DatasetGraph()
+    exam = graph.register(Exam("A"))
+    graph.set_linked_accessions(exam, ["A"])
+
+    exam.rekey(accession_number="B")
+
+    assert exam.linked_accessions == {"B"}
+    assert exam.linked_exams == (exam,)
+    graph.set_linked_accessions(exam, [])
+    assert not exam.linked_exams

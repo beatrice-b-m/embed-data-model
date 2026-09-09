@@ -477,8 +477,21 @@ class DatasetGraph:
         for relation in ("parent", "association", "registry", "linked"):
             source = kind, old, relation
             targets = tuple(self._references.get(source, ()))
+            if relation == "linked":
+                for target in targets:
+                    endpoint = self.get(*target)
+                    if endpoint is None and target == (kind, old):
+                        endpoint = self.get(kind, new)
+                    if endpoint is not None:
+                        endpoint._linked_exams.pop(old, None)
             self.clear_references(kind, old, relation)
             for target in targets:
+                if relation == "linked" and target == (kind, old):
+                    target = kind, new
+                    source_obj = self.get(kind, new)
+                    if source_obj is not None:
+                        source_obj.linked_accessions.discard(old)
+                        source_obj.linked_accessions.add(new)
                 self.reference(kind, new, *target, relation=relation)
         for source in tuple(self._incoming.pop((kind, old), ())):
             incoming_targets = self._references[source]
