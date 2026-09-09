@@ -61,7 +61,7 @@ def _copy_group(graph: DatasetGraph, selected: list[Any]) -> DatasetGraph:
         branch = subtree(obj)
         included.update(branch)
         complete.update(branch)
-    todo = list(included)
+    todo = [id(obj) for obj in selected]
     while todo:
         oid = todo.pop()
         for pid in graph._parents.get(oid, ()):
@@ -133,6 +133,9 @@ def _copy_group(graph: DatasetGraph, selected: list[Any]) -> DatasetGraph:
             address = kind_of(source), key_of(source), relation
             for target in graph._references.get(address, ()):
                 output.reference(address[0], address[1], *target, relation=relation)
+        for incoming in graph._incoming.get((kind_of(source), key_of(source)), ()):
+            if incoming[2] in {"linked", "registry"} and output.get(incoming[0], incoming[1]) is None:
+                output.reference(incoming[0], incoming[1], kind_of(source), key_of(source), relation=incoming[2])
     # Preserve unresolved payload snapshots only for selected/context identities.
     addresses = {(kind_of(obj), key_of(obj)) for obj in included.values()}
     for address, payload in graph.unresolved_records.items():

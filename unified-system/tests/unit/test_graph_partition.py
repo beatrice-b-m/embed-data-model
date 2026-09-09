@@ -74,3 +74,26 @@ def test_consumer_copy_hook_and_uncopyable_state():
     patient.extension = Copyable()
     output = graph.partition(level="patient", key=lambda obj: "all")["all"]
     assert output.patient("P").extension == {"copied": True}
+
+
+def test_partition_preserves_incoming_cross_boundary_reference():
+    graph = DatasetGraph()
+    a, b = graph.register(Exam("A")), graph.register(Exam("B"))
+    graph.set_linked_accessions(a, ["B"])
+    output = graph.partition(level="exam", key=lambda obj: ["target"] if obj is b else [])["target"]
+    assert output.exam("A") is None
+    assert output.unresolved_references
+    output.register(Exam("A"))
+    assert output.exam("A") in output.exam("B").linked_exams
+
+
+def test_registry_shared_across_exams_copies_with_selected_exam():
+    from embed_toolkit import CancerRegistryEntry
+    graph = DatasetGraph()
+    a, b = graph.register(Exam("A")), graph.register(Exam("B"))
+    entry = graph.register(CancerRegistryEntry("P", "1"))
+    graph.set_registry_assignments(a, [("P", "1")])
+    graph.set_registry_assignments(b, [("P", "1")])
+    output = graph.partition(level="exam", key=lambda obj: obj.accession_number)["A"]
+    assert output.exam("B") is None
+    assert output.exam("A").registry_pathology[0] is not entry
