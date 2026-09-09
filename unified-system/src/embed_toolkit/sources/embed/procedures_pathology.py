@@ -19,12 +19,14 @@ from embed_toolkit.core.source import Issue, SourceRef
 def normalize_procedure(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
-    source: SourceRef,
+    source: Optional[SourceRef] = None,
 ) -> tuple[Optional[Procedure], tuple[Issue, ...]]:
-    patient_id = _identifier(row, columns["patient_id"])
-    performed_date = _text(row, columns["performed_date"])
-    procedure_type = _text(row, columns["procedure_type"])
-    laterality = Laterality.coerce(_text(row, columns["laterality"]))
+    patient_id = _identifier(row, columns.get("patient_id"))
+    performed_date = _text(
+        row, columns.get("performed_date", columns.get("procedure_date"))
+    )
+    procedure_type = _text(row, columns.get("procedure_type"))
+    laterality = Laterality.coerce(_text(row, columns.get("laterality")))
     missing = tuple(
         name
         for name, value in (
@@ -58,7 +60,7 @@ def normalize_procedure(
                 procedure_type=procedure_type,
                 laterality=laterality,
             ),
-            sources=[source],
+            sources=[] if source is None else [source],
         ),
         (),
     )
@@ -67,7 +69,7 @@ def normalize_procedure(
 def normalize_pathology(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
-    source: SourceRef,
+    source: Optional[SourceRef] = None,
 ) -> tuple[
     Optional[PathologyDiagnosis],
     tuple[PathologyObservation, ...],
@@ -81,15 +83,15 @@ def normalize_pathology(
             source=source,
         )
         for index in range(1, 11)
-        if (column := columns[f"descriptor_{index}"]) is not None
+        if (column := columns.get(f"descriptor_{index}")) is not None
         if (descriptor := _text(row, column)) is not None
     )
-    raw_severity = _value(row, columns["severity"])
+    raw_severity = _value(row, columns.get("severity"))
     severity, severity_issues = _severity(raw_severity, observations, source)
-    diagnosis = _text(row, columns["diagnosis"])
-    result_category = _text(row, columns["result_category"])
-    malignant = _optional_bool(_value(row, columns["malignant"]))
-    report_date = _text(row, columns["report_documented_date"])
+    diagnosis = _text(row, columns.get("diagnosis"))
+    result_category = _text(row, columns.get("result_category"))
+    malignant = _optional_bool(_value(row, columns.get("malignant")))
+    report_date = _text(row, columns.get("report_documented_date"))
     if not any(
         (
             diagnosis,
@@ -101,6 +103,16 @@ def normalize_pathology(
         )
     ):
         return None, (), ()
+    if not any(
+        (
+            diagnosis,
+            result_category,
+            malignant is not None,
+            raw_severity is not None,
+            report_date,
+        )
+    ):
+        return None, observations, severity_issues
     return (
         PathologyDiagnosis(
             source=source,
@@ -120,18 +132,10 @@ def normalize_pathology(
 def _severity(
     raw: Any,
     observations: tuple[PathologyObservation, ...],
-    source: SourceRef,
+    source: Optional[SourceRef],
 ) -> tuple[Optional[PathologySeverity], tuple[Issue, ...]]:
     if raw is None:
-        if not observations:
-            return None, ()
-        return None, (
-            Issue(
-                code="descriptors_without_severity",
-                message="pathology descriptors require a populated severity",
-                source=source,
-            ),
-        )
+        return None, ()
     try:
         if isinstance(raw, bool):
             raise ValueError
@@ -140,14 +144,8 @@ def _severity(
             raise ValueError
         return PathologySeverity(numeric), ()
     except (TypeError, ValueError):
-        return None, (
-            Issue(
-                code="invalid_pathology_severity",
-                message="pathology severity must be an integer from 0 through 5",
-                source=source,
-                context={"raw_severity": raw},
-            ),
-        )
+        # Preserve raw values; severity plausibility belongs to validation.
+        return None, ()
 
 
 def _value(row: Mapping[str, Any], column: Optional[str]) -> Any:
