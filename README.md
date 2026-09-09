@@ -12,6 +12,10 @@ It reflects the maintainer review and is not yet implemented. The
 describes the preceding design; installation and commands below apply to the
 current implementation.
 
+The [mutable scaffold implementation plan](docs/mutable-scaffold-implementation-plan.md)
+compares that target with the current code and defines the proposed decisions,
+work packages, dependencies, and acceptance checks for the cutover.
+
 ## Install
 
 For development:
