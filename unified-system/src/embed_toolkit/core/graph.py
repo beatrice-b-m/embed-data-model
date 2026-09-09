@@ -246,7 +246,9 @@ class DatasetGraph:
         selected = next(iter(claims)) if len(claims) == 1 else None
         self._set_patient(exam, selected)
 
-    def assign_patient(self, exam: Any, patient_id: str) -> None:
+    def assign_patient(self, exam: Any, patient_id: Optional[str]) -> None:
+        if exam.graph is not self:
+            raise ValueError("Entity does not belong to this graph")
         object.__setattr__(exam, "_owner_explicit", True)
         self._set_patient(exam, patient_id)
 
@@ -362,8 +364,9 @@ class DatasetGraph:
     def rekey(self, entity: Any, **fields: Any) -> Any:
         if entity.graph is not self:
             raise ValueError("Entity does not belong to this graph")
-        requested_owner = fields.pop("patient_id", None) if kind_of(entity) == "exam" and "patient_id" in fields else None
-        if not fields and requested_owner is not None:
+        owner_supplied = kind_of(entity) == "exam" and "patient_id" in fields
+        requested_owner = fields.pop("patient_id") if owner_supplied else None
+        if not fields and owner_supplied:
             self.assign_patient(entity, requested_owner)
             return entity
         affected = subtree(entity)
@@ -418,7 +421,7 @@ class DatasetGraph:
             self._index_source(obj)
         if moved_parent and parent_field is not None and getattr(entity, parent_field) is not None:
             self.reference(kind, key_of(entity), parent_kind, getattr(entity, parent_field), relation="parent")
-        if kind == "exam" and requested_owner is not None:
+        if kind == "exam" and owner_supplied:
             self.assign_patient(entity, requested_owner)
         self.operation_counts["rekeyed"] += len(staged)
         return entity

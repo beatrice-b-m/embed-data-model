@@ -154,3 +154,15 @@ def test_reciprocal_link_survives_one_sided_clear():
     graph.set_linked_accessions(b, ["A"])
     graph.set_linked_accessions(a, [])
     assert b in a.linked_exams and a in b.linked_exams
+def test_explicit_owner_clear_detaches_and_foreign_assignment_is_rejected():
+    import pytest
+    from embed_toolkit import DatasetGraph, Patient, Exam
+    graph = DatasetGraph()
+    patient = graph.register(Patient("P"))
+    exam = patient.add_exam(Exam("A"))
+    graph.rekey(exam, patient_id=None)
+    assert exam.patient_id is None and patient.exams == ()
+    assert not graph.unresolved_references
+    with pytest.raises(ValueError, match="belong"):
+        DatasetGraph().assign_patient(exam, "Q")
+    assert exam.graph is graph and exam.patient_id is None
