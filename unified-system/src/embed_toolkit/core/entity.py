@@ -23,7 +23,7 @@ import copy
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, ClassVar, Dict, Iterable, Mapping, Optional, Protocol, Set, Tuple
+from typing import Any, ClassVar, Dict, Mapping, Optional, Protocol, Set, Tuple
 
 
 _MISSING = object()
