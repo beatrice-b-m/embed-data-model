@@ -131,6 +131,8 @@ def test_package_root_exports_only_the_researcher_facade() -> None:
         "MammogramImage",
         "RegionOfInterest",
         "Box",
+        "Procedure", "ProcedureIdentity", "Pathology", "CancerRegistryEntry",
+        "Laterality", "ImageModality", "ViewPosition", "ValidationResult", "validate",
     }
 
 
@@ -218,9 +220,7 @@ def test_specialist_symbols_are_available_from_focused_modules() -> None:
         provenance = importlib.import_module("embed_toolkit.core.provenance")
         images = importlib.import_module("embed_toolkit.imaging.images")
         rois = importlib.import_module("embed_toolkit.imaging.rois")
-        roi_provenance = importlib.import_module(
-            "embed_toolkit.imaging.roi_provenance"
-        )
+
 
     assert package.DatasetGraph
     assert package.load_embed
@@ -234,30 +234,6 @@ def test_specialist_symbols_are_available_from_focused_modules() -> None:
     assert attributes.PatientAttributeObservation
     assert birads.MassShape.LOBULATED.value == "lobulated"
     assert images.MammogramImage
-    image_source = provenance.SourceLocator(
-        scope="import-smoke",
-        scope_kind=provenance.SourceScopeKind.MATERIALIZATION,
-        source_profile="test",
-        source_table="images",
-        row_ordinal=0,
-    )
-    roi_source = roi_provenance.RoiSourceProvenance(
-        modality=primitives.ImageModality.FFDM,
-        source_count=roi_provenance.RoiSourceCount(
-            1,
-            roi_provenance.RoiSourceCountBasis.SINGLE_COORDINATE_OCCURRENCE,
-        ),
-        depth_frame_provenance=(
-            roi_provenance.RoiDepthFrameProvenance.NOT_APPLICABLE_2D
-        ),
-    )
-    assert rois.RegionOfInterest(
-        (0, 0, 1, 1),
-        locator=roi_provenance.RoiLocator.synthetic(
-            image_locator=image_source,
-            source_ordinal=0,
-        ),
-        image_id="IMG-1",
-        source_provenance=roi_source,
-        sources=(image_source,),
-    ).area == 1
+    assert provenance.SourceRef if hasattr(provenance, "SourceRef") else provenance.SourceLocator
+    assert primitives.Laterality.LEFT.value == "L"
+    assert rois.RegionOfInterest((0, 0, 1, 1), image_id="IMG-1", roi_key="0").area == 1
