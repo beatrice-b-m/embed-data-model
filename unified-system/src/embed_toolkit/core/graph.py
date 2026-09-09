@@ -720,6 +720,13 @@ class DatasetGraph:
                 deepcopy(selected[oid], memo)
             except Exception as exc:
                 raise ValueError("Consumer attributes cannot be independently copied; provide __deepcopy__") from exc
+        for oid in shared_descendants:
+            clone = memo[oid]
+            object.__setattr__(
+                clone,
+                "_detached_address",
+                (kind_of(selected[oid]), key_of(selected[oid])),
+            )
         for oid, obj in selected.items():
             if oid not in shared_descendants:
                 for child in tuple(children(obj)):

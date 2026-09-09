@@ -2,7 +2,16 @@
 
 import pytest
 
-from embed_toolkit import CancerRegistryEntry, DatasetGraph, Exam, MammogramImage, Patient
+from embed_toolkit import (
+    CancerRegistryEntry,
+    DatasetGraph,
+    Exam,
+    Laterality,
+    MammogramImage,
+    Patient,
+    Procedure,
+    ProcedureIdentity,
+)
 from embed_toolkit.clinical.attributes import (
     ExamAttributeName,
     ExamAttributeObservation,
@@ -269,4 +278,57 @@ def test_register_canonicalizes_internal_registry_targets_after_member_rekey() -
     assert exam.registry_references == {("P", "2")}
     assert exam.registry_entries == (entry,)
     assert destination.registry_entry("P", "2") is entry
+    assert not destination.unresolved_references
+
+
+def test_register_canonicalizes_rekeyed_shared_association_target() -> None:
+    source = DatasetGraph()
+    patient = source.register(Patient("P"))
+    first = patient.add_exam(Exam("A"))
+    second = patient.add_exam(Exam("B"))
+    old_identity = ProcedureIdentity("P", "2020-01-01", "biopsy", Laterality.LEFT)
+    procedure = Procedure(old_identity)
+    first.add_procedure(procedure)
+    second.add_procedure(procedure)
+    source.reference("exam", "A", "procedure", old_identity, relation="association")
+
+    detached = source.pop(first)
+    copied = detached.procedures[0]
+    new_identity = ProcedureIdentity("P", "2020-01-01", "excision", Laterality.LEFT)
+    copied.rekey(identity=new_identity)
+
+    destination = DatasetGraph()
+    destination.register(Patient("P"))
+    destination.register(detached)
+
+    assert procedure.identity == old_identity
+    assert destination.procedure(old_identity) is None
+    assert destination.procedure(new_identity) is copied
+    assert destination.exam("A").procedures == (copied,)
+    assert not destination.unresolved_references
+
+
+def test_register_canonicalizes_rekeyed_shared_registry_target() -> None:
+    source = DatasetGraph()
+    patient = source.register(Patient("P"))
+    first = patient.add_exam(Exam("A"))
+    second = patient.add_exam(Exam("B"))
+    entry = CancerRegistryEntry("P", "1")
+    first.add_registry_entry(entry)
+    second.add_registry_entry(entry)
+    source.set_registry_assignments(first, [entry.identity])
+
+    detached = source.pop(first)
+    copied = detached.registry_pathology[0]
+    copied.rekey(registry_id="2")
+
+    destination = DatasetGraph()
+    destination.register(Patient("P"))
+    destination.register(detached)
+
+    assert entry.identity == ("P", "1")
+    assert destination.registry_entry("P", "1") is None
+    assert destination.registry_entry("P", "2") is copied
+    assert detached.registry_references == {("P", "2")}
+    assert destination.exam("A").registry_entries == (copied,)
     assert not destination.unresolved_references
