@@ -2,7 +2,7 @@
 
 import pytest
 
-from embed_toolkit import DatasetGraph, Exam, MammogramImage
+from embed_toolkit import CancerRegistryEntry, DatasetGraph, Exam, MammogramImage
 
 
 def test_source_sop_collision_is_preflighted_for_update() -> None:
@@ -76,3 +76,49 @@ def test_self_link_rekey_moves_both_reference_endpoints() -> None:
     assert exam.linked_exams == (exam,)
     graph.set_linked_accessions(exam, [])
     assert not exam.linked_exams
+
+
+def test_pop_carries_incoming_link_until_source_is_registered() -> None:
+    source = DatasetGraph()
+    source_exam = source.register(Exam("A"))
+    moved_exam = source.register(Exam("B"))
+    source.set_linked_accessions(source_exam, ["B"])
+
+    destination = DatasetGraph()
+    destination.register(source.pop(moved_exam))
+
+    assert destination.unresolved_references
+    assert not destination.exam("B").linked_exams
+    destination.register(Exam("A"))
+    assert destination.exam("A").linked_exams == (moved_exam,)
+    assert moved_exam.linked_exams == (destination.exam("A"),)
+
+
+def test_pop_carries_incoming_registry_reference_until_source_is_registered() -> None:
+    source = DatasetGraph()
+    source_exam = source.register(Exam("A"))
+    entry = source.register(CancerRegistryEntry("P", "1"))
+    source.set_registry_assignments(source_exam, [("P", "1")])
+
+    destination = DatasetGraph()
+    destination.register(source.pop(entry))
+
+    assert destination.unresolved_references
+    destination.register(Exam("A"))
+    assert destination.exam("A").registry_entries == (entry,)
+
+
+def test_pop_incoming_link_targets_current_key_after_standalone_rekey() -> None:
+    source = DatasetGraph()
+    source_exam = source.register(Exam("A"))
+    moved_exam = source.register(Exam("B"))
+    source.set_linked_accessions(source_exam, ["B"])
+
+    moved_exam = source.pop(moved_exam)
+    moved_exam.rekey(accession_number="C")
+    destination = DatasetGraph()
+    destination.register(moved_exam)
+    destination.register(Exam("A"))
+
+    assert destination.exam("A").linked_exams == (moved_exam,)
+    assert moved_exam.linked_exams == (destination.exam("A"),)

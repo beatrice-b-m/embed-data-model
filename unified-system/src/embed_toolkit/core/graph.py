@@ -179,7 +179,18 @@ class DatasetGraph:
             self._resolve_member(obj)
             for target_kind, target_key, relation in getattr(obj, "_detached_references", ()):
                 self.reference(kind_of(obj), key_of(obj), target_kind, target_key, relation=relation)
+            detached_address = getattr(obj, "_detached_address", None)
+            current_address = kind_of(obj), key_of(obj)
+            for source_kind, source_key, target_kind, target_key, relation in getattr(
+                obj, "_detached_incoming_references", ()
+            ):
+                target = target_kind, target_key
+                if detached_address is not None and target == detached_address:
+                    target = current_address
+                self.reference(source_kind, source_key, *target, relation=relation)
             obj.__dict__.pop("_detached_references", None)
+            obj.__dict__.pop("_detached_incoming_references", None)
+            obj.__dict__.pop("_detached_address", None)
         return entity
 
     @staticmethod
@@ -545,6 +556,7 @@ class DatasetGraph:
                         obj._attach_local(clone)
                         self._parents[id(child)].discard(oid)
         moving = {oid: obj for oid, obj in selected.items() if oid not in shared_descendants}
+        moving_ids = set(moving)
         for oid, obj in moving.items():
             address = kind_of(obj), key_of(obj)
             carried = []
@@ -557,13 +569,23 @@ class DatasetGraph:
                     if endpoint is not None and relation == "linked":
                         endpoint._linked_exams.pop(address[1], None)
             object.__setattr__(obj, "_detached_references", carried)
-            for source in self._incoming.get(address, ()):
-                self._pending[address].add(source)
+            incoming_carried = []
+            for source in tuple(self._incoming.get(address, ())):
+                if source[2] not in {"association", "registry", "linked"}:
+                    continue
                 source_obj = self.get(source[0], source[1])
+                if source_obj is not None and id(source_obj) in moving_ids:
+                    continue
+                incoming_carried.append(
+                    (source[0], source[1], address[0], address[1], source[2])
+                )
+                self._pending[address].add(source)
                 if source_obj is not None and source[2] == "linked":
                     source_obj._linked_exams.pop(address[1], None)
                 elif source_obj is not None and source[2] == "registry":
                     source_obj._registry_entries.pop(address[1], None)
+            object.__setattr__(obj, "_detached_incoming_references", incoming_carried)
+            object.__setattr__(obj, "_detached_address", address)
             if kind_of(obj) == "exam":
                 obj._linked_exams.clear()
             for pid in tuple(self._parents[oid]):
