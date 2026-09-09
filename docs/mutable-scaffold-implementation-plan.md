@@ -1,9 +1,10 @@
 # Mutable EMBED scaffold: implementation plan
 
 Status: W0–W9 implemented and locally qualified on 2026-09-09.
-Qualifying runtime revision: `90bb604`; wheel version: `0.1.0`.
+Qualifying runtime revision after review fixes: `664b4e2`; wheel version: `0.1.0`.
 See [qualification evidence](mutable-scaffold-qualification.md) for results and limits.
-Reviewed: 2026-09-09 against `f55ecfe62a0e8de9ba2247299be65271e86228a2`.
+The [completed implementation review](mutable-scaffold-review.md) is resolved.
+Historical plan review: 2026-09-09 against `f55ecfe62a0e8de9ba2247299be65271e86228a2`.
 Authority: [mutable scaffold target contract](mutable-scaffold-contract.md).
 
 The target requires replacing the graph's contribution-replay architecture with

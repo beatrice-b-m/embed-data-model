@@ -1,7 +1,9 @@
 # Mutable scaffold qualification
 
-Qualified locally on 2026-09-09 against runtime revision `90bb604` and distribution
-`embed-toolkit-unified==0.1.0`. Subsequent commits update documentation only.
+Review fixes requalified locally on 2026-09-09 against runtime revision `664b4e2`
+and distribution `embed-toolkit-unified==0.1.0`. The initial `90bb604` qualification
+is retained below as historical evidence. Commits after `664b4e2` update
+documentation only.
 The [target contract](mutable-scaffold-contract.md), [API decisions](mutable-scaffold-api.md),
 and [implementation plan](mutable-scaffold-implementation-plan.md) define this cutover.
 
@@ -20,7 +22,52 @@ and [implementation plan](mutable-scaffold-implementation-plan.md) define this c
 | W8 | Multi-grain full/subset/batched/deferred loads, deterministic no-unrelated-registry-scan check, measured 1×/2×/4× growth. `test_graph_scale.py` and published benchmark results. |
 | W9 | Mutable public exports/docs, retired incompatible machinery with case-level test disposition, installed wheel outside checkout, complete-package Ruff/mypy, local execution of the declared Python matrix. |
 
-## Validation
+## Review-fix validation (`664b4e2`)
+
+All four findings in the [completed review](mutable-scaffold-review.md) are
+resolved. Fresh-context implementation agents and independent review were
+coordinated under the coordinate-implementation skill; the root reviewed and
+validated the integrated runtime before accepting it.
+
+| Python | Full suite, including installed wheel |
+|---|---:|
+| 3.9.6 | 239 passed |
+| 3.10.20 | 239 passed |
+| 3.11.14 | 239 passed |
+| 3.12.12 | 239 passed |
+| 3.13.11 | 239 passed |
+
+Each environment ran `python -m pytest -q` from `unified-system`; no suite was
+ignored. The installed-wheel journey now explicitly checks source-SOP collision
+rejection and subsequent reload, reverse-link rekey/clear, incoming-link movement,
+and standalone exam/image rekey followed by registration with preserved objects.
+The wheel is installed without dependencies into a fresh environment and exercised
+outside the checkout without `PYTHONPATH` on every supported Python minor version.
+
+Focused regressions additionally cover derivative-to-original collision checks,
+mixed updates, self-links, deferred registry references, explicit ownership,
+source-claim preservation, embedded context, unhashable subclasses, and rekeyed
+internal or copied shared descendants. Independent review checked collision
+failure state and foreign ownership; final root integration verified the shared
+copy boundary and all original findings. See `test_graph_review_regressions.py`
+and `test_standalone_rekey.py`.
+
+On Python 3.13, complete-package Ruff and mypy both passed with the existing
+commands below; mypy still covers all 35 runtime files. The deterministic graph
+scale checks pass as part of every full-suite run. A new three-repetition
+100/200/400-patient benchmark measured full-load medians of
+0.1796/0.3623/0.7265 seconds, or 2.02×/2.01× per doubling. Peak memory was
+3,406,817/6,610,118/13,188,366 bytes; fixed-patient updates stayed between
+15.51 and 15.73 microseconds. Cardinalities and the provisional scaling gate pass.
+The [benchmark record](../unified-system/benchmarks/README.md) contains the current
+measurements and methodology.
+
+These runs are local macOS qualification. No remote CI run, release, publication,
+private-data qualification, or consumer workflow port is claimed. The declared
+Python range, package version, and previously recorded private-data boundaries
+remain unchanged.
+
+## Initial validation (`90bb604`)
 
 The complete suite, including the installed-wheel acceptance test, passed on every
 supported minor version. No suite is ignored in these results.
@@ -60,7 +107,8 @@ The final synthetic benchmark used 100/200/400 patients, 600/1,200/2,400 rows,
 0.1696/0.3416/0.6889 seconds (2.01× and 2.02× per doubling), below the provisional
 3× gate. Peak memory grew roughly linearly; fixed-patient updates remained near
 16 microseconds as unrelated objects quadrupled. See [benchmark methodology and
-results](../unified-system/benchmarks/README.md).
+results](../unified-system/benchmarks/README.md) for the subsequent review-fix run;
+the numbers in this initial-validation section describe `90bb604`.
 
 ## Review resolution and qualification boundaries
 
