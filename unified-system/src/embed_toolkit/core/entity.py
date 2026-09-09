@@ -457,22 +457,15 @@ def _standalone_rekey(entity: MutableEntity, identifiers: Mapping[str, Any]) -> 
         if candidate_changes:
             for name, value in candidate_changes.items():
                 setattr(candidate, name, value)
+    related_by_id = {id(candidate): candidate for candidate in related}
     for marker in owner_explicit:
-        for candidate in related:
-            if id(candidate) == marker and _entity_role(candidate) == "exam":
-                object.__setattr__(candidate, "_owner_explicit", True)
-                break
+        object.__setattr__(related_by_id[marker], "_owner_explicit", True)
     for marker, values in semantic_rewrites.items():
-        for candidate in related:
-            if id(candidate) == marker:
-                for field, value in values.items():
-                    object.__setattr__(candidate, field, value)
-                break
+        candidate = related_by_id[marker]
+        for field, value in values.items():
+            object.__setattr__(candidate, field, value)
     for marker, references in detached_rewrites.items():
-        for candidate in related:
-            if id(candidate) == marker:
-                object.__setattr__(candidate, "_detached_references", references)
-                break
+        object.__setattr__(related_by_id[marker], "_detached_references", references)
 
 
 def _add_standalone_change(
