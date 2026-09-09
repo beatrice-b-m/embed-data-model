@@ -1,4 +1,11 @@
-"""Normalize supported table-like values without a pandas runtime dependency."""
+"""Normalize supported table-like values without semantic identity leakage.
+
+The table boundary deliberately keeps physical row information separate from
+domain identity.  A requested ``key`` is useful for optional diagnostics and
+source references, but it never decides whether a row is admitted.  In
+particular, DataFrame indexes and row ordinals are never used as fallback
+identity.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +34,7 @@ class TableIssue:
 
 @dataclass(frozen=True)
 class TableRecord:
-    """One normalized mapping and its stable (when available) source key."""
+    """One normalized mapping and an optional physical diagnostic key."""
 
     source_key: Optional[CanonicalKey]
     mapping: Mapping[Any, Any]
@@ -64,9 +71,9 @@ def iter_records(table: Any, key: KeySelector = None) -> Iterator[TableRecord]:
     """Yield normalized records from mappings or a pandas-like DataFrame.
 
     Requested-key failures are attached to their row and never silently fall
-    back to position. A DataFrame's unique, non-RangeIndex index is used by
-    default; an unusable automatic index falls back to positional addresses
-    with an explicit warning.
+    back to an index or position.  All rows are yielded so semantic loaders can
+    use their own identifiers even when a physical diagnostic key is missing,
+    duplicated, or malformed.
     """
 
     if table is None:
@@ -152,9 +159,8 @@ def _records_from_rows(
     candidates: list[Optional[CanonicalKey]] = []
     issues: list[list[TableIssue]] = [[] for _ in rows]
 
-    automatic_index = key is None and index_values is not None and not range_index
     for ordinal, row in enumerate(rows):
-        raw_key: Any
+        raw_key: Any = None
         if isinstance(key, str):
             if key not in row:
                 candidates.append(None)
@@ -163,6 +169,7 @@ def _records_from_rows(
                         "missing_source_key",
                         "requested source key column {!r} is absent".format(key),
                         ordinal,
+                        severity="warning",
                         key_name=key,
                     )
                 )
@@ -178,58 +185,32 @@ def _records_from_rows(
                         "source_key_callback_failed",
                         "source key callback failed: {}".format(exc),
                         ordinal,
+                        severity="warning",
                     )
                 )
                 continue
-        elif automatic_index:
-            assert index_values is not None
-            raw_key = index_values[ordinal]
         else:
-            raw_key = ordinal
+            # No physical source key was requested.  The DataFrame index and
+            # row ordinal remain deliberately unavailable to this record.
+            candidates.append(None)
+            continue
 
         try:
             candidates.append(canonicalize_source_key(raw_key))
         except (TypeError, ValueError) as exc:
-            if automatic_index:
-                candidates.append(canonicalize_source_key(ordinal))
-                issues[ordinal].append(
-                    TableIssue(
-                        "unusable_source_index",
-                        "automatic DataFrame index is unusable; using position: {}".format(
-                            exc
-                        ),
-                        ordinal,
-                        severity="warning",
-                        raw_key=raw_key,
-                    )
-                )
-            else:
-                candidates.append(None)
-                issues[ordinal].append(
-                    TableIssue(
-                        "unusable_source_key",
-                        "requested source key is unusable: {}".format(exc),
-                        ordinal,
-                        key_name=key if isinstance(key, str) else None,
-                        raw_key=raw_key,
-                    )
-                )
-
-    if automatic_index and index_unique is False:
-        assert index_values is not None
-        for ordinal in range(len(rows)):
-            candidates[ordinal] = canonicalize_source_key(ordinal)
+            candidates.append(None)
             issues[ordinal].append(
                 TableIssue(
-                    "duplicate_source_index",
-                    "DataFrame index is not unique; using positional source key",
+                    "unusable_source_key",
+                    "requested source key is unusable: {}".format(exc),
                     ordinal,
                     severity="warning",
-                    raw_key=index_values[ordinal],
+                    key_name=key if isinstance(key, str) else None,
+                    raw_key=raw_key,
                 )
             )
-    elif not automatic_index or index_unique is not True:
-        _invalidate_duplicate_requested_keys(candidates, issues, key)
+
+    _invalidate_duplicate_requested_keys(candidates, issues, key)
 
     for ordinal, row in enumerate(rows):
         yield TableRecord(candidates[ordinal], row, ordinal, tuple(issues[ordinal]))
@@ -254,6 +235,7 @@ def _invalidate_duplicate_requested_keys(
                     "duplicate_source_key",
                     "source key occurs more than once in this table",
                     ordinal,
+                    severity="warning",
                     key_name=key if isinstance(key, str) else None,
                     raw_key=candidate,
                 )
