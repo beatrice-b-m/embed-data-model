@@ -205,6 +205,8 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
     if len(value) == 4 and all(isinstance(item, Real) and not isinstance(item, bool) for item in value):
         value = [value]
     frames = _literal(_mapped(row, columns, "frame_indices"))
+    depth_derived = _mapped(row, columns, "depth_derived")
+    derived = not is_null_scalar(depth_derived) and str(depth_derived).strip().lower() in {"1", "1.0", "true", "yes"}
     confidence = _mapped(row, columns, "confidence")
     if not is_null_scalar(confidence):
         confidence = float(confidence)
@@ -215,7 +217,7 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
     for position, box in enumerate(value):
         if not isinstance(box, (list, tuple)) or len(box) != 4:
             raise ValueError("Each ROI needs exactly four numeric coordinates")
-        coords = tuple(float(part) for part in box)
+        coords = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
         indices: tuple[int, ...] = ()
         if frames is not None:
             if not isinstance(frames, (list, tuple)):
@@ -229,14 +231,15 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
         result.append(RegionOfInterest((coords[0], coords[1], coords[2] + 1, coords[3] + 1), image.image_id, str(position),
             source_path=source_path, collection_position=position, source_coordinates=coords,
             source_coordinate_convention="inclusive_maxima", source_frame_indices=indices,
-            frame_provenance="source_supplied" if indices else None,
+            frame_provenance="source_derived" if derived else "source_supplied" if indices else None,
+            frame_derivation_method="ROI_depth_derived" if derived else None,
             annotation_source=_identifier(_mapped(row, columns, "annotation_source")), confidence=confidence,
             coordinate_frame_id=_identifier(_mapped(row, columns, "coordinate_frame_id"))))
     return tuple(result)
 
 
 def _signature(collection: tuple[RegionOfInterest, ...]) -> Any:
-    return tuple((roi.coordinates, roi.source_frame_indices, roi.confidence, roi.annotation_source, roi.coordinate_frame_id) for roi in collection)
+    return tuple((roi.coordinates, roi.source_frame_indices, roi.frame_provenance, roi.frame_derivation_method, roi.confidence, roi.annotation_source, roi.coordinate_frame_id) for roi in collection)
 
 
 def _mapped(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], semantic: str) -> Any:

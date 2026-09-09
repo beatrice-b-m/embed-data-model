@@ -5,6 +5,17 @@ from embed_toolkit import DatasetGraph, MammogramImage, RegionOfInterest, load_e
 PATH = "/data/cohort1/P/study/series/SOP.dcm"
 
 
+def test_supplied_depth_flag_is_retained_without_inventing_frames():
+    graph = load_embed(images=[row(ROI_coords="[(1,2,10,20)]", ROI_depth_derived=True)]).graph
+    roi = graph.rois[0]
+    assert roi.frame_indices == ()
+    assert roi.frame_provenance == "source_derived"
+    assert roi.frame_derivation_method == "ROI_depth_derived"
+    load_embed(images=[row(ROI_coords="[(1,2,10,20)]", ROI_frames="[3,4]", ROI_depth_derived=1)], into=graph)
+    assert graph.rois[0].frame_indices == (3, 4)
+
+
+
 def row(**fields):
     return {"anon_dicom_path": PATH, "acc_anon": "A", "Rows": 100, "Columns": 100, **fields}
 
