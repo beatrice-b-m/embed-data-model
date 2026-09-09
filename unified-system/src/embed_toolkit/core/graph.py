@@ -109,6 +109,7 @@ class DatasetGraph:
 
     def _check(self, values: Iterable[Any]) -> None:
         proposed: Dict[Tuple[str, Any], Any] = {}
+        source_proposals = []
         for obj in values:
             address = kind_of(obj), key_of(obj)
             existing = self.get(*address)
@@ -117,11 +118,38 @@ class DatasetGraph:
             if address in proposed and proposed[address] is not obj:
                 raise ValueError("Subtree semantic key collision: {!r}".format(address))
             proposed[address] = obj
-            if address[0] == "image" and not getattr(obj, "derived_from", None):
-                uid = getattr(obj, "source_sop_instance_uid", None)
-                other = self._source_images.get(uid) if uid else None
-                if other is not None and other is not obj:
-                    raise ValueError("Source SOP collision: " + str(uid))
+            source_proposals.append((obj, obj))
+        self._check_source_collisions(source_proposals)
+
+    @staticmethod
+    def _is_original_image(obj: Any) -> bool:
+        return kind_of(obj) == "image" and getattr(obj, "derived_from", None) is None
+
+    def _check_source_collisions(self, proposals: Iterable[Tuple[Any, Any]]) -> None:
+        """Reject duplicate source SOP ownership before changing source indexes."""
+
+        proposed: Dict[str, Any] = {}
+        for obj, candidate in proposals:
+            if not self._is_original_image(candidate):
+                continue
+            uid = getattr(candidate, "source_sop_instance_uid", None)
+            if not uid:
+                continue
+            existing = self._source_images.get(uid)
+            if existing is not None and existing is not obj:
+                raise ValueError("Source SOP collision: " + str(uid))
+            previous = proposed.get(uid)
+            if previous is not None and previous is not obj:
+                raise ValueError("Source SOP collision: " + str(uid))
+            proposed[uid] = obj
+
+    @staticmethod
+    def _candidate_with_fields(obj: Any, fields: Dict[str, Any]) -> Any:
+        candidate = object.__new__(type(obj))
+        candidate.__dict__.update(obj.__dict__)
+        for field, value in fields.items():
+            object.__setattr__(candidate, field, value)
+        return candidate
 
     def register(self, entity: Any, *, boundary: str = "copy_shared") -> Any:
         self._boundary(boundary)
@@ -163,7 +191,7 @@ class DatasetGraph:
         kind = kind_of(obj)
         if kind == "image":
             uid = getattr(obj, "source_sop_instance_uid", None)
-            if uid and not getattr(obj, "derived_from", None):
+            if uid and self._is_original_image(obj):
                 self._source_images[uid] = obj
                 for path in getattr(obj, "source_paths", ()):
                     self._path_images[path] = obj
@@ -356,6 +384,9 @@ class DatasetGraph:
                      "image": {"image_id", "accession_number"}, "roi": {"image_id", "roi_key"}}
         if set(fields) & protected[kind_of(entity)]:
             return self.rekey(entity, **fields)
+        if kind_of(entity) == "image":
+            candidate = self._candidate_with_fields(entity, fields)
+            self._check_source_collisions(((entity, candidate),))
         self._unindex_source(entity)
         try:
             for field, value in fields.items():
@@ -388,18 +419,18 @@ class DatasetGraph:
                     if obj is not entity and getattr(obj, name, None) == getattr(entity, name):
                         proposals.setdefault(id(obj), {})[name] = fields[name]
         staged = []
+        source_proposals = []
         for oid, changes in proposals.items():
             obj = affected[oid]
-            clone = object.__new__(type(obj))
-            clone.__dict__.update(obj.__dict__)
-            for field, value in changes.items():
-                object.__setattr__(clone, field, value)
+            clone = self._candidate_with_fields(obj, changes)
             new = key_of(clone)
             previous = key_of(obj)
             collision = self.get(kind_of(obj), new)
             if collision is not None and collision is not obj:
                 raise ValueError("Semantic key collision: {!r}".format(new))
             staged.append((obj, previous, new, changes))
+            source_proposals.append((obj, clone))
+        self._check_source_collisions(source_proposals)
         parent_field = {"finding": "accession_number", "image": "accession_number", "roi": "image_id"}.get(kind)
         parent_kind = "image" if kind == "roi" else "exam"
         moved_parent = parent_field is not None and parent_field in fields
