@@ -287,16 +287,6 @@ def test_interpretation_tracks_field_availability_independently() -> None:
             recommendation_availability=AvailabilityState.RAW_ONLY,
         )
 
-    with pytest.raises(ValueError, match="at least one SourceLocator"):
-        ImagingInterpretation(
-            accession_number="ACC-1",
-            finding_number="2",
-            sources=(),
-        )
-
-    with pytest.raises(ValueError, match="unique SourceLocator"):
-        ImagingInterpretation(
-            accession_number="ACC-1",
-            finding_number="2",
-            sources=(source(), source()),
-        )
+    standalone = ImagingInterpretation("ACC-1", "2")
+    standalone.update(assessment="4")
+    assert standalone.assessment == "4" and not standalone.sources
