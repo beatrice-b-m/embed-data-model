@@ -1,51 +1,32 @@
 # WIP EMBED Toolkit
 
-The repository’s only active Python project intentionally lives under
-[`unified-system/`](unified-system/). Its `pyproject.toml`, lockfile, source,
-tests, examples, and benchmarks move together; repository-level `docs/` and CI
-remain outside the distributable project.
+A mutable clinical and mammography scaffold for partial EMBED tables. The active
+Python project lives in [`unified-system/`](unified-system/), with source, tests,
+examples, benchmarks, and its lockfile. Repository documentation and CI live here.
 
-The target architecture is recorded in
-[`docs/mutable-scaffold-contract.md`](docs/mutable-scaffold-contract.md).
-It reflects the maintainer review and is not yet implemented. The
-[earlier architecture recovery record](docs/lightweight-framework-architecture-review.md)
-describes the preceding design; installation and commands below apply to the
-current implementation.
-
-The [mutable scaffold implementation plan](docs/mutable-scaffold-implementation-plan.md)
-compares that target with the current code and defines the proposed decisions,
-work packages, dependencies, and acceptance checks for the cutover.
-
-## Install
-
-For development:
+The governing architecture is the [mutable scaffold contract](docs/mutable-scaffold-contract.md),
+with [settled API semantics](docs/mutable-scaffold-api.md). The
+[implementation plan](docs/mutable-scaffold-implementation-plan.md) records the
+cutover scope. Earlier architecture reviews describe historical implementations.
 
 ```bash
 cd unified-system
 uv sync --frozen
-```
-
-As a local wheel/project dependency:
-
-```bash
-python -m pip install ./unified-system
-```
-
-The installed distribution is `embed-toolkit-unified`; researchers import the
-small facade as `embed_toolkit`.
-
-## Verify
-
-```bash
-cd unified-system
 uv run --frozen pytest
 uv run --frozen ruff check src/embed_toolkit tests examples benchmarks
 uv run --frozen mypy
 ```
 
-The test suite builds a wheel, executes repo examples outside the source tree,
-and runs the representative graph scale/raw-retention regression. CI repeats
-the suite on Python 3.9 through 3.13.
+Install the project with `python -m pip install ./unified-system` from this root.
+The distribution is `embed-toolkit-unified`; import `embed_toolkit`. It has no
+runtime dependencies; DataFrames and plain row mappings are both supported.
 
-See [`unified-system/README.md`](unified-system/README.md) for the public API,
-incremental loading, issue inspection, manual ROI, and extension examples.
+See the [package guide](unified-system/README.md) for construction, refresh/merge,
+mutation, movement, ROI collections, optional validation, and independent partitions.
+The full test suite includes an installed-wheel journey outside the checkout and
+multi-grain scale regressions. CI is configured for Python 3.9–3.13 and full-package
+type checking. [Qualification evidence](docs/mutable-scaffold-qualification.md)
+distinguishes local verification from remote CI and private-data qualification.
+
+Matching and ROI-transfer consumers belong in separate repositories. Their later
+ports, package names, and publication are outside this scaffold implementation.
