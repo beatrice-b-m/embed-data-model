@@ -53,7 +53,7 @@ malignant/severity/raw_severity/report_documented_date and ordered descriptors;
 registry explicitly mapped payload fields. Source aliases and source identity,
 source patient claims, keys, children and assignment sets have separate rules.
 History snapshots replace each addressed patient's supplied history kind when no
-explicit event ID is bound; merge unions reported facts without claiming event identity.
+explicit event ID is bound; merge of unkeyed history collections requires explicit record IDs rather than guessing event equality.
 
 ## Pathology and reported facts (D8)
 
@@ -64,7 +64,9 @@ accession. A documentation date is not a diagnosis/event date. Ordered descripto
 slots belong inside the bundle; duplicate values and order are preserved.
 Absent discriminators produce accessible unresolved records with their payload
 and supported attachment, not row ordinals or payload-derived event IDs.
-Within an addressed attachment's refresh these unresolved snapshots replace prior
+Conflicting descriptor slots at a fallback key make the candidate bundles unresolved;
+an explicit key is needed to distinguish them. Narrow and wide rows use the same
+logical namespace. Within an addressed attachment's refresh these unresolved snapshots replace prior
 unresolved snapshots; no replay ledger accumulates. Explicit record keys are
 required to distinguish multiple reports at the same fallback grain.
 
