@@ -19,6 +19,13 @@ and `pop(entity, boundary="copy_shared")`. Detach leaves the child registered.
 Child collections are read-only sequences; convenience add methods delegate to
 the graph. Distinct objects at occupied keys raise ValueError before movement.
 
+Standalone parent rekeys update dependent identities and embedded context within
+the reachable containment subtree, preserving the same Python objects. Local
+collision checks cover that subtree; standalone objects do not have a global
+registry of unrelated parents or siblings. Patient rekey changes assigned exam
+ownership and patient-owned observation context, while preserving asserted source
+patient IDs, image patient claims, and procedure/registry source identities.
+
 The shared entity implementation exposes private `_children()` containment edges,
 `_attach_local(child)`, and `_detach_local(child)` for graph integration. Linked
 exams are associations, never containment. Traversal deduplicates object identity;
@@ -28,7 +35,10 @@ Pop retains exclusive Python objects. Descendants needed outside the selected
 subtree remain original there and are independently copied into the popped tree.
 Source UID/path and ROI-position changes use `update` so prior aliases are removed;
 location sets supplied by metadata reload deliberately union old and new paths.
-Crossing associations retain semantic references. Partition independently copies
+Crossing associations retain semantic references, including incoming links whose
+source stays in the original graph. Registering a detached tree remaps stored
+internal references to members rekeyed while detached; standalone rekey alone
+does not visit sibling sources outside its reachable subtree. Partition independently copies
 once per output, adds labeled ancestor context, and includes only selected branches.
 `select(level=..., predicate=...)` is explicitly a non-owning view. Copy failures
 raise an informative error; consumer `__deepcopy__` hooks are supported.
@@ -91,6 +101,9 @@ cohortN/patient/study/series/SOP.dcm. Explicit UID wins over disagreement and th
 conflicting path UID is not a SOP alias; the supplied path remains a location alias
 for the explicit UID. Derivatives require explicit toolkit IDs and
 `derived_from`; source reload follows the original even after toolkit rekey.
+An update or rekey that would give two original images the same source SOP raises
+ValueError before changing fields or source indexes. The check uses the proposed
+UID and derivation state together, including a derivative becoming an original.
 
 Image metadata automatically projects ROI collections. Missing/null ROI input
 preserves; explicit [] clears; malformed/conflicting input preserves with an issue.
