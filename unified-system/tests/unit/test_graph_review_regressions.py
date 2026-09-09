@@ -2,7 +2,7 @@
 
 import pytest
 
-from embed_toolkit import CancerRegistryEntry, DatasetGraph, Exam, MammogramImage
+from embed_toolkit import CancerRegistryEntry, DatasetGraph, Exam, MammogramImage, Patient
 
 
 def test_source_sop_collision_is_preflighted_for_update() -> None:
@@ -122,3 +122,18 @@ def test_pop_incoming_link_targets_current_key_after_standalone_rekey() -> None:
 
     assert destination.exam("A").linked_exams == (moved_exam,)
     assert moved_exam.linked_exams == (destination.exam("A"),)
+
+
+def test_pop_does_not_carry_internal_link_as_crossing_reference() -> None:
+    source = DatasetGraph()
+    patient = source.register(Patient("P"))
+    first = patient.add_exam(Exam("A"))
+    patient.add_exam(Exam("B"))
+    source.set_linked_accessions(first, ["B"])
+
+    destination = DatasetGraph()
+    destination.register(source.pop(patient))
+
+    assert not destination.unresolved_references
+    assert destination.exam("A").linked_exams == (destination.exam("B"),)
+    assert destination.exam("B").linked_exams == (destination.exam("A"),)

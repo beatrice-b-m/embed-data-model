@@ -556,7 +556,9 @@ class DatasetGraph:
                         obj._attach_local(clone)
                         self._parents[id(child)].discard(oid)
         moving = {oid: obj for oid, obj in selected.items() if oid not in shared_descendants}
-        moving_ids = set(moving)
+        moving_addresses = {
+            (kind_of(obj), key_of(obj)) for obj in moving.values()
+        }
         for oid, obj in moving.items():
             address = kind_of(obj), key_of(obj)
             carried = []
@@ -574,7 +576,7 @@ class DatasetGraph:
                 if source[2] not in {"association", "registry", "linked"}:
                     continue
                 source_obj = self.get(source[0], source[1])
-                if source_obj is not None and id(source_obj) in moving_ids:
+                if (source[0], source[1]) in moving_addresses:
                     continue
                 incoming_carried.append(
                     (source[0], source[1], address[0], address[1], source[2])
