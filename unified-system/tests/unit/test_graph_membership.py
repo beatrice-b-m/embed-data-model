@@ -110,3 +110,47 @@ def test_link_cycles_remain_references_across_movement():
     other.register(b)
     assert b in a.linked_exams and a in b.linked_exams
     other.to_dict()
+
+
+def test_rekey_exam_and_patient_updates_parent_keys_and_child_scope():
+    patient, exam, finding, image, roi = tree()
+    graph = DatasetGraph()
+    graph.register(patient)
+    graph.rekey(exam, accession_number="B")
+    assert graph.exam("A") is None and graph.exam("B") is exam
+    assert graph.finding("B", "1") is finding and graph.finding("A", "1") is None
+    assert image.accession_number == "B"
+    graph.rekey(patient, patient_id="Q")
+    assert exam.patient_id == "Q" and graph.patient("Q") is patient
+    assert patient.exams == (exam,)
+    assert not graph.unresolved_references
+
+
+def test_rekey_image_parent_replaces_old_exam_association():
+    graph = DatasetGraph()
+    a, b = graph.register(Exam("A")), graph.register(Exam("B"))
+    image = graph.register(MammogramImage("I", accession_number="A"))
+    graph.rekey(image, accession_number="B")
+    assert not a.images and b.images == (image,)
+
+
+def test_rekey_registry_and_roi_updates_dependent_references():
+    from embed_toolkit import CancerRegistryEntry
+    graph = DatasetGraph()
+    exam = graph.register(Exam("A"))
+    entry = graph.register(CancerRegistryEntry("P", "1"))
+    graph.set_registry_assignments(exam, [("P", "1")])
+    graph.rekey(entry, registry_id="2")
+    assert exam.registry_references == {("P", "2")}
+    assert exam.registry_pathology == (entry,)
+    graph.set_registry_assignments(exam, [])
+    assert not exam.registry_pathology and entry.graph is graph
+
+
+def test_reciprocal_link_survives_one_sided_clear():
+    graph = DatasetGraph()
+    a, b = graph.register(Exam("A")), graph.register(Exam("B"))
+    graph.set_linked_accessions(a, ["B"])
+    graph.set_linked_accessions(b, ["A"])
+    graph.set_linked_accessions(a, [])
+    assert b in a.linked_exams and a in b.linked_exams

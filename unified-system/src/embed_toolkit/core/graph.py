@@ -324,6 +324,9 @@ class DatasetGraph:
         object.__setattr__(exam, "linked_accessions", values)
         for accession in values:
             self.reference("exam", key_of(exam), "exam", accession, relation="linked")
+        for incoming in tuple(self._incoming.get(("exam", key_of(exam)), ())):
+            if incoming[2] == "linked":
+                self._resolve_reference(incoming, ("exam", key_of(exam)))
 
     def set_registry_assignments(self, exam: Any, keys: Iterable[Tuple[str, str]], *, merge: bool = False) -> None:
         values = set(keys)
@@ -385,12 +388,27 @@ class DatasetGraph:
             if collision is not None and collision is not obj:
                 raise ValueError("Semantic key collision: {!r}".format(new))
             staged.append((obj, previous, new, changes))
+        parent_field = {"finding": "accession_number", "image": "accession_number", "roi": "image_id"}.get(kind)
+        parent_kind = "image" if kind == "roi" else "exam"
+        moved_parent = parent_field is not None and parent_field in fields
+        if moved_parent:
+            for pid in tuple(self._parents[id(entity)]):
+                parent = self._objects[pid]
+                if kind_of(parent) == parent_kind:
+                    self._detach(parent, entity)
+            self.clear_references(kind, key_of(entity), "parent")
         for obj, previous, new, changes in staged:
             registry = self._registries[kind_of(obj)]
             registry.pop(previous)
             for field, value in changes.items():
                 object.__setattr__(obj, field, value)
             registry[new] = obj
+            if kind_of(obj) == "exam" and "accession_number" in changes:
+                for side in obj.breast_sides.values():
+                    object.__setattr__(side, "accession_number", obj.accession_number)
+            if kind_of(obj) == "image" and "image_id" in changes:
+                for landmark in obj.landmarks:
+                    object.__setattr__(landmark, "image_id", obj.image_id)
         for obj, previous, new, changes in staged:
             self._rewrite_references(kind_of(obj), previous, new)
             for pid in tuple(self._parents[id(obj)]):
@@ -398,6 +416,8 @@ class DatasetGraph:
                 parent._detach_local(obj)
                 parent._attach_local(obj)
             self._index_source(obj)
+        if moved_parent and parent_field is not None and getattr(entity, parent_field) is not None:
+            self.reference(kind, key_of(entity), parent_kind, getattr(entity, parent_field), relation="parent")
         if kind == "exam" and requested_owner is not None:
             self.assign_patient(entity, requested_owner)
         self.operation_counts["rekeyed"] += len(staged)
