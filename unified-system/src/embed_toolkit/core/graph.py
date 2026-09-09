@@ -172,6 +172,9 @@ class DatasetGraph:
                         if position is not None:
                             self._source_rois[path, position] = roi
         elif kind == "roi":
+            image = self.image(obj.image_id)
+            if image is not None and image.derived_from is not None:
+                return
             path = getattr(obj, "source_path", None)
             position = getattr(obj, "collection_position", None)
             if path is not None and position is not None:

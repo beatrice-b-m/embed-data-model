@@ -76,7 +76,11 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
 
     automatic: dict[str, list[tuple[Mapping[str, Any], MammogramImage]]] = defaultdict(list)
     explicit: dict[str, list[tuple[Mapping[str, Any], MammogramImage]]] = defaultdict(list)
-    for rows, target_groups, cmap in ((images, automatic, roi_columns), (rois or [], explicit, roi_columns)):
+    metadata_roi_columns = dict(roi_columns)
+    for field in ("image_id", "source_path"):
+        if image_columns.get(field) is not None:
+            metadata_roi_columns[field] = image_columns[field]
+    for rows, target_groups, cmap in ((images, automatic, metadata_roi_columns), (rois or [], explicit, roi_columns)):
         for row in rows:
             image = _roi_image(row, cmap, image_columns, graph, issues)
             if image is not None:

@@ -133,3 +133,14 @@ def test_unbound_image_fields_and_merge_null_fields_preserve_current_values():
     assert image.height == 123
     load_embed(images=[row(Rows=None)], mode="merge", into=graph)
     assert image.height == 123
+def test_derivative_metadata_roi_does_not_replace_original_collection_or_alias():
+    graph = load_embed(images=[row(ROI_coords="[(1,2,3,4)]")]).graph
+    source = graph.source_image("SOP")
+    original_roi = source.rois[0]
+    maps = {"images": {"image_id": "toolkit", "derived_from": "parent"}}
+    load_embed(images=[row(toolkit="derived", parent="SOP", ROI_coords="[(5,6,7,8)]")], into=graph, columns=maps)
+    derived = graph.image("derived")
+    assert derived.rois[0].coordinates == (5, 6, 8, 9)
+    assert source.rois == (original_roi,)
+    assert graph.source_image("SOP") is source
+    assert graph.roi_at_source(PATH, 0) is original_roi
