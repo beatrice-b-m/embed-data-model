@@ -347,6 +347,11 @@ class DatasetGraph:
             return self.rekey(entity, **fields)
         for field, value in fields.items():
             setattr(entity, field, value)
+        if "laterality" in fields:
+            for pid in tuple(self._parents[id(entity)]):
+                parent = self._objects[pid]
+                parent._detach_local(entity)
+                parent._attach_local(entity)
         self._index_source(entity)
         self.operation_counts["updated"] += 1
         return entity
