@@ -189,6 +189,38 @@ def test_standalone_self_link_rekeys_before_first_registration() -> None:
     assert not graph.unresolved_references
 
 
+def test_unhashable_subclasses_rekey_after_pop() -> None:
+    class UnhashableFinding(Finding):
+        __hash__ = None
+
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+    class UnhashableExam(Exam):
+        __hash__ = None
+
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+    source = DatasetGraph()
+    patient = source.register(Patient("P-1"))
+    exam = patient.add_exam(UnhashableExam("A-1"))
+    finding = exam.add_finding(UnhashableFinding("A-1", Laterality.LEFT, "1"))
+    source.set_linked_accessions(exam, ["A-1"])
+    detached = source.pop(exam)
+
+    finding.rekey(finding_number="2")
+    detached.rekey(accession_number="B-1")
+
+    destination = DatasetGraph()
+    destination.register(Patient("P-1"))
+    destination.register(detached)
+    assert destination.finding("B-1", "2") is finding
+    assert detached.linked_accessions == {"B-1"}
+    assert detached.linked_exams == (detached,)
+    assert not destination.unresolved_references
+
+
 def test_standalone_rekey_preflights_reachable_semantic_collisions() -> None:
     patient = Patient("P-1")
     exam = patient.add_exam(Exam("A-1"))

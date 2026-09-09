@@ -462,11 +462,17 @@ def _standalone_rekey(entity: MutableEntity, identifiers: Mapping[str, Any]) -> 
             if id(candidate) == marker and _entity_role(candidate) == "exam":
                 object.__setattr__(candidate, "_owner_explicit", True)
                 break
-    for candidate, values in semantic_rewrites.items():
-        for field, value in values.items():
-            object.__setattr__(candidate, field, value)
-    for candidate, references in detached_rewrites.items():
-        object.__setattr__(candidate, "_detached_references", references)
+    for marker, values in semantic_rewrites.items():
+        for candidate in related:
+            if id(candidate) == marker:
+                for field, value in values.items():
+                    object.__setattr__(candidate, field, value)
+                break
+    for marker, references in detached_rewrites.items():
+        for candidate in related:
+            if id(candidate) == marker:
+                object.__setattr__(candidate, "_detached_references", references)
+                break
 
 
 def _add_standalone_change(
@@ -539,10 +545,10 @@ def _standalone_identity_renames(
 def _detached_reference_rewrites(
     members: Tuple[MutableEntity, ...],
     renames: Mapping[Tuple[str, Any], Tuple[str, Any]],
-) -> Dict[MutableEntity, Tuple[Tuple[str, Any, str], ...]]:
+) -> Dict[int, Tuple[Tuple[str, Any, str], ...]]:
     """Rewrite carried target identities for keys changed in this subtree."""
 
-    rewritten: Dict[MutableEntity, Tuple[Tuple[str, Any, str], ...]] = {}
+    rewritten: Dict[int, Tuple[Tuple[str, Any, str], ...]] = {}
     if not renames:
         return rewritten
     for member in members:
@@ -556,17 +562,17 @@ def _detached_reference_rewrites(
                 values.append((target_kind, target_key, relation))
             else:
                 values.append((target[0], target[1], relation))
-        rewritten[member] = tuple(values)
+        rewritten[id(member)] = tuple(values)
     return rewritten
 
 
 def _standalone_semantic_rewrites(
     members: Tuple[MutableEntity, ...],
     renames: Mapping[Tuple[str, Any], Tuple[str, Any]],
-) -> Dict[MutableEntity, Dict[str, Any]]:
+) -> Dict[int, Dict[str, Any]]:
     """Rewrite semantic collections whose endpoints changed locally."""
 
-    rewritten: Dict[MutableEntity, Dict[str, Any]] = {}
+    rewritten: Dict[int, Dict[str, Any]] = {}
     for member in members:
         if _entity_role(member) != "exam":
             continue
@@ -579,7 +585,7 @@ def _standalone_semantic_rewrites(
                     values.discard(old)
                     values.add(new)
             if values != set(linked):
-                rewritten.setdefault(member, {})["_linked_accessions"] = values
+                rewritten.setdefault(id(member), {})["_linked_accessions"] = values
         if registry is not None:
             values = set(registry)
             for (kind, old), (_, new) in renames.items():
@@ -587,7 +593,7 @@ def _standalone_semantic_rewrites(
                     values.discard(old)
                     values.add(new)
             if values != set(registry):
-                rewritten.setdefault(member, {})["_registry_references"] = values
+                rewritten.setdefault(id(member), {})["_registry_references"] = values
         resolved_links = getattr(member, "_linked_exams", None)
         if resolved_links:
             resolved_values = {}
@@ -597,7 +603,7 @@ def _standalone_semantic_rewrites(
                     replacement[1] if replacement is not None else old
                 ] = target
             if resolved_values != resolved_links:
-                rewritten.setdefault(member, {})["_linked_exams"] = resolved_values
+                rewritten.setdefault(id(member), {})["_linked_exams"] = resolved_values
     return rewritten
 
 
