@@ -1,6 +1,6 @@
 # Mutable scaffold loading measurements
 
-Measured 2026-09-09 against `90bb604` (wheel version `0.1.0`).
+Measured 2026-09-09 against `664b4e2` after review fixes (wheel version `0.1.0`).
 Python 3.13.11, macOS-26.5.1-arm64-arm-64bit-Mach-O.
 
 ```bash
@@ -16,15 +16,15 @@ each reciprocal linked-exam pair once. The last exam has no linked successor.
 
 | Patients | Rows | Objects | Edges | Full load (s) | Peak bytes | Retained bytes |
 |---:|---:|---:|---:|---:|---:|---:|
-| 100 | 600 | 1200 | 1399 | 0.1696 | 3,406,849 | 2,803,382 |
-| 200 | 1200 | 2400 | 2799 | 0.3416 | 6,610,054 | 5,411,034 |
-| 400 | 2400 | 4800 | 5599 | 0.6889 | 13,188,302 | 10,602,370 |
+| 100 | 600 | 1200 | 1399 | 0.1796 | 3,406,817 | 2,803,382 |
+| 200 | 1200 | 2400 | 2799 | 0.3623 | 6,610,118 | 5,411,090 |
+| 400 | 2400 | 4800 | 5599 | 0.7265 | 13,188,366 | 10,602,426 |
 
 | Patients | Fixed-patient update (µs) | One-patient subset (ms) | Batched load (s) | Late registry resolution (ms) |
 |---:|---:|---:|---:|---:|
-| 100 | 16.00 | 0.434 | 0.0297 | 0.764 |
-| 200 | 15.81 | 0.442 | 0.0598 | 1.620 |
-| 400 | 15.79 | 0.470 | 0.1190 | 3.138 |
+| 100 | 15.65 | 0.451 | 0.0317 | 0.900 |
+| 200 | 15.73 | 0.469 | 0.0629 | 1.907 |
+| 400 | 15.51 | 0.494 | 0.1277 | 3.724 |
 
 All values are medians of three repetitions. Full loads use `tracemalloc`; input
 fixture construction is excluded from both time and memory. Retained memory is
@@ -34,7 +34,7 @@ to the traced full-load column. Fixed updates average 50 same-patient refreshes 
 repetition; subset setup uses prebuilt slices. Deferred resolution excludes graph
 construction and times only the later registry input.
 
-Full-load doubling ratios were 2.01× and 2.02×, below the provisional 3× gate.
+Full-load doubling ratios were 2.02× and 2.01×, below the provisional 3× gate.
 Peak and retained object memory grew roughly linearly. Fixed-patient update time
 stayed near 16 µs as unrelated data quadrupled. These measurements support the
 deterministic regression that prohibits iteration of unrelated registry dictionaries
