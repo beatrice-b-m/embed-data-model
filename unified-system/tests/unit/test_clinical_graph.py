@@ -7,7 +7,6 @@ import pytest
 from embed_toolkit.clinical.exams import Exam
 from embed_toolkit.clinical.findings import Finding
 from embed_toolkit.core.primitives import Laterality, ViewPosition
-from embed_toolkit.core.provenance import SourceLocator, SourceScopeKind
 from embed_toolkit.imaging.images import MammogramImage
 
 
@@ -21,15 +20,6 @@ def image(
         image_id=image_id,
         laterality=laterality,
         view_position=ViewPosition.CC,
-        sources=[
-            SourceLocator(
-                scope="clinical-graph-tests",
-                scope_kind=SourceScopeKind.MATERIALIZATION,
-                source_profile="test",
-                source_table="images",
-                source_key=image_id,
-            )
-        ],
         accession_number=accession,
         patient_id="P-1",
     )
@@ -51,8 +41,8 @@ def test_bilateral_finding_projects_to_both_unilateral_children() -> None:
     finding = exam.add_finding(Finding("ACC-1", Laterality.BILATERAL, "1"))
 
     assert set(exam.breast_sides) == {Laterality.LEFT, Laterality.RIGHT}
-    assert exam.breast_sides[Laterality.LEFT].findings == [finding]
-    assert exam.breast_sides[Laterality.RIGHT].findings == [finding]
+    assert exam.breast_sides[Laterality.LEFT].findings == (finding,)
+    assert exam.breast_sides[Laterality.RIGHT].findings == (finding,)
     assert all(
         side.laterality.is_unilateral for side in exam.breast_sides.values()
     )
@@ -66,10 +56,10 @@ def test_image_can_create_side_without_finding_and_unknown_stays_exam_only() -> 
     exam.add_image(right)
     exam.add_image(unknown)
 
-    assert exam.images == [right, unknown]
+    assert exam.images == (right, unknown)
     assert set(exam.breast_sides) == {Laterality.RIGHT}
-    assert exam.breast_sides[Laterality.RIGHT].findings == []
-    assert exam.breast_sides[Laterality.RIGHT].images == [right]
+    assert exam.breast_sides[Laterality.RIGHT].findings == ()
+    assert exam.breast_sides[Laterality.RIGHT].images == (right,)
     assert all(unknown not in side.images for side in exam.breast_sides.values())
 
 
@@ -80,9 +70,10 @@ def test_exam_image_containment_validates_accession_and_deduplicates_identity() 
 
     assert exam.add_image(first) is first
     assert exam.add_image(first) is first
-    assert exam.add_image(duplicate) is first
-    assert exam.images == [first]
-    assert exam.breast_sides[Laterality.LEFT].images == [first]
+    with pytest.raises(ValueError, match="Distinct"):
+        exam.add_image(duplicate)
+    assert exam.images == (first,)
+    assert exam.breast_sides[Laterality.LEFT].images == (first,)
 
     with pytest.raises(ValueError, match="accession_number must match Exam"):
         exam.add_image(image("other", Laterality.LEFT, accession="ACC-2"))
