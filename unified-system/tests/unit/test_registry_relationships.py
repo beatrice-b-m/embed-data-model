@@ -64,7 +64,7 @@ def test_registry_arrival_orders(order):
             assert graph.exam("A").registry_references == {("P", "7")}
         else:
             load(graph, registry=[{"empi_anon": "P", "cancer_registry_id": "7"}])
-    assert tuple(graph.exam("A").registry_entries.values()) == (
+    assert graph.exam("A").registry_pathology == (
         graph.registry_entry("P", "7"),
     )
 
@@ -86,7 +86,7 @@ def test_registry_patient_scope_sharing_and_source_disagreement():
     assert graph.exam("A").patient_id is None
     assert graph.exam("A").asserted_patient_ids == {"P", "Q"}
     assert len(graph.exam("A").registry_entries) == 2
-    assert tuple(graph.exam("B").registry_entries.values()) == (
+    assert graph.exam("B").registry_pathology == (
         graph.registry_entry("P", "7"),
     )
 
@@ -261,7 +261,7 @@ def test_confirmed_reference_resolves_when_both_endpoints_were_missing():
     load(graph, registry=[{"empi_anon": "P", "cancer_registry_id": "7"}])
     assert graph.unresolved_references
     graph.register(Exam("A"))
-    assert tuple(graph.exam("A").registry_entries.values()) == (
+    assert graph.exam("A").registry_pathology == (
         graph.registry_entry("P", "7"),
     )
     assert not graph.unresolved_references
