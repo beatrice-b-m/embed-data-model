@@ -45,6 +45,21 @@ class RegionOfInterest(MutableEntity):
     are optional lookup aliases and do not participate in identity.
     """
 
+    coordinates: CoordinateBox
+    image_id: str
+    roi_key: str
+    source_path: Optional[str]
+    collection_position: Optional[int]
+    annotation_source: Optional[str]
+    confidence: Optional[float]
+    coordinate_frame_id: Optional[str]
+    source_coordinates: Optional[CoordinateBox]
+    source_coordinate_convention: Optional[str]
+    source_frame_indices: Tuple[int, ...]
+    frame_provenance: Optional[str]
+    frame_derivation_method: Optional[str]
+    metadata: Dict[str, Any]
+
     __key_fields__ = ("image_id", "roi_key")
 
     def __init__(
@@ -122,10 +137,10 @@ class RegionOfInterest(MutableEntity):
     def _detach_local(self, child: MutableEntity) -> MutableEntity:
         raise TypeError("RegionOfInterest does not contain domain children")
 
-    def update(self, **fields: object) -> "RegionOfInterest":
+    def update(self, **fields: Any) -> "RegionOfInterest":
         """Update this ROI while preserving graph delegation."""
 
-        prepared: Dict[str, object] = dict(fields)
+        prepared: Dict[str, Any] = dict(fields)
         if "coordinates" in prepared:
             prepared["coordinates"] = _numeric_box(prepared["coordinates"])
         if "source_coordinates" in prepared and prepared["source_coordinates"] is not None:
@@ -136,14 +151,14 @@ class RegionOfInterest(MutableEntity):
             prepared["source_frame_indices"] = tuple(prepared["source_frame_indices"])
         if "confidence" in prepared and prepared["confidence"] is not None:
             prepared["confidence"] = float(prepared["confidence"])
-        result = super().update(**prepared)
-        return self if result is None else result
+        super().update(**prepared)
+        return self
 
     @classmethod
     def from_embed_coordinates(
         cls,
         coordinates: CoordinateBox,
-        **metadata: object,
+        **metadata: Any,
     ) -> "RegionOfInterest":
         """Convert EMBED inclusive maxima to canonical exclusive stops."""
 
