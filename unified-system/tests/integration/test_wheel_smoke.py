@@ -77,6 +77,51 @@ other = DatasetGraph()
 other.register(graph.pop(exam))
 assert other.exam("A-1") is exam and graph.exam("A-1") is None
 assert image.graph is other and roi.graph is other
+
+# Review regressions must also work in the installed distribution.
+identities = DatasetGraph()
+first = identities.register(MammogramImage("I", source_sop_instance_uid="S1"))
+second = identities.register(MammogramImage("J", source_sop_instance_uid="S2"))
+try:
+    first.update(source_sop_instance_uid="S2")
+except ValueError:
+    pass
+else:
+    raise AssertionError("Source SOP collisions must be rejected before mutation")
+load_embed(images=[{"uid": "S2", "height": 123}], into=identities,
+           columns={"images": {"source_sop_instance_uid": "uid", "height": "height"}})
+assert first.source_sop_instance_uid == "S1" and first.height is None
+assert identities.source_image("S2") is second and second.height == 123
+
+links = DatasetGraph()
+a, b = links.register(Exam("A")), links.register(Exam("B"))
+links.set_linked_accessions(a, ["B"])
+a.rekey(accession_number="C")
+assert b.linked_exams == (a,)
+links.set_linked_accessions(a, [])
+assert not b.linked_exams
+links.set_linked_accessions(a, ["B"])
+destination = DatasetGraph()
+destination.register(b)
+assert destination.unresolved_references and not b.linked_exams
+c = destination.register(Exam("C"))
+assert c.linked_exams == (b,) and b.linked_exams == (c,)
+
+standalone = ResearchPatient("standalone")
+standalone.research = {"labels": ["preserved"]}
+local_exam = standalone.add_exam(Exam("old"))
+local_finding = local_exam.add_finding(Finding("old", Laterality.LEFT, "1"))
+local_image = local_exam.add_image(MammogramImage("original", accession_number="old"))
+local_roi = local_image.add_roi(RegionOfInterest((0, 0, 10, 10), "original", "0"))
+local_exam.rekey(accession_number="new")
+local_image.update(image_id="renamed")
+assert all(obj.graph is None for obj in (standalone, local_exam, local_finding, local_image, local_roi))
+registered = DatasetGraph()
+registered.register(standalone)
+assert registered.finding("new", "1") is local_finding
+assert registered.roi("renamed", "0") is local_roi
+assert not registered.unresolved_references
+assert standalone.research == {"labels": ["preserved"]}
 assert "site-packages" in Path(__import__("embed_toolkit").__file__).as_posix()
 """
     clean_environment = os.environ.copy()
