@@ -64,7 +64,10 @@ commit, selective staging, and verification that the commit was recorded. Includ
 the behavior being changed and the reason in the commit body. Keep public docs
 and runnable examples consistent with code changes.
 
+The code is distributed under the [MIT license](LICENSE). This code license does
+not grant access to EMBED data or replace the dataset's access conditions.
+
 Repository restructuring does not rename the remote repository or publish a
-release. Distribution requires a separate maintainer decision about licensing,
-the destination, and release credentials. Installation instructions must continue
+release. Publication requires a separate maintainer decision about the
+destination and release credentials. Installation instructions must continue
 to distinguish available source installation from any future package-index release.
