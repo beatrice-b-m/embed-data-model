@@ -1,106 +1,51 @@
-# Downstream migration guide
+# Downstream integration guide
 
-This guide is for a person or coding agent moving a consumer from the former
-WIP project layout to EMBED Data Model. The package keeps version `0.1.0` and
-the clinical and imaging behavior is intended to stay the same. The package
-identity and repository layout change, so consumers should make the import and
-installation updates together.
+Use this guide to integrate EMBED Data Model into a research application.
+The distribution is `embed-data-model`, the Python namespace is `embed_data_model`,
+and the Python project lives at the repository root.
 
-## Package identity
+## Install and pin the dependency
 
-| Before | After |
-| --- | --- |
-| Project directory `unified-system/` | Repository root |
-| Distribution `embed-toolkit-unified` | Distribution `embed-data-model` |
-| Python namespace `embed_toolkit` | Python namespace `embed_data_model` |
-| Version `0.1.0` | Version `0.1.0` |
-
-The old `embed_toolkit` name is not retained as a compatibility alias. It is a
-separate package name used by an existing `embed-toolkit` library. A consumer
-that needs both libraries should import each namespace explicitly and pin each
-dependency independently.
-
-## Install the source revision
-
-During 0.x development, install the checkout or a pinned Git revision. There is
-no package-index release implied by this migration:
+For local development, install an editable checkout:
 
 ```bash
-# Local development
 python -m pip install -e /path/to/embed-data-model
+```
 
-# Reproducible source dependency; replace the placeholder with a qualified SHA
+For a reproducible source dependency, use the release tag or a qualified commit SHA:
+
+```bash
 python -m pip install \
-  "git+https://github.com/beatrice-b-m/embed-data-model.git@<commit-sha>"
+  "git+https://github.com/beatrice-b-m/embed-data-model.git@v0.1.0"
 ```
 
-If the consumer uses `uv`, add the repository URL and exact revision to its
-dependency configuration, then lock it. Keep the source revision in the
-consumer's lockfile so a later namespace or behavior change cannot arrive by
-accident. Do not use `pip install embed-data-model` as evidence that a public
-release exists.
+If the consumer uses `uv`, configure the repository URL and exact revision as its
+source dependency, then lock it. Record the resolved commit and package version in
+the consumer's environment specification and qualification notes.
 
-## Update imports
+## Choose public imports
 
-Replace the package prefix everywhere in application code, tests, examples,
-type-checking configuration, and notebooks:
+The root facade is the preferred import boundary for common types:
+`DatasetGraph`, `Patient`, `Exam`, `Finding`, `Procedure`, `ProcedureIdentity`,
+`Pathology`, `CancerRegistryEntry`, `MammogramImage`, `RegionOfInterest`, `Box`,
+`Laterality`, `ImageModality`, `ViewPosition`, `load_embed`, `validate`,
+`ValidationResult`, `Issue`, `SourceRef`, and `LoadReport`.
 
-```text
-from embed_toolkit import DatasetGraph, load_embed
-from embed_toolkit.clinical.findings import Finding
-from embed_toolkit.sources.embed.columns import DEFAULT_COLUMNS
-from embed_toolkit.core.validation import validate
-```
+Use specialist modules for mappings and types outside the root exports:
 
-becomes:
-
-```text
-from embed_data_model import DatasetGraph, load_embed
+```python
+from embed_data_model import DatasetGraph, load_embed, validate
 from embed_data_model.clinical.findings import Finding
 from embed_data_model.sources.embed.columns import DEFAULT_COLUMNS
-from embed_data_model.core.validation import validate
+
+assert DEFAULT_COLUMNS["patients"]["patient_id"] == "empi_anon"
 ```
 
-The root facade is the preferred import boundary for the common types:
-`DatasetGraph`, `Patient`, `Exam`, `Finding`, `Procedure`,
-`ProcedureIdentity`, `Pathology`, `CancerRegistryEntry`, `MammogramImage`,
-`RegionOfInterest`, `Box`, `Laterality`, `ImageModality`, `ViewPosition`,
-`load_embed`, `validate`, `ValidationResult`, `Issue`, `SourceRef`, and
-`LoadReport`. Use specialist modules for source mappings and types that are not
-exported from the root. Do not add an import fallback such as
-`try: import embed_data_model except ImportError: import embed_toolkit`; that
-would silently select the other package and make a deployment ambiguous.
+Use the same imports in application code, tests, examples, and notebooks. The
+package has no mandatory runtime dependencies; install pandas in the consumer's
+environment if its own workflow uses DataFrames.
 
-An agent doing the cutover can search the consumer with:
-
-```bash
-rg -n "embed_toolkit|embed-toolkit-unified|unified-system" .
-```
-
-Review each match. Historical notes about the former package can stay in an
-archive, but runtime imports, project paths, package metadata, and test setup
-must use the new namespace and root layout. The package reports
-`embed_data_model.__version__ == "0.1.0"`.
-
-## Update installation paths
-
-Commands that used to run from `unified-system/` now run from the repository
-root:
-
-```bash
-uv sync --frozen
-uv run --frozen pytest
-uv run --frozen ruff check src/embed_data_model tests examples benchmarks
-uv run --frozen mypy
-```
-
-The source tree is `src/embed_data_model`. Update package discovery, mypy file
-lists, Ruff paths, wheel smoke tests, and any consumer `PYTHONPATH` references
-at the same time. The distribution has no mandatory runtime dependencies;
-pandas is a development/test dependency and is not required for object-only
-use.
-
-## Recheck table and DataFrame mappings
+## Configure table and DataFrame mappings
 
 `load_embed` accepts mappings, iterables of mappings, one-shot generators, and
 pandas-like DataFrames. The semantic identity is independent of the physical
@@ -175,9 +120,8 @@ ownership with `graph.assign_patient(...)`. `validate(...)` is an explicit
 read-only quality report; loading representable but implausible facts is not an
 automatic rejection policy.
 
-Do not reintroduce a consumer workflow into the root facade merely to preserve
-an old import. Put the workflow in the repository that owns its inputs and
-analysis policy, and store the package revision used by that workflow.
+Keep each workflow in the repository that owns its inputs and analysis policy,
+and store the package revision used by that workflow.
 
 ## Avoid refresh and merge traps
 
@@ -249,9 +193,8 @@ Collections have their own replacement rules:
 
 ## Confirm expected graph results
 
-Use a synthetic repeated-row fixture before and after the cutover. It checks
-that namespace migration did not turn source-row multiplicity into object
-multiplicity:
+Use a synthetic repeated-row fixture to check that source-row multiplicity
+does not become object multiplicity:
 
 ```python
 from embed_data_model import load_embed
@@ -300,13 +243,13 @@ the same cardinalities and the same canonical object identities. An incomplete
 procedure or ambiguous pathology key should remain visible in
 `graph.unresolved_records` instead of being promoted using a row ordinal.
 
-## Agent handoff checklist
+## Integration checklist
 
-After changing a consumer:
+Before accepting a consumer integration:
 
-1. Update all runtime and test imports to `embed_data_model`.
-2. Move install, type-check, lint, and test paths from `unified-system/` to the
-   repository root.
+1. Use `embed_data_model` for runtime and test imports.
+2. Run package development commands from the repository root, as documented in
+   [CONTRIBUTING.md](../CONTRIBUTING.md).
 3. Compare custom `columns` maps with `DEFAULT_COLUMNS`; verify semantic and
    physical directions.
 4. Test one complete refresh snapshot and one explicit merge. Include absent,
@@ -318,6 +261,6 @@ After changing a consumer:
    package version in the consumer's qualification notes.
 
 Run the package's [researcher journey](../examples/researcher_journeys.py) and
-the full root checks before accepting the port. Synthetic library tests verify
+the full root checks before accepting the integration. Synthetic library tests verify
 object behavior; they do not qualify private EMBED data, real pixels, or the
 consumer's scientific conclusions.

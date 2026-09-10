@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.mark.parametrize(
     "document",
-    ["README.md", "docs/user-guide.md", "docs/downstream-migration.md"],
+    ["README.md", "docs/user-guide.md", "docs/downstream-integration.md"],
 )
 def test_researcher_documentation_examples(document: str) -> None:
     path = PROJECT_ROOT / document
