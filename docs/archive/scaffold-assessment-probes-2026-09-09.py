@@ -1,8 +1,9 @@
 """Synthetic review diagnostics for revision 15fd8b7; no private data.
 
-Run from unified-system:
+Original invocation at the reviewed revision, run from unified-system; this is
+not a current-package example:
     .venv/bin/python -c 'import runpy; runpy.run_path(
-        "../docs/archive/scaffold-assessment-probes-2026-09-09.py", run_name="__main__")'
+        "../docs/scaffold-assessment-probes-2026-09-09.py", run_name="__main__")'
 
 Print observed behavior rather than asserting bugs as desired behavior. This is
 an assessment artifact, not the package regression suite. Performance figures
