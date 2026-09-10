@@ -16,8 +16,8 @@ The first source release is tagged `v0.1.0`. From a clone, install the
 development environment at the repository root:
 
 ```bash
-git clone ssh://git@github.com/beatrice-b-m/wip-embed-toolkit.git
-cd wip-embed-toolkit
+git clone https://github.com/beatrice-b-m/embed-data-model.git
+cd embed-data-model
 git checkout v0.1.0
 uv sync --frozen
 uv run --frozen python -m examples.researcher_journeys
@@ -26,14 +26,14 @@ uv run --frozen python -m examples.researcher_journeys
 For a local consumer that needs an editable install, use:
 
 ```bash
-python -m pip install -e /path/to/wip-embed-toolkit
+python -m pip install -e /path/to/embed-data-model
 ```
 
 To install the tagged source release into a downstream environment:
 
 ```bash
 python -m pip install \
-  "git+ssh://git@github.com/beatrice-b-m/wip-embed-toolkit.git@v0.1.0"
+  "git+https://github.com/beatrice-b-m/embed-data-model.git@v0.1.0"
 ```
 
 For a reproducible source install from another revision, pin the exact commit
@@ -41,7 +41,7 @@ you qualified:
 
 ```bash
 python -m pip install \
-  "git+ssh://git@github.com/beatrice-b-m/wip-embed-toolkit.git@<commit-sha>"
+  "git+https://github.com/beatrice-b-m/embed-data-model.git@<commit-sha>"
 ```
 
 The placeholder is intentional: a downstream lockfile should name the actual

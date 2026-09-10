@@ -27,11 +27,11 @@ no package-index release implied by this migration:
 
 ```bash
 # Local development
-python -m pip install -e /path/to/wip-embed-toolkit
+python -m pip install -e /path/to/embed-data-model
 
 # Reproducible source dependency; replace the placeholder with a qualified SHA
 python -m pip install \
-  "git+ssh://git@github.com/beatrice-b-m/wip-embed-toolkit.git@<commit-sha>"
+  "git+https://github.com/beatrice-b-m/embed-data-model.git@<commit-sha>"
 ```
 
 If the consumer uses `uv`, add the repository URL and exact revision to its
