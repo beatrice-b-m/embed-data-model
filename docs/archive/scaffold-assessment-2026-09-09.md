@@ -3,7 +3,7 @@
 Reviewed revision: `15fd8b7` (clean working tree at review start).
 
 Subsequent maintainer decisions are recorded in the
-[mutable scaffold contract](mutable-scaffold-contract.md). They supersede this
+[mutable scaffold contract](../mutable-scaffold-contract.md). They supersede this
 assessment's conflicting recommendations and priority judgments, including
 strict rollback, immutable membership, preserved DataFrame indexes, mandatory
 validation, and attribute-provenance requirements. Reproductions below remain

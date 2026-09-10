@@ -4,7 +4,7 @@ Review fixes requalified locally on 2026-09-09 against runtime revision `664b4e2
 and distribution `embed-toolkit-unified==0.1.0`. The initial `90bb604` qualification
 is retained below as historical evidence. Commits after `664b4e2` update
 documentation only.
-The [target contract](mutable-scaffold-contract.md), [API decisions](mutable-scaffold-api.md),
+The [target contract](../mutable-scaffold-contract.md), [API decisions](../mutable-scaffold-api.md),
 and [implementation plan](mutable-scaffold-implementation-plan.md) define this cutover.
 
 ## Work-package acceptance
@@ -59,7 +59,7 @@ scale checks pass as part of every full-suite run. A new three-repetition
 0.1796/0.3623/0.7265 seconds, or 2.02×/2.01× per doubling. Peak memory was
 3,406,817/6,610,118/13,188,366 bytes; fixed-patient updates stayed between
 15.51 and 15.73 microseconds. Cardinalities and the provisional scaling gate pass.
-The [benchmark record](../unified-system/benchmarks/README.md) contains the current
+The [benchmark record](../../benchmarks/README.md) contains the current
 measurements and methodology.
 
 These runs are local macOS qualification. No remote CI run, release, publication,
@@ -107,7 +107,7 @@ The final synthetic benchmark used 100/200/400 patients, 600/1,200/2,400 rows,
 0.1696/0.3416/0.6889 seconds (2.01× and 2.02× per doubling), below the provisional
 3× gate. Peak memory grew roughly linearly; fixed-patient updates remained near
 16 microseconds as unrelated objects quadrupled. See [benchmark methodology and
-results](../unified-system/benchmarks/README.md) for the subsequent review-fix run;
+results](../../benchmarks/README.md) for the subsequent review-fix run;
 the numbers in this initial-validation section describe `90bb604`.
 
 ## Review resolution and qualification boundaries
@@ -136,6 +136,6 @@ behavior, not clinical/scientific validity. Source diagnostics remain optional.
 No release, tag, remote publication, or matching/transfer consumer port was performed.
 Those ports require separate repositories and are later work in the plan.
 
-[Legacy test disposition](mutable-scaffold-test-disposition.md) records each retired
+[Legacy test disposition](../mutable-scaffold-test-disposition.md) records each retired
 test's replacement contract or intentional retirement. The historical transaction,
 locator and patch-recipe expectations are removed rather than silently skipped.

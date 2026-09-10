@@ -2,7 +2,7 @@
 
 Implementation specification, 2026-09-09. The target contract governs; this
 specification resolves implementation-plan D1–D8. See the completed
-[qualification record](mutable-scaffold-qualification.md).
+[current qualification record](qualification.md).
 
 ## Identity, ownership, and mutation
 

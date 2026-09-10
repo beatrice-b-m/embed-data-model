@@ -1,6 +1,6 @@
 # Mutable EMBED scaffold: target contract
 
-Status: implemented and locally qualified; see [qualification evidence](mutable-scaffold-qualification.md).
+Status: implemented and locally qualified; see [current qualification evidence](qualification.md).
 Recorded: 2026-09-09, following the scaffold assessment discussion.
 
 This document records the maintainer's answers to review questions 1–23. It

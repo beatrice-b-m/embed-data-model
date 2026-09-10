@@ -13,7 +13,7 @@ kb_status: draft
 > effect, but workflow and audit parity suites named below were subsequently
 > removed or isolated during the lightweight framework recovery. Current
 > invariant ownership is mapped in
-> [lightweight-framework-test-traceability.md](lightweight-framework-test-traceability.md).
+> [lightweight-framework-test-traceability.md](../lightweight-framework-test-traceability.md).
 
 The root-level `embed_toolkit/` and `quadrant_matching/` directories have been
 removed. The retained unified package under `unified-system/src/embed_toolkit`

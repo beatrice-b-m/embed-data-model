@@ -2,7 +2,7 @@
 
 Run from unified-system:
     .venv/bin/python -c 'import runpy; runpy.run_path(
-        "../docs/scaffold-assessment-probes-2026-09-09.py", run_name="__main__")'
+        "../docs/archive/scaffold-assessment-probes-2026-09-09.py", run_name="__main__")'
 
 Print observed behavior rather than asserting bugs as desired behavior. This is
 an assessment artifact, not the package regression suite. Performance figures

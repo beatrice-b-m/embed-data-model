@@ -4,8 +4,9 @@ Date: 2026-08-26
 
 This matrix records where the scientific and construction invariants retained
 from the former builder architecture are verified after migration to
-`DatasetGraph`. It is the companion to
-`lightweight-framework-architecture-review.md`; deleted tests are not a second
+`DatasetGraph`. It is the companion to the historical
+[`lightweight-framework-architecture-review.md`](archive/lightweight-framework-architecture-review.md);
+deleted tests are not a second
 supported API contract.
 
 ## Replacement matrix

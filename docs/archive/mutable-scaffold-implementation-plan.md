@@ -5,7 +5,7 @@ Qualifying runtime revision after review fixes: `664b4e2`; wheel version: `0.1.0
 See [qualification evidence](mutable-scaffold-qualification.md) for results and limits.
 The [completed implementation review](mutable-scaffold-review.md) is resolved.
 Historical plan review: 2026-09-09 against `f55ecfe62a0e8de9ba2247299be65271e86228a2`.
-Authority: [mutable scaffold target contract](mutable-scaffold-contract.md).
+Authority: [mutable scaffold target contract](../mutable-scaffold-contract.md).
 
 The target requires replacing the graph's contribution-replay architecture with
 a mutable object registry and semantic-grain loading. Preserve useful clinical
@@ -15,7 +15,7 @@ contract before porting matching or transfer into separate repositories.
 
 This plan distinguishes established requirements from proposed decisions. The
 decisions below preserve the kickoff proposals. Their accepted resolutions are
-recorded in the [API specification](mutable-scaffold-api.md), including the
+recorded in the [API specification](../mutable-scaffold-api.md), including the
 maintainer-approved initial registry identity mapping. This document supersedes
 the implementation sequence in the September assessment for this work; historical
 assessment results remain evidence about their reviewed revision.

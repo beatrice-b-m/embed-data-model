@@ -3,7 +3,7 @@
 Date: 2026-08-26
 Status: historical recovery implemented on 2026-08-26; target superseded.
 
-The maintainer-directed [mutable scaffold contract](mutable-scaffold-contract.md)
+The maintainer-directed [mutable scaffold contract](../mutable-scaffold-contract.md)
 now governs future work. It replaces conflicting requirements below, including
 strict atomic transactions, immutable graph membership, and DataFrame-index
 source identity. The new target is not yet implemented.
@@ -16,7 +16,7 @@ subset of tables and extend with project-specific workflows. The canonical
 `DatasetGraph`/`load_embed` surface provides transactional incremental loading,
 the package root exposes a bounded facade, and optional workflows live in
 repo-only examples. The replacement-test matrix is recorded in
-[lightweight-framework-test-traceability.md](lightweight-framework-test-traceability.md).
+[`lightweight-framework-test-traceability.md`](../lightweight-framework-test-traceability.md).
 
 The requirements, target construction model, dependency rule, and global
 acceptance criteria below describe the earlier architecture contract. The
