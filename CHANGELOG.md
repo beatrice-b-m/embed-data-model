@@ -1,9 +1,20 @@
 # Changelog
 
-## Unreleased — EMBED Data Model preparation
+## 0.1.0 — 2026-09-09
 
-The project retains version `0.1.0` during preparation; this entry does not
-announce a published release.
+First tagged source release, `v0.1.0`. This is an initial integration baseline
+under the MIT license, with Python 3.9–3.13 qualification and no mandatory
+runtime dependencies. It does not announce a package-index publication or a
+stable 1.x API.
+
+### Data model
+
+- Provide mutable patient, exam, finding, procedure, pathology, image, and ROI
+  objects, with indexed graph membership and source lookups.
+- Load optional EMBED tables using semantic identities, in-place refresh,
+  explicit merge, and inspectable unresolved records and relationships.
+- Support consumer extensions, explicit validation, live selections,
+  independent partitions, and subtree movement.
 
 ### Package identity and layout
 
