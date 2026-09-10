@@ -6,9 +6,8 @@ tables, retain the relationships that the rows actually establish, and leave
 project-specific analysis to downstream code.
 
 The package is version `0.1.0`. Its distribution name is `embed-data-model` and
-its Python namespace is `embed_data_model`. The namespace is deliberately
-separate from the existing `embed-toolkit` package; the old `embed_toolkit`
-import is not an alias for this project.
+its Python namespace is `embed_data_model`. The source repository is
+[beatrice-b-m/embed-data-model](https://github.com/beatrice-b-m/embed-data-model).
 
 ## Install from the checkout
 
@@ -44,9 +43,8 @@ python -m pip install \
   "git+https://github.com/beatrice-b-m/embed-data-model.git@<commit-sha>"
 ```
 
-The placeholder is intentional: a downstream lockfile should name the actual
-commit it uses. These instructions do not claim that a package-index release
-exists. See [CONTRIBUTING.md](CONTRIBUTING.md) for development and versioning
+Replace `<commit-sha>` with the qualified revision and record it in the downstream
+lockfile. See [CONTRIBUTING.md](CONTRIBUTING.md) for development and versioning
 expectations and [LICENSE](LICENSE) for the MIT license.
 
 ## Quickstart
@@ -99,7 +97,7 @@ The [researcher journeys](examples/researcher_journeys.py) file contains a
 small command-line runnable version of the same public surface. The longer
 [user guide](docs/user-guide.md) covers source mappings, relationships,
 images, ROIs, validation, and movement. The [documentation index](docs/README.md)
-points to current contracts and the downstream migration guide.
+points to the contracts and downstream integration guide.
 
 ## What the library owns
 
@@ -146,11 +144,10 @@ The core translates source rows and preserves supplied relationships. It does
 not read pixel files, infer clinical diagnoses, choose a cohort definition, or
 provide a mandatory validation pipeline. Finding localization, finding-to-ROI
 matching, ROI transfer, patch extraction, and visualization policy belong in
-downstream repositories or consumer code. The package does not claim private
-dataset qualification, real-pixel qualification, remote CI results, or a
-published release from the synthetic checks in this repository.
+downstream repositories or consumer code. Synthetic checks establish object
+behavior; private-data, real-pixel, and scientific qualification require their
+own evidence.
 
-Start with the [documentation index](docs/README.md). The [mutable scaffold
-contract](docs/mutable-scaffold-contract.md) and [API decisions](docs/mutable-scaffold-api.md)
-govern current behavior; historical plans, assessments, and reviews are kept
-under [docs/archive](docs/archive/).
+Start with the [documentation index](docs/README.md). The [data model
+contract](docs/contract.md) and [API reference](docs/api.md) define supported
+behavior.

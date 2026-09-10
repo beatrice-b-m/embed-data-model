@@ -1,13 +1,12 @@
-# Mutable scaffold API decisions
+# EMBED Data Model API reference
 
-Implementation specification, 2026-09-09. The target contract governs; this
-specification resolves implementation-plan D1–D8. See the completed
-[current qualification record](qualification.md).
+This reference specifies the behavior defined by the [contract](contract.md).
+See the [user guide](user-guide.md) for runnable examples and
+[qualification](qualification.md) for dated verification evidence.
 
 ## Identity, ownership, and mutation
 
-D1–D7 are accepted as proposed. One accession has one Exam; its
-`asserted_patient_ids` retains all source claims. Conflicting claims leave
+One accession has one `Exam`; its `asserted_patient_ids` retains all source claims. Conflicting claims leave
 `patient_id` unset until `graph.assign_patient(exam, patient_id)` explicitly
 chooses ownership. That choice persists on reload; source identities are unchanged.
 
@@ -26,9 +25,7 @@ registry of unrelated parents or siblings. Patient rekey changes assigned exam
 ownership and patient-owned observation context, while preserving asserted source
 patient IDs, image patient claims, and procedure/registry source identities.
 
-The shared entity implementation exposes private `_children()` containment edges,
-`_attach_local(child)`, and `_detach_local(child)` for graph integration. Linked
-exams are associations, never containment. Traversal deduplicates object identity;
+Linked exams are associations, never containment. Traversal deduplicates object identity;
 serialization emits semantic references for repeated objects and linked cycles.
 
 Pop retains exclusive Python objects. Descendants needed outside the selected
@@ -66,9 +63,10 @@ malignant/severity/raw_severity/report_documented_date and ordered descriptors;
 registry explicitly mapped payload fields. Source aliases and source identity,
 source patient claims, keys, children and assignment sets have separate rules.
 History snapshots replace each addressed patient's supplied history kind when no
-explicit event ID is bound; merge of unkeyed history collections requires explicit record IDs rather than guessing event equality.
+explicit event ID is bound; merge of unkeyed history collections requires explicit
+record IDs rather than guessing event equality.
 
-## Pathology and reported facts (D8)
+## Pathology and reported facts
 
 Prefer a supplied patient-scoped `record_id`. The fallback bundle key is the
 supported attachment identity plus supplied report_documented_date: a complete
@@ -91,23 +89,23 @@ Patient, Exam, BreastSide, Finding, Procedure, MammogramImage and RegionOfIntere
 are mutable entities. Box, ProcedureIdentity, enums, coordinate/anatomy values,
 semantic references, SourceRef, Issue and optional normalization diagnostics are
 replaceable values. Frozen value types do not exempt their owning entities from
-updates. Old attribution/locator/ledger types have no required public compatibility.
+updates.
 
 ## Imaging and supplied association collections
 
-`image_id` is toolkit identity; `source_sop_instance_uid` is original identity;
-`source_paths` stores location aliases. Parse trailing
-cohortN/patient/study/series/SOP.dcm. Explicit UID wins over disagreement and the
+`image_id` is model identity; `source_sop_instance_uid` is original identity;
+`source_paths` stores location aliases. The adapter parses trailing
+`cohortN/patient/study/series/SOP.dcm` path components. Explicit UID wins over disagreement and the
 conflicting path UID is not a SOP alias; the supplied path remains a location alias
-for the explicit UID. Derivatives require explicit toolkit IDs and
-`derived_from`; source reload follows the original even after toolkit rekey.
+for the explicit UID. Derivatives require explicit model IDs and
+`derived_from`; source reload follows the original even after model rekey.
 An update or rekey that would give two original images the same source SOP raises
 ValueError before changing fields or source indexes. The check uses the proposed
 UID and derivation state together, including a derivative becoming an original.
 
 Image metadata automatically projects ROI collections. Missing/null ROI input
-preserves; explicit [] clears; malformed/conflicting input preserves with an issue.
-Explicit rois input overrides automatic projection for addressed images. Both
+preserves; explicit `[]` clears; malformed/conflicting input preserves with an issue.
+Explicit `rois` input overrides automatic projection for addressed images. Both
 refresh and merge replace the complete addressed image collection, including manual
 ROIs. Save/pop manual annotations before replacement to retain them. Ordinals start
 at zero, including singletons; equal boxes remain separate. Individual `roi.update`
@@ -123,30 +121,15 @@ merge unions. Refresh must contain all desired assignments for an addressed exam
 Targets are never deleted by clearing associations. Registry keys remain
 (patient_id, registry_id), even when exam ownership differs.
 
-The internal catalog was queried on 2026-09-09. Its
-internal-v2.technical.cancer_registry_record_identifier and
-internal-v2.magview-representation-context#cancer-registry-reference confirm
-patient-scoped references but explicitly lack a physical registry binding.
-The maintainer subsequently supplied the initial registry mapping for this task:
-patient_id maps to empi_anon and registry_id maps to cancer_registry_id. Prioritize
-these identity columns; other registry values are explicitly deferred. Caller-supplied
-registry inputs do not require a physical table name. MagView assignment IDs remain
-cancer_outcome_registry_id. Synthetic qualification covers this approved mapping;
-private-data qualification remains separate.
+Registry identity maps `patient_id` to `empi_anon` and `registry_id` to
+`cancer_registry_id`. Payload fields are unbound by default and can be configured
+through `columns`. Caller-supplied registry inputs do not require a physical table
+name. MagView assignment IDs use `cancer_outcome_registry_id`.
 
-## Acceptance and old tests
+## Validation
 
-Retain MagView normalization, BI-RADS, anatomy, primitives, side traversal and useful
-geometry math. Move quality rejection cases (bounds, ordered geometry, confidence,
-clinical age/date, severity and modality/frame plausibility) to explicit validation.
-Keep numeric parsing, coordinate arity and key/relationship representation checks.
+Numeric parsing, coordinate arity, and key/relationship representation checks are
+part of construction. Bounds, ordered geometry, confidence, clinical age/date,
+severity, and modality/frame plausibility are checked by explicit validation.
 Warnings do not invalidate by default; error issues do. Missing optional tables
 alone are valid. Validation is read-only and never called implicitly by loading.
-
-Replace lightweight-framework strict rollback, changed-source rejection, index
-identity, nonattachment on patient disagreement, provenance replay, and ROI evidence
-replay with the plan's named contract families. Replace pathology/history physical
-row identity with the explicit keys and unresolved/fact rules above. Retire locator
-and patch-workflow expectations when their obsolete APIs are removed, documenting
-case-level replacement rather than ignoring suites. W8 measurements and W9 installed
-API/full-suite/static checks are recorded in the qualification document.

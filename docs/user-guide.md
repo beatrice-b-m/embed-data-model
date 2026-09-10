@@ -1,10 +1,10 @@
 # EMBED Data Model user guide
 
 This guide describes the mutable object model and the source-table adapter.
-The current Python project is at the repository root and is installed as
+The Python project is at the repository root and is installed as
 `embed-data-model`; import `embed_data_model`. Start with
 the repository [README](../README.md), then use the
-[documentation index](README.md) for contracts and migration notes.
+[documentation index](README.md) for contracts and integration guidance.
 
 The examples below are standalone unless a block says otherwise. They use
 synthetic rows and public imports, so they do not require access to private
@@ -325,13 +325,13 @@ preserves existing unkeyed facts while reporting the limitation.
 
 ## Images and ROI collections
 
-`MammogramImage.image_id` is the mutable toolkit identity. The original
+`MammogramImage.image_id` is the mutable model identity. The original
 `source_sop_instance_uid` and `source_paths` are separate source facts. A path
 matching the EMBED convention
 `cohortN/patient/study/series/SOP.dcm` can supply source identity and study or
 series context without opening pixels. An explicit SOP UID wins if it conflicts
 with a path-derived UID, and the report carries an issue. Relocating a file
-adds a path alias; rekeying the toolkit image does not break source lookup.
+adds a path alias; rekeying the model image does not break source lookup.
 
 Image metadata automatically projects its `ROI_coords` collection. A row in
 the explicit `rois` input overrides the automatic collection for the image it
@@ -379,7 +379,7 @@ ROIs. `ROI_frames` remains a tuple of supplied frame facts, and
 `ROI_depth_derived` records whether depth was source-supplied or derived; the
 loader does not invent frame indices or clinical correspondence.
 
-Derivatives require an explicit toolkit `image_id` and `derived_from`. Their
+Derivatives require an explicit model `image_id` and `derived_from`. Their
 metadata and ROIs do not replace the original source image or its source-path
 lookups. Images with an accession can establish an exam shell and source patient
 claim; an image row without clinical context remains image-local.
@@ -465,6 +465,5 @@ real-pixel, or downstream scientific validity.
 
 Matching, localization, transfer, patch extraction, and visualization are
 consumer workflows. Keep them in the downstream repository that owns the
-relevant image data and analysis policy. The current contract and settled API
-semantics are [mutable-scaffold-contract.md](mutable-scaffold-contract.md)
-and [mutable-scaffold-api.md](mutable-scaffold-api.md).
+relevant image data and analysis policy. See the [contract](contract.md) and [API reference](api.md) for the
+supported semantics.
