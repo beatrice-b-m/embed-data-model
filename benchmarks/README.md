@@ -1,6 +1,6 @@
-# Mutable scaffold loading measurements
+# EMBED Data Model loading measurements
 
-Measured 2026-09-09 against `664b4e2` after review fixes (wheel version `0.1.0`).
+Measured 2026-09-09 against `664b4e2` (wheel version `0.1.0`).
 Python 3.13.11, macOS-26.5.1-arm64-arm-64bit-Mach-O.
 
 ```bash
@@ -34,7 +34,7 @@ to the traced full-load column. Fixed updates average 50 same-patient refreshes 
 repetition; subset setup uses prebuilt slices. Deferred resolution excludes graph
 construction and times only the later registry input.
 
-Full-load doubling ratios were 2.02× and 2.01×, below the provisional 3× gate.
+Full-load doubling ratios were 2.02× and 2.01×.
 Peak and retained object memory grew roughly linearly. Fixed-patient update time
 stayed near 16 µs as unrelated data quadrupled. These measurements support the
 deterministic regression that prohibits iteration of unrelated registry dictionaries
@@ -47,5 +47,5 @@ not a streaming merge. Full and batched cardinalities are checked at every size.
 
 These are synthetic scale results, not qualification on the full private EMBED
 dataset, real pixels, or every source schema. Representative private-data testing
-requires data supplied through an authorized path. Registry payload beyond the
-approved patient/registry-ID mapping is deferred.
+requires data supplied through an authorized path. Registry measurements cover
+the default patient/registry-ID mapping; optional payload mappings were not measured.
