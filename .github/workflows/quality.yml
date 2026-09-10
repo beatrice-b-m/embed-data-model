@@ -7,10 +7,6 @@ on:
 permissions:
   contents: read
 
-defaults:
-  run:
-    working-directory: unified-system
-
 jobs:
   tests:
     name: Python ${{ matrix.python-version }}
@@ -26,7 +22,6 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: ${{ matrix.python-version }}
-          working-directory: unified-system
       - name: Synchronize locked environment
         run: uv sync --frozen
       - name: Run tests, wheel journey, and scale regression
@@ -42,10 +37,9 @@ jobs:
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.13"
-          working-directory: unified-system
       - name: Synchronize locked environment
         run: uv sync --frozen
       - name: Run Ruff
-        run: uv run --frozen ruff check src/embed_toolkit tests examples benchmarks
+        run: uv run --frozen ruff check src/embed_data_model tests examples benchmarks
       - name: Type-check the complete package
         run: uv run --frozen mypy

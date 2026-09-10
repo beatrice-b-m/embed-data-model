@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "embed-data-model"
+version = "0.1.0"
+description = "A Python object model for EMBED clinical and mammography data"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+
+[dependency-groups]
+dev = [
+    "build>=1.2",
+    "setuptools>=77",
+    "wheel>=0.43",
+    "mypy>=1.10,<2",
+    "pandas>=2.0",
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[tool.setuptools.package-data]
+embed_data_model = ["py.typed"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.9"
+files = ["src/embed_data_model"]
+follow_imports = "normal"
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_configs = true
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
