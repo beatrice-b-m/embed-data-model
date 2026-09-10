@@ -12,13 +12,13 @@ import is not an alias for this project.
 
 ## Install from the checkout
 
-The repository is the source of the package while this project is being
-prepared. From a clone, install the development environment at the repository
-root:
+The first source release is tagged `v0.1.0`. From a clone, install the
+development environment at the repository root:
 
 ```bash
 git clone ssh://git@github.com/beatrice-b-m/wip-embed-toolkit.git
 cd wip-embed-toolkit
+git checkout v0.1.0
 uv sync --frozen
 uv run --frozen python -m examples.researcher_journeys
 ```
@@ -29,7 +29,14 @@ For a local consumer that needs an editable install, use:
 python -m pip install -e /path/to/wip-embed-toolkit
 ```
 
-For a reproducible source install from the repository, pin the exact revision
+To install the tagged source release into a downstream environment:
+
+```bash
+python -m pip install \
+  "git+ssh://git@github.com/beatrice-b-m/wip-embed-toolkit.git@v0.1.0"
+```
+
+For a reproducible source install from another revision, pin the exact commit
 you qualified:
 
 ```bash
