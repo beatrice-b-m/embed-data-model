@@ -34,10 +34,9 @@ behavior, and observed behavior.
 
 ## Public API and compatibility
 
-The current version is `0.1.0`, an initial integration baseline. It is not a
-declaration of a stable 1.x API or a claim of package-index publication. Pin an
-exact source revision or a qualified wheel when starting a downstream port, and
-record that dependency in the consumer's lockfile or environment specification.
+The current version is `0.1.0`. Pin an exact source revision or a qualified wheel
+and record that dependency in the consumer's lockfile or environment specification.
+The [README](README.md) documents installation from the tagged source release.
 
 Prefer the documented exports from `embed_data_model`. Use documented specialist
 modules when a type is not exported at the root. Undocumented implementation
@@ -45,17 +44,18 @@ helpers and private attributes are not supported extension points. Subclassing,
 consumer attributes, and metadata follow the documented object and copy contracts.
 
 For subsequent versions, record public behavior changes in `CHANGELOG.md` and
-provide migration instructions for breaking changes. During 0.x development,
+provide migration instructions for breaking changes. For 0.x versions,
 breaking API changes should increment the minor version; patch versions should
 preserve documented public behavior except for identified bug fixes. Changes to
 identity, table bindings, refresh behavior, ROI coordinates, and partition copying
 need particular care because they can change downstream results without an import
 error. Python support changes also belong in the changelog and CI matrix.
 
-Before declaring 1.0, qualify at least one real downstream port against a pinned
-dependency, resolve material migration feedback, and explicitly review the public
-API and supported table mappings. Synthetic library tests establish software
-behavior; consumer studies establish their own scientific validity.
+A 1.0 release requires qualification of at least one downstream consumer against
+a pinned dependency, resolution of material integration feedback, and review of
+the public API and supported table mappings.
+Synthetic library tests establish software behavior; consumer studies establish
+their own scientific validity.
 
 ## Review and commits
 
@@ -66,8 +66,3 @@ and runnable examples consistent with code changes.
 
 The code is distributed under the [MIT license](LICENSE). This code license does
 not grant access to EMBED data or replace the dataset's access conditions.
-
-Repository restructuring does not rename the remote repository or publish a
-release. Publication requires a separate maintainer decision about the
-destination and release credentials. Installation instructions must continue
-to distinguish available source installation from any future package-index release.
