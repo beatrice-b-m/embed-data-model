@@ -2,10 +2,8 @@
 
 ## 0.1.0 — 2026-09-09
 
-First tagged source release, `v0.1.0`. This is an initial integration baseline
-under the MIT license, with Python 3.9–3.13 qualification and no mandatory
-runtime dependencies. It does not announce a package-index publication or a
-stable 1.x API.
+First tagged source release, `v0.1.0`, under the MIT license, with Python
+3.9–3.13 qualification and no mandatory runtime dependencies.
 
 ### Data model
 
@@ -16,25 +14,16 @@ stable 1.x API.
 - Support consumer extensions, explicit validation, live selections,
   independent partitions, and subtree movement.
 
-### Package identity and layout
+### Packaging
 
-- Rename the distribution from `embed-toolkit-unified` to `embed-data-model` and
-  Python imports from `embed_toolkit` to `embed_data_model`.
-- Place the Python project at the repository root instead of `unified-system/`.
-- Keep the new namespace separate from the existing `embed-toolkit` library so
-  downstream consumers can use both packages.
+- Distribute `embed-data-model` with the Python namespace `embed_data_model`.
+- Include typed source, MIT license text, and wheel installation checks.
+- Provide a Python project at the repository root with a locked development
+  environment and tests for each supported Python minor version.
 
-### Researcher documentation
+### Documentation
 
-- Provide researcher entry points and downstream migration guidance.
-- Separate current API contracts from archived implementation history.
-- Document development checks and compatibility expectations for initial ports.
-
-### Migration
-
-Install from the repository root and update imports to `embed_data_model`.
-Remove references to `unified-system/` from consumer build/install commands.
-The former import name is not retained as an alias because it belongs to the
-separate `embed-toolkit` package. The package rename does not intentionally change
-clinical or imaging behavior. See the [documentation index](docs/README.md) for
-the current guides and contracts.
+- Provide installation instructions, runnable researcher examples, and
+  downstream integration guidance.
+- Specify object and API contracts, development checks, and compatibility policy.
+- Record local test qualification and synthetic loading measurements.
