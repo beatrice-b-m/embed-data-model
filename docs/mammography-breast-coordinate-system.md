@@ -1,17 +1,9 @@
----
-type: Reference
-title: Mammography Breast Coordinate System
-description: Summary of the mammographic quadrant and depth coordinate system used to localize breast findings across CC and MLO views.
-tags: [mammography, breast-imaging, localization, breast-quadrants]
-timestamp: 2026-07-03T00:00:00-04:00
-kb_status: seed
-aliases: []
-resource:
----
-
 # Mammography Breast Coordinate System
 
-Source: raw transcript by Beatrice Brown-Mulry, supplied 2026-07-03.
+Source: notes by Beatrice Brown-Mulry, supplied 2026-07-03.
+
+This reference describes coordinate conventions for downstream consumers. The data
+model stores supplied anatomy and geometry; it does not perform image localization.
 
 ## Summary
 
@@ -33,7 +25,7 @@ The CC view primarily contributes the medial-lateral axis:
 - `medial` / `inner`: toward the sternum.
 - `lateral` / `outer`: toward the axilla.
 
-Correction to the transcript: medial and lateral should not be treated as globally fixed to the upper or lower half of a displayed CC image. Apparent image top/bottom depends on breast laterality, image orientation, and hanging/display convention. Algorithmically, resolve this from laterality and image-orientation metadata rather than from raw screen position alone.
+Medial and lateral should not be treated as globally fixed to the upper or lower half of a displayed CC image. Apparent image top/bottom depends on breast laterality, image orientation, and hanging/display convention. Algorithmically, resolve this from laterality and image-orientation metadata rather than from raw screen position alone.
 
 ## Posterior Nipple Line
 
@@ -60,7 +52,7 @@ Combining the four quadrants with three depth regions yields twelve coarse 3D lo
 - lower outer anterior, middle, posterior
 - lower inner anterior, middle, posterior
 
-These bins are useful for algorithmic localization, ROI assignment, toy mammogram generation, and comparing image-derived regions with report-derived finding locations.
+These bins are useful for algorithmic localization, ROI assignment, synthetic mammogram generation, and comparing image-derived regions with report-derived finding locations.
 
 ## Implementation Notes
 
