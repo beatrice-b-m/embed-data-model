@@ -165,3 +165,16 @@ assert "site-packages" in Path(embed_data_model.__file__).as_posix()
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+    # Run the actual researcher-facing example against only the installed wheel.
+    journey = tmp_path / "researcher_journeys.py"
+    shutil.copyfile(project_root / "examples" / journey.name, journey)
+    result = subprocess.run(
+        [str(python), str(journey)],
+        cwd=tmp_path,
+        env=clean_environment,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ValidationResult(issues=())" in result.stdout
