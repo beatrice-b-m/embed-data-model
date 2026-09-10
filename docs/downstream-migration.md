@@ -119,7 +119,7 @@ Use `None` to unbind an optional semantic field from an adapter. Required
 identity fields cannot be unbound. The mapping is partial: unspecified fields
 keep their defaults. The complete current default map is available from
 `embed_data_model.sources.embed.columns.DEFAULT_COLUMNS` and is summarized in
-the [user guide](../unified-system/README.md).
+the [user guide](user-guide.md).
 
 This complete example uses a renamed DataFrame schema and demonstrates the
 expected result:

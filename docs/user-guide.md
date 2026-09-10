@@ -2,10 +2,9 @@
 
 This guide describes the mutable object model and the source-table adapter.
 The current Python project is at the repository root and is installed as
-`embed-data-model`; import `embed_data_model`. This file remains beside the
-former `unified-system/` project directory as a longer user guide. Start with
+`embed-data-model`; import `embed_data_model`. Start with
 the repository [README](../README.md), then use the
-[documentation index](../docs/README.md) for contracts and migration notes.
+[documentation index](README.md) for contracts and migration notes.
 
 The examples below are standalone unless a block says otherwise. They use
 synthetic rows and public imports, so they do not require access to private
@@ -467,5 +466,5 @@ real-pixel, or downstream scientific validity.
 Matching, localization, transfer, patch extraction, and visualization are
 consumer workflows. Keep them in the downstream repository that owns the
 relevant image data and analysis policy. The current contract and settled API
-semantics are [mutable-scaffold-contract.md](../docs/mutable-scaffold-contract.md)
-and [mutable-scaffold-api.md](../docs/mutable-scaffold-api.md).
+semantics are [mutable-scaffold-contract.md](mutable-scaffold-contract.md)
+and [mutable-scaffold-api.md](mutable-scaffold-api.md).

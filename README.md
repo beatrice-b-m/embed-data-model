@@ -90,7 +90,7 @@ assert reviewed_graph.exam("A-001").description == "reviewed"
 
 The [researcher journeys](examples/researcher_journeys.py) file contains a
 small command-line runnable version of the same public surface. The longer
-[user guide](unified-system/README.md) covers source mappings, relationships,
+[user guide](docs/user-guide.md) covers source mappings, relationships,
 images, ROIs, validation, and movement. The [documentation index](docs/README.md)
 points to current contracts and the downstream migration guide.
 
