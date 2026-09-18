@@ -24,27 +24,137 @@ class MammogramImage(MutableEntity):
     ``image_id`` is the toolkit identity.  Original source identity and
     source locations are optional aliases, and derivative identity is explicit
     through ``derived_from``.  No source path parsing occurs in this class.
-    """
+
+    Parameters
+    ----------
+    image_id : str
+        Explicit non-empty model image identifier, independent of source SOP
+        identity.
+    laterality : Laterality, optional
+        Breast side. Coercible values are normalized; unknown values become
+        UNKNOWN where coercion is supported. Default: Laterality.UNKNOWN.
+    view_position : ViewPosition, optional
+        Mammography projection; UNKNOWN when unavailable or unrecognized.
+        Default: ViewPosition.UNKNOWN.
+    source_paths : Optional[Iterable[str]], optional
+        Location aliases, copied into a set. No files are opened; ordering is
+        not meaningful. Default: None.
+    modality : ImageModality, optional
+        Acquisition/derived image modality; UNKNOWN when unavailable or
+        unrecognized. Default: ImageModality.UNKNOWN.
+    source_sop_instance_uid : Optional[str], optional
+        Original DICOM SOP identity; independent of model image_id. None means
+        unknown. Default: None.
+    derived_from : Optional[Any], optional
+        Explicit original-image reference for a derivative; None denotes an
+        original. Default: None.
+    source_modality : Optional[str], optional
+        Unnormalized source modality label; None means absent. Default: None.
+    derived_image_type : Optional[str], optional
+        Source description of derived image type; None means absent. Default:
+        None.
+    height : Optional[int], optional
+        Image height in pixels; None means unknown. No pixel buffer is
+        allocated. Default: None.
+    width : Optional[int], optional
+        Image width in pixels; None means unknown. No pixel buffer is allocated.
+        Default: None.
+    frame_count : Optional[int], optional
+        Reported number of frames, normally for DBT; None means unknown.
+        Default: None.
+    accession_number : Optional[str], optional
+        Non-empty exam accession identifying the clinical examination. Default:
+        None.
+    patient_id : Optional[str], optional
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts. Default: None.
+    study_instance_uid : Optional[str], optional
+        DICOM study identifier; None means absent. Default: None.
+    series_instance_uid : Optional[str], optional
+        DICOM series identifier; None means absent. Default: None.
+    patient_orientation : Optional[PatientOrientation], optional
+        DICOM row/column orientation; None means absent. Default: None.
+    coordinate_frame_id : Optional[str], optional
+        Caller-defined coordinate frame label; None means unspecified. Default:
+        None.
+    landmarks : Iterable[ImageLandmark], optional
+        Initial image-local landmarks; each is rebound by a shallow owned_by
+        copy. Default: ().
+    rois : Iterable[RegionOfInterest], optional
+        Initial image-local ROIs; retained by reference, requiring matching
+        image_id and unique keys. Default: ().
+    metadata : Optional[Mapping[str, Any]], optional
+        Consumer metadata, shallow-copied into a mutable dict. Nested values
+        remain shared. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+
+    Raises
+    ------
+    ValueError
+        Blank image_id, incompatible ROI identity or invalid orientation arity.
+    TypeError
+        A supplied landmark has an unsupported type."""
 
     image_id: str
+    """Explicit non-empty model image identifier, independent of source SOP identity."""
     laterality: Laterality
+    """Breast side. Coercible values are normalized; unknown values become UNKNOWN
+    where coercion is supported. Default: Laterality.UNKNOWN.
+    """
     view_position: ViewPosition
+    """Mammography projection; UNKNOWN when unavailable or unrecognized. Default:
+    ViewPosition.UNKNOWN.
+    """
     source_paths: Set[str]
+    """Location aliases, copied into a set. No files are opened; ordering is not
+    meaningful. Default: None.
+    """
     modality: ImageModality
+    """Acquisition/derived image modality; UNKNOWN when unavailable or
+    unrecognized. Default: ImageModality.UNKNOWN.
+    """
     source_sop_instance_uid: Optional[str]
+    """Original DICOM SOP identity; independent of model image_id. None means
+    unknown. Default: None.
+    """
     derived_from: Optional[Any]
+    """Explicit original-image reference for a derivative; None denotes an
+    original. Default: None.
+    """
     source_modality: Optional[str]
+    """Unnormalized source modality label; None means absent. Default: None."""
     derived_image_type: Optional[str]
+    """Source description of derived image type; None means absent. Default: None."""
     height: Optional[int]
+    """Image height in pixels; None means unknown. No pixel buffer is allocated. Default: None."""
     width: Optional[int]
+    """Image width in pixels; None means unknown. No pixel buffer is allocated. Default: None."""
     frame_count: Optional[int]
+    """Reported number of frames, normally for DBT; None means unknown. Default: None."""
     accession_number: Optional[str]
+    """Non-empty exam accession identifying the clinical examination. Default: None."""
     patient_id: Optional[str]
+    """Patient identifier. Non-empty text; source patient claims and assigned exam
+    ownership are separate facts. Default: None.
+    """
     study_instance_uid: Optional[str]
+    """DICOM study identifier; None means absent. Default: None."""
     series_instance_uid: Optional[str]
+    """DICOM series identifier; None means absent. Default: None."""
     patient_orientation: Optional[PatientOrientation]
+    """DICOM row/column orientation; None means absent. Default: None."""
     coordinate_frame_id: Optional[str]
+    """Caller-defined coordinate frame label; None means unspecified. Default: None."""
     metadata: Dict[str, Any]
+    """Consumer metadata, shallow-copied into a mutable dict. Nested values remain
+    shared. Default: None.
+    """
 
     _rois: list[RegionOfInterest]
     _landmarks: Tuple[ImageLandmark, ...]
@@ -209,7 +319,13 @@ class MammogramImage(MutableEntity):
         return roi
 
     def with_landmark(self, landmark: ImageLandmark) -> "MammogramImage":
-        """Return a standalone shallow image copy with one more landmark."""
+        """Return a standalone shallow image copy with one extra landmark.
+
+        landmark is rebound through owned_by. The returned image has graph=None and
+        new collection containers, but shares existing ROI objects, landmarks, metadata,
+        source_paths and other mutable attributes. It is not an independent graph
+        partition; registering it can conflict with the original identity.
+        """
 
         copied = copy.copy(self)
         object.__setattr__(copied, "_graph", None)
@@ -220,12 +336,16 @@ class MammogramImage(MutableEntity):
 
     @property
     def image_shape(self) -> Optional[Tuple[int, int]]:
+        """(height, width) in pixels, or None unless both dimensions are supplied."""
+
         if self.height is None or self.width is None:
             return None
         return self.height, self.width
 
     @property
     def is_dbt(self) -> bool:
+        """True exactly when modality is ImageModality.DBT; no inference from frame count."""
+
         return self.modality is ImageModality.DBT
 
     def breast_geometry(
@@ -234,7 +354,22 @@ class MammogramImage(MutableEntity):
         nipple: Optional[ImageLandmark] = None,
         posterior_nipple_line: Optional[Tuple[ImageLandmark, ImageLandmark]] = None,
     ) -> BreastGeometry:
-        """Build a coordinate-frame fact object for this image."""
+        """Build breast-coordinate facts from explicitly supplied landmarks.
+
+        Parameters
+        ----------
+        nipple : ImageLandmark or None, optional
+            Nipple point in this image's pixel frame; None means unavailable.
+        posterior_nipple_line : tuple of two ImageLandmark or None, optional
+            Line endpoints in this pixel frame; None means unavailable. The endpoint
+            farthest from nipple supplies the posterior reference.
+
+        Returns
+        -------
+        BreastGeometry
+            Frozen geometry container. Supplied landmarks are shallow-copied with
+            this image_id. Does not search self.landmarks or infer missing geometry.
+        """
 
         return BreastGeometry(
             image_id=self.image_id,

@@ -14,7 +14,13 @@ from embed_data_model.core.primitives import Laterality, ViewPosition
 
 
 class LandmarkType(Enum):
-    """Named image landmarks used by geometry consumers."""
+    """Named image landmarks used by geometry consumers.
+
+    Members
+    -------
+    NIPPLE='nipple', POSTERIOR_NIPPLE_LINE_START='posterior_nipple_line_start',
+    POSTERIOR_NIPPLE_LINE_END='posterior_nipple_line_end', OTHER='other'.
+    """
 
     NIPPLE = "nipple"
     POSTERIOR_NIPPLE_LINE_START = "posterior_nipple_line_start"
@@ -28,15 +34,55 @@ class ImageLandmark(MutableEntity):
     Coordinates and confidence are retained as supplied numeric facts. Their
     clinical plausibility is a validation concern, so values outside an image
     or outside a confidence range remain representable here.
+
+    Parameters
+    ----------
+    y : float
+        Image-local vertical coordinate in pixels, converted to float.
+    x : float
+        Image-local horizontal coordinate in pixels, converted to float.
+    landmark_type : LandmarkType, optional
+        Named point role; OTHER is the default. Default: LandmarkType.OTHER.
+    image_id : Optional[str], optional
+        Explicit non-empty model image identifier, independent of source SOP
+        identity. Default: None.
+    source : Optional[str], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+    confidence : Optional[float], optional
+        Optional numeric confidence; converted to float. validate checks the
+        finite 0–1 range. Default: None.
+    provenance : Optional[str], optional
+        Optional annotation provenance label. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
     """
 
     y: float
+    """Image-local vertical coordinate in pixels, converted to float."""
     x: float
+    """Image-local horizontal coordinate in pixels, converted to float."""
     landmark_type: LandmarkType
+    """Named point role; OTHER is the default. Default: LandmarkType.OTHER."""
     image_id: Optional[str]
+    """Explicit non-empty model image identifier, independent of source SOP
+    identity. Default: None.
+    """
     source: Optional[str]
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not
+    clinical events. Default: None.
+    """
     confidence: Optional[float]
+    """Optional numeric confidence; converted to float. validate checks the finite
+    0–1 range. Default: None.
+    """
     provenance: Optional[str]
+    """Optional annotation provenance label. Default: None."""
 
     __key_fields__ = ()
 
@@ -120,15 +166,56 @@ class BreastGeometry:
 
     This object stores observable geometry only. Matching and localization
     workflows consume these facts elsewhere.
+
+    Attributes
+    ----------
+    image_id : str
+        Explicit non-empty model image identifier, independent of source SOP
+        identity.
+    laterality : Laterality
+        Breast side. Coercible values are normalized; unknown values become
+        UNKNOWN where coercion is supported.
+    view_position : ViewPosition
+        Mammography projection; UNKNOWN when unavailable or unrecognized.
+        Default: ViewPosition.UNKNOWN.
+    image_shape : Optional[Tuple[int, int]]
+        Optional (height, width) in pixels; supplying any other arity raises
+        ValueError. Default: None.
+    coordinate_frame_id : Optional[str]
+        Caller-defined coordinate frame label; None means unspecified. Default:
+        None.
+    nipple : Optional[ImageLandmark]
+        Optional mutable nipple landmark in the declared pixel frame; retained
+        by reference. Default: None.
+    posterior_nipple_line : Optional[Tuple[ImageLandmark, ImageLandmark]]
+        Optional pair of mutable line endpoints in the same pixel frame;
+        retained by reference. Default: None.
     """
 
     image_id: str
+    """Explicit non-empty model image identifier, independent of source SOP identity."""
     laterality: Laterality
+    """Breast side. Coercible values are normalized; unknown values become UNKNOWN
+    where coercion is supported.
+    """
     view_position: ViewPosition = ViewPosition.UNKNOWN
+    """Mammography projection; UNKNOWN when unavailable or unrecognized. Default:
+    ViewPosition.UNKNOWN.
+    """
     image_shape: Optional[Tuple[int, int]] = None
+    """Optional (height, width) in pixels; supplying any other arity raises
+    ValueError. Default: None.
+    """
     coordinate_frame_id: Optional[str] = None
+    """Caller-defined coordinate frame label; None means unspecified. Default: None."""
     nipple: Optional[ImageLandmark] = None
+    """Optional mutable nipple landmark in the declared pixel frame; retained by
+    reference. Default: None.
+    """
     posterior_nipple_line: Optional[Tuple[ImageLandmark, ImageLandmark]] = None
+    """Optional pair of mutable line endpoints in the same pixel frame; retained by
+    reference. Default: None.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "laterality", Laterality.coerce(self.laterality))
@@ -145,14 +232,20 @@ class BreastGeometry:
 
     @property
     def has_nipple(self) -> bool:
+        """True when a nipple landmark was supplied."""
+
         return self.nipple is not None
 
     @property
     def has_posterior_nipple_line(self) -> bool:
+        """True when the two line endpoints were supplied; does not validate length."""
+
         return self.posterior_nipple_line is not None
 
     @property
     def frame_id(self) -> str:
+        """Explicit coordinate_frame_id, or image_id when the explicit label is missing/empty."""
+
         return self.coordinate_frame_id or self.image_id
 
     @property
@@ -193,7 +286,12 @@ class BreastGeometry:
         return math.hypot(vector[0], vector[1])
 
     def depth_value_for_point(self, point: Tuple[float, float]) -> Optional[float]:
-        """Return continuous depth on the toolkit's ``0..2`` scale."""
+        """Project point=(y, x) in pixels onto nipple-to-posterior depth.
+
+        Returns a dimensionless float: 0 at the nipple and 2 at the posterior
+        reference. Values are not clipped and can fall outside 0–2. Returns None
+        when nipple/line geometry is absent or the depth vector has zero length.
+        """
 
         if self.nipple is None:
             return None
@@ -225,7 +323,14 @@ class BreastGeometry:
         self,
         point: Tuple[float, float],
     ) -> ContinuousAnatomicalPosition:
-        """Project an image-local point into observable anatomical axes."""
+        """Project point=(y, x) in pixels into observable anatomical axes.
+
+        Returns ContinuousAnatomicalPosition with depth on the unbounded nominal
+        0–2 scale. The signed perpendicular displacement divided by posterior
+        distance supplies ml for CC/XCCL or si for MLO/ML/LM. Other axes are None;
+        missing/degenerate geometry leaves values None. Does not transform pixels
+        or validate clinical orientation. coordinate_frame_id uses frame_id.
+        """
 
         depth_value = self.depth_value_for_point(point)
         transverse_value = self._transverse_value_for_point(point)
