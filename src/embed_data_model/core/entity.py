@@ -23,10 +23,11 @@ import copy
 from dataclasses import fields, is_dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, ClassVar, Dict, Mapping, Optional, Protocol, Set, Tuple
+from typing import Any, ClassVar, Dict, Mapping, Optional, Protocol, Set, Tuple, TypeVar
 
 
 _MISSING = object()
+_EntitySelf = TypeVar("_EntitySelf", bound="MutableEntity")
 
 
 class EntityGraph(Protocol):
@@ -37,15 +38,23 @@ class EntityGraph(Protocol):
     """
 
     def attach(self, parent: "MutableEntity", child: "MutableEntity") -> Any:
+        """Attach a compatible child and return it; maintain membership in the implementing owner."""
+
         ...
 
     def detach(self, parent: "MutableEntity", child: "MutableEntity") -> Any:
+        """Detach an edge while preserving child membership and return the child."""
+
         ...
 
     def update(self, entity: "MutableEntity", **fields: Any) -> Any:
+        """Update public/consumer fields in place while maintaining indexes; return the entity."""
+
         ...
 
     def rekey(self, entity: "MutableEntity", **identifiers: Any) -> Any:
+        """Rekey an entity and dependent context without changing its Python identity."""
+
         ...
 
 
@@ -149,8 +158,20 @@ class MutableEntity:
             object.__setattr__(result, "_entity_initialized", True)
         return result
 
-    def update(self, **fields: Any) -> "MutableEntity":
-        """Update fields in place and preserve this Python object."""
+    def update(self: _EntitySelf, **fields: Any) -> _EntitySelf:
+        """Set supplied fields in place and return this same concrete object.
+
+        **fields maps constructor/public field names or consumer-defined attributes
+        to replacements. Unspecified fields are preserved; None is an explicit value,
+        not an instruction to skip. Registered changes delegate to the owner so keys,
+        source aliases and relationships stay coherent. Standalone identity/context
+        changes propagate through the reachable containment subtree.
+
+        Setter/representation errors propagate; arbitrary multi-field updates are
+        not transactional. No quality validation is implicit. Use rekey to restrict
+        changes to declared key fields. Dynamic consumer attributes intentionally keep
+        this signature open; consult each entity's constructor for ordinary fields.
+        """
 
         if self.graph is not None:
             result = self.graph.update(self, **fields)
@@ -173,8 +194,16 @@ class MutableEntity:
             setattr(self, name, value)
         return self
 
-    def rekey(self, **identifiers: Any) -> "MutableEntity":
-        """Change identity fields in place, updating a graph when owned."""
+    def rekey(self: _EntitySelf, **identifiers: Any) -> _EntitySelf:
+        """Change declared identity fields and return the same concrete object.
+
+        **identifiers accepts only names in the entity's __key_fields__, described by
+        its constructor identity parameters. Other names raise TypeError. Registered
+        changes delegate to the graph; standalone changes update dependent identities
+        and embedded context in the reachable containment subtree. Collision or invalid
+        identity errors raise ValueError/TypeError before the planned rekey is applied.
+        There is no global collision registry for unrelated standalone objects.
+        """
 
         unknown = set(identifiers).difference(self.__key_fields__)
         if unknown:

@@ -3,9 +3,23 @@ from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Literal, Optional, Tuple, TypeVar, overload
 
 from embed_data_model.core.source import Issue, UnresolvedReference
+
+if TYPE_CHECKING:
+    from embed_data_model.clinical.patients import Patient
+    from embed_data_model.clinical.exams import Exam
+    from embed_data_model.clinical.findings import Finding
+    from embed_data_model.clinical.procedures import Procedure, ProcedureIdentity
+    from embed_data_model.clinical.pathology import Pathology, CancerRegistryEntry
+    from embed_data_model.imaging.images import MammogramImage
+    from embed_data_model.imaging.rois import RegionOfInterest
+    from embed_data_model.core.entity import MutableEntity
+    from embed_data_model.core.selection import Selection
+    from embed_data_model.core.validation import ValidationResult
+
+_EntityT = TypeVar("_EntityT", bound="MutableEntity")
 
 _NAMES = {"Patient": "patient", "Exam": "exam", "Finding": "finding",
           "Procedure": "procedure", "Pathology": "pathology",
@@ -42,7 +56,41 @@ def subtree(entity: Any) -> Dict[int, Any]:
 
 
 class DatasetGraph:
-    """One owning registry. Changes visit affected objects and pending neighbors."""
+    """Own mutable entities and resolve their semantic relationships.
+
+    Parameters
+    ----------
+    identity_namespace : str or None, optional
+        Namespace label; None or an empty string uses "default". IDs are stored
+        as supplied, without a namespace prefix.
+    source_scope : str or None, optional
+        Default physical-source label for loads; None or empty uses "in-memory".
+
+    Attributes
+    ----------
+    unresolved_records : dict
+        Mutable adapter payload snapshots whose clinical identity is unresolved.
+        These are not registered entities or inferred events.
+    operation_counts : dict of str to int
+        Diagnostic operation counters, not timing measurements.
+    identity_namespace, source_scope : str
+        Effective labels established at construction.
+
+    Notes
+    -----
+    A registered object has one graph owner. Lookups return the same live objects,
+    or None when missing. Collection properties return tuples in insertion order;
+    rekeying can move entries to the end. Graphs do not read files or own pixels.
+    Use mutation methods to maintain indexes; modifying consumer metadata is local.
+
+    Examples
+    --------
+    >>> from embed_data_model import DatasetGraph, Patient
+    >>> graph = DatasetGraph()
+    >>> patient = graph.register(Patient("P1"))
+    >>> graph.patient("P1") is patient
+    True
+    """
 
     def __init__(self, identity_namespace: Optional[str] = None,
                  source_scope: Optional[str] = None) -> None:
@@ -64,47 +112,221 @@ class DatasetGraph:
     def _values(self, kind: str) -> Tuple[Any, ...]:
         return tuple(self._registries[kind].values())
 
-    patients = property(lambda self: self._values("patient"))
-    exams = property(lambda self: self._values("exam"))
-    findings = property(lambda self: self._values("finding"))
-    procedures = property(lambda self: self._values("procedure"))
-    pathology = property(lambda self: self._values("pathology"))
-    registry_entries = property(lambda self: self._values("registry"))
-    images = property(lambda self: self._values("image"))
-    rois = property(lambda self: self._values("roi"))
-    issues = property(lambda self: tuple(self._issues))
+    @property
+    def patients(self) -> Tuple[Patient, ...]:
+        """Snapshot of live patients in registry insertion order; never a copy of entities."""
+        return self._values("patient")
+
+    @property
+    def exams(self) -> Tuple[Exam, ...]:
+        """Snapshot of live exams in registry insertion order; never a copy of entities."""
+        return self._values("exam")
+
+    @property
+    def findings(self) -> Tuple[Finding, ...]:
+        """Snapshot of live findings in registry insertion order; never a copy of entities."""
+        return self._values("finding")
+
+    @property
+    def procedures(self) -> Tuple[Procedure, ...]:
+        """Snapshot of live procedures in registry insertion order; never a copy of entities."""
+        return self._values("procedure")
+
+    @property
+    def pathology(self) -> Tuple[Pathology, ...]:
+        """Snapshot of live pathology in registry insertion order; never a copy of entities."""
+        return self._values("pathology")
+
+    @property
+    def registry_entries(self) -> Tuple[CancerRegistryEntry, ...]:
+        """Snapshot of live registry_entries in registry insertion order; never a copy of entities."""
+        return self._values("registry")
+
+    @property
+    def images(self) -> Tuple[MammogramImage, ...]:
+        """Snapshot of live images in registry insertion order; never a copy of entities."""
+        return self._values("image")
+
+    @property
+    def rois(self) -> Tuple[RegionOfInterest, ...]:
+        """Snapshot of live rois in registry insertion order; never a copy of entities."""
+        return self._values("roi")
+
+    @property
+    def issues(self) -> Tuple[Issue, ...]:
+        """Graph-local diagnostics; load_embed reports invocation issues separately."""
+        return tuple(self._issues)
+
+    @overload
+    def get(self, kind: Literal["patient"], key: Any) -> Optional[Patient]: ...
+
+    @overload
+    def get(self, kind: Literal["exam"], key: Any) -> Optional[Exam]: ...
+
+    @overload
+    def get(self, kind: Literal["finding"], key: Any) -> Optional[Finding]: ...
+
+    @overload
+    def get(self, kind: Literal["procedure"], key: Any) -> Optional[Procedure]: ...
+
+    @overload
+    def get(self, kind: Literal["pathology"], key: Any) -> Optional[Pathology]: ...
+
+    @overload
+    def get(self, kind: Literal["registry"], key: Any) -> Optional[CancerRegistryEntry]: ...
+
+    @overload
+    def get(self, kind: Literal["image"], key: Any) -> Optional[MammogramImage]: ...
+
+    @overload
+    def get(self, kind: Literal["roi"], key: Any) -> Optional[RegionOfInterest]: ...
+
+    @overload
+    def get(self, kind: str, key: Any) -> Any: ...
 
     def get(self, kind: str, key: Any) -> Any:
+        """Look up a live entity by registry kind and semantic key.
+
+        Parameters
+        ----------
+        kind : {"patient", "exam", "finding", "procedure", "pathology", "registry", "image", "roi"}
+            Registry to query; use the named lookup methods for typed key arguments.
+        key : hashable
+            Exact semantic identity; no normalization is performed here.
+
+        Returns
+        -------
+        MutableEntity or None
+            Existing live entity, or None if the key is absent.
+
+        Raises
+        ------
+        KeyError
+            Unknown registry kind.
+        TypeError
+            The key is not hashable.
+        """
+
         return self._registries[kind].get(key)
 
-    def patient(self, patient_id: str) -> Any:
+    def patient(self, patient_id: str) -> Optional[Patient]:
+        """Look up a live object by patient_id.
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self.get("patient", patient_id)
 
-    def exam(self, accession: str) -> Any:
+    def exam(self, accession: str) -> Optional[Exam]:
+        """Look up a live object by accession.
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self.get("exam", accession)
 
-    def finding(self, accession: str, finding_number: str) -> Any:
+    def finding(self, accession: str, finding_number: str) -> Optional[Finding]:
+        """Look up a live object by (accession, str(finding_number)).
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self.get("finding", (accession, str(finding_number)))
 
-    def procedure(self, identity: Any) -> Any:
+    def procedure(self, identity: ProcedureIdentity) -> Optional[Procedure]:
+        """Look up a live object by complete ProcedureIdentity.
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self.get("procedure", identity)
 
-    def image(self, image_id: str) -> Any:
+    def image(self, image_id: str) -> Optional[MammogramImage]:
+        """Look up a live object by model image_id.
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self.get("image", image_id)
 
-    def roi(self, image_id: str, roi_key: str) -> Any:
+    def roi(self, image_id: str, roi_key: str) -> Optional[RegionOfInterest]:
+        """Look up a live object by (image_id, str(roi_key)).
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self.get("roi", (image_id, str(roi_key)))
 
-    def registry_entry(self, patient_id: str, registry_id: str) -> Any:
+    def registry_entry(self, patient_id: str, registry_id: str) -> Optional[CancerRegistryEntry]:
+        """Look up a live object by (patient_id, str(registry_id)).
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self.get("registry", (patient_id, str(registry_id)))
 
-    def source_image(self, sop_uid: str) -> Any:
+    def source_image(self, sop_uid: str) -> Optional[MammogramImage]:
+        """Look up a live object by original source SOP UID.
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self._source_images.get(sop_uid)
 
-    def image_at_path(self, path: str) -> Any:
+    def image_at_path(self, path: str) -> Optional[MammogramImage]:
+        """Look up a live object by source path alias.
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self._path_images.get(path)
 
-    def roi_at_source(self, path: str, position: int) -> Any:
+    def roi_at_source(self, path: str, position: int) -> Optional[RegionOfInterest]:
+        """Look up a live object by (source path, zero-based collection position).
+
+        Returns
+        -------
+        object or None
+            The typed entity from this graph, or None when no matching key exists.
+            No object is created and no file is opened.
+        """
+
         return self._source_rois.get((path, position))
 
     def _check(self, values: Iterable[Any]) -> None:
@@ -309,7 +531,43 @@ class DatasetGraph:
             for field, value in plan.get(id(obj), {}).items():
                 object.__setattr__(obj, field, value)
 
+    @overload
+    def register(self, entity: _EntityT, *, boundary: Literal["copy_shared"] = "copy_shared") -> _EntityT: ...
+
+    @overload
+    def register(self, entity: Any, *, boundary: Literal["copy_shared"] = "copy_shared") -> Any: ...
+
     def register(self, entity: Any, *, boundary: str = "copy_shared") -> Any:
+        """Register an entity and its containment subtree, moving from another owner.
+
+        Parameters
+        ----------
+        entity : MutableEntity
+            Supported root, clinical entity, image or ROI. Subclasses are preserved.
+        boundary : {"copy_shared"}, optional
+            Only supported policy, default "copy_shared". Exclusive objects move by
+            identity; descendants still needed by outside parents stay there and
+            are deep-copied into the moved subtree. Copy hooks are honored.
+
+        Returns
+        -------
+        MutableEntity
+            The input root, retaining its concrete subclass. Crossing associations
+            retain semantic references that can resolve in a destination graph.
+
+        Raises
+        ------
+        ValueError
+            Unsupported boundary, semantic/source-UID collision on registration,
+            wrong ownership on pop, or inability to independently copy shared state.
+        TypeError
+            The entity kind is unsupported.
+
+        Notes
+        -----
+        Linked exams are associations, never containment descendants.
+        """
+
         self._boundary(boundary)
         if getattr(entity, "graph", None) is self:
             self._index_source(entity)
@@ -411,6 +669,14 @@ class DatasetGraph:
 
     def reference(self, source_kind: str, source_key: Any, target_kind: str,
                   target_key: Any, *, relation: str = "association") -> None:
+        """Record a directed semantic relationship, resolving now or when endpoints
+        register. source_kind and target_kind name registries; keys are exact
+        hashable identities. relation defaults to association; parent reverses
+        containment, linked makes symmetric exam links, and registry assigns
+        registry entries. Unsupported endpoints/relationships can raise KeyError or
+        TypeError.
+        """
+
         source = source_kind, source_key, relation
         target = target_kind, target_key
         self._references[source].add(target)
@@ -441,6 +707,8 @@ class DatasetGraph:
 
     @property
     def unresolved_references(self) -> Tuple[UnresolvedReference, ...]:
+        """Snapshot of missing-endpoint relationships; ordering is not guaranteed."""
+
         result = []
         for source, targets in self._references.items():
             for target in targets:
@@ -448,7 +716,12 @@ class DatasetGraph:
                     result.append(UnresolvedReference(source[0], str(source[1]), target[0], str(target[1]), "missing endpoint"))
         return tuple(result)
 
-    def claim_patient(self, exam: Any, patient_ids: Iterable[str]) -> None:
+    def claim_patient(self, exam: Exam, patient_ids: Iterable[str]) -> None:
+        """Union source patient IDs into exam claims. A unique claim assigns the owner;
+        conflicting claims clear it unless ownership was explicitly selected.
+        Mutates the exam and relationship indexes.
+        """
+
         claims = set(getattr(exam, "asserted_patient_ids", ())) | set(patient_ids)
         object.__setattr__(exam, "asserted_patient_ids", claims)
         if getattr(exam, "_owner_explicit", False):
@@ -456,7 +729,12 @@ class DatasetGraph:
         selected = next(iter(claims)) if len(claims) == 1 else None
         self._set_patient(exam, selected)
 
-    def assign_patient(self, exam: Any, patient_id: Optional[str]) -> None:
+    def assign_patient(self, exam: Exam, patient_id: Optional[str]) -> None:
+        """Explicitly assign a registered exam to patient_id, or None to clear
+        ownership. The patient need not exist yet. Source claims survive and this
+        choice persists across reload. Raises ValueError for a foreign exam.
+        """
+
         if exam.graph is not self:
             raise ValueError("Entity does not belong to this graph")
         object.__setattr__(exam, "_owner_explicit", True)
@@ -473,7 +751,35 @@ class DatasetGraph:
         if patient_id:
             self.reference("exam", key_of(exam), "patient", patient_id, relation="parent")
 
+    @overload
+    def attach(self, parent: MutableEntity, child: _EntityT) -> _EntityT: ...
+
+    @overload
+    def attach(self, parent: Any, child: Any) -> Any: ...
+
     def attach(self, parent: Any, child: Any) -> Any:
+        """Attach a child, registering/moving endpoints into this graph as needed.
+
+        Parameters
+        ----------
+        parent, child : MutableEntity
+            Compatible endpoints: patient/exam, exam/finding or image or procedure
+            or pathology or registry, finding/procedure or pathology,
+            procedure/pathology, or image/ROI.
+
+        Returns
+        -------
+        MutableEntity
+            The live child, retaining its type.
+
+        Raises
+        ------
+        ValueError
+            Conflicting semantic identity or incompatible ownership/context.
+        TypeError
+            Unsupported entity or relationship kind.
+        """
+
         self._check((*subtree(parent).values(), *subtree(child).values()))
         parent_kind, child_kind = kind_of(parent), kind_of(child)
         allowed = {"patient": {"exam"}, "exam": {"finding", "image", "procedure", "pathology", "registry"},
@@ -497,7 +803,35 @@ class DatasetGraph:
         parent._attach_local(child)
         self._parents[id(child)].add(id(parent))
 
+    @overload
+    def detach(self, parent: MutableEntity, child: _EntityT) -> _EntityT: ...
+
+    @overload
+    def detach(self, parent: Any, child: Any) -> Any: ...
+
     def detach(self, parent: Any, child: Any) -> Any:
+        """Remove a containment/association edge while keeping the child registered.
+
+        Parameters
+        ----------
+        parent, child : MutableEntity
+            Compatible endpoints: patient/exam, exam/finding or image or procedure
+            or pathology or registry, finding/procedure or pathology,
+            procedure/pathology, or image/ROI.
+
+        Returns
+        -------
+        MutableEntity
+            The live child, retaining its type.
+
+        Raises
+        ------
+        ValueError
+            Conflicting semantic identity or incompatible ownership/context.
+        TypeError
+            Unsupported entity or relationship kind.
+        """
+
         if parent.graph is not self or child.graph is not self:
             raise ValueError("Both endpoints must belong to this graph")
         self._detach(parent, child)
@@ -507,6 +841,11 @@ class DatasetGraph:
 
     def remove_reference(self, source_kind: str, source_key: Any,
                          target_kind: str, target_key: Any, *, relation: str) -> None:
+        """Remove one directed semantic reference and its pending indexes. Does not
+        detach an already resolved object edge; use detach to update containment
+        too.
+        """
+
         source = source_kind, source_key, relation
         target = target_kind, target_key
         self._references[source].discard(target)
@@ -518,6 +857,10 @@ class DatasetGraph:
         self._parents[id(child)].discard(id(parent))
 
     def clear_references(self, kind: str, key: Any, relation: str) -> None:
+        """Clear stored references for (kind, key, relation), without deleting
+        endpoints. This does not itself remove already resolved local edges.
+        """
+
         source = kind, key, relation
         targets = self._references.pop(source, set())
         self._pending[(kind, key)].discard(source)
@@ -525,7 +868,13 @@ class DatasetGraph:
             self._pending[target].discard(source)
             self._incoming[target].discard(source)
 
-    def set_linked_accessions(self, exam: Any, accessions: Iterable[str], *, merge: bool = False) -> None:
+    def set_linked_accessions(self, exam: Exam, accessions: Iterable[str], *, merge: bool = False) -> None:
+        """Replace an exam's supplied linked accession set, or union when merge=True
+        (default False). Empty input clears outgoing claims; incoming claims can
+        keep symmetric links resolved. Missing endpoints remain pending. Targets are
+        never deleted; set order is unspecified.
+        """
+
         values = set(accessions)
         if merge:
             values.update(exam.linked_accessions)
@@ -540,7 +889,12 @@ class DatasetGraph:
             if incoming[2] == "linked":
                 self._resolve_reference(incoming, ("exam", key_of(exam)))
 
-    def set_registry_assignments(self, exam: Any, keys: Iterable[Tuple[str, str]], *, merge: bool = False) -> None:
+    def set_registry_assignments(self, exam: Exam, keys: Iterable[Tuple[str, str]], *, merge: bool = False) -> None:
+        """Replace an exam's registry references with (patient_id, registry_id) keys,
+        or union when merge=True (default False). Empty input clears assignments.
+        Missing endpoints remain pending; registry entities are never deleted.
+        """
+
         values = set(keys)
         if merge:
             values.update(exam.registry_references)
@@ -551,7 +905,43 @@ class DatasetGraph:
         for key in values:
             self.reference("exam", key_of(exam), "registry", key, relation="registry")
 
+    @overload
+    def update(self, entity: _EntityT, **fields: Any) -> _EntityT: ...
+
+    @overload
+    def update(self, entity: Any, **fields: Any) -> Any: ...
+
     def update(self, entity: Any, **fields: Any) -> Any:
+        """Change fields in place while maintaining graph indexes and references.
+
+        Parameters
+        ----------
+        entity : MutableEntity
+            Entity already owned by this graph.
+        **fields : Any
+            Field names and replacement values. Constructor parameters describe
+            ordinary fields; consumer-defined attributes remain supported. Identity
+            changes propagate to dependent containment identities and references.
+            Source UID/path changes remove old aliases. No implicit validation runs.
+
+        Returns
+        -------
+        MutableEntity
+            The same Python object, retaining its concrete type.
+
+        Raises
+        ------
+        ValueError
+            Wrong graph owner, semantic collision, or original-image source UID collision.
+        AttributeError, TypeError
+            An attribute is read-only or a replacement cannot be represented.
+
+        Notes
+        -----
+        This is not a transaction for arbitrary fields. Earlier assignments can remain
+        if a later setter fails. Prefer assign_patient for explicit exam ownership.
+        """
+
         if entity.graph is not self:
             raise ValueError("Entity does not belong to this graph")
         protected = {"patient": {"patient_id"}, "exam": {"accession_number", "patient_id"},
@@ -577,7 +967,43 @@ class DatasetGraph:
         self.operation_counts["updated"] += 1
         return entity
 
+    @overload
+    def rekey(self, entity: _EntityT, **fields: Any) -> _EntityT: ...
+
+    @overload
+    def rekey(self, entity: Any, **fields: Any) -> Any: ...
+
     def rekey(self, entity: Any, **fields: Any) -> Any:
+        """Change fields in place while maintaining graph indexes and references.
+
+        Parameters
+        ----------
+        entity : MutableEntity
+            Entity already owned by this graph.
+        **fields : Any
+            Field names and replacement values. Constructor parameters describe
+            ordinary fields; consumer-defined attributes remain supported. Identity
+            changes propagate to dependent containment identities and references.
+            Source UID/path changes remove old aliases. No implicit validation runs.
+
+        Returns
+        -------
+        MutableEntity
+            The same Python object, retaining its concrete type.
+
+        Raises
+        ------
+        ValueError
+            Wrong graph owner, semantic collision, or original-image source UID collision.
+        AttributeError, TypeError
+            An attribute is read-only or a replacement cannot be represented.
+
+        Notes
+        -----
+        This is not a transaction for arbitrary fields. Earlier assignments can remain
+        if a later setter fails. Prefer assign_patient for explicit exam ownership.
+        """
+
         if entity.graph is not self:
             raise ValueError("Entity does not belong to this graph")
         owner_supplied = kind_of(entity) == "exam" and "patient_id" in fields
@@ -694,7 +1120,13 @@ class DatasetGraph:
                 obj._registry_entries.pop(old, None)
             self._resolve_reference(source, (kind, new))
 
-    def replace_rois(self, image: Any, rois: Iterable[Any]) -> None:
+    def replace_rois(self, image: MammogramImage, rois: Iterable[RegionOfInterest]) -> None:
+        """Replace an image's complete ROI collection, including manual ROIs. Consumes
+        rois once. Keys must be unique and image-local or ValueError is raised. Old
+        ROIs are popped and new ROIs attached; old references need not survive. Save
+        manual annotations before replacement.
+        """
+
         replacement = tuple(rois)
         keys = [key_of(roi) for roi in replacement]
         if len(set(keys)) != len(keys) or any(roi.image_id != image.image_id for roi in replacement):
@@ -705,7 +1137,43 @@ class DatasetGraph:
             self.attach(image, roi)
         self._index_source(image)
 
+    @overload
+    def pop(self, entity: _EntityT, *, boundary: Literal["copy_shared"] = "copy_shared") -> _EntityT: ...
+
+    @overload
+    def pop(self, entity: Any, *, boundary: Literal["copy_shared"] = "copy_shared") -> Any: ...
+
     def pop(self, entity: Any, *, boundary: str = "copy_shared") -> Any:
+        """Remove an entity and its subtree, returning the detached root.
+
+        Parameters
+        ----------
+        entity : MutableEntity
+            Supported root, clinical entity, image or ROI. Subclasses are preserved.
+        boundary : {"copy_shared"}, optional
+            Only supported policy, default "copy_shared". Exclusive objects move by
+            identity; descendants still needed by outside parents stay there and
+            are deep-copied into the moved subtree. Copy hooks are honored.
+
+        Returns
+        -------
+        MutableEntity
+            The input root, retaining its concrete subclass. Crossing associations
+            retain semantic references that can resolve in a destination graph.
+
+        Raises
+        ------
+        ValueError
+            Unsupported boundary, semantic/source-UID collision on registration,
+            wrong ownership on pop, or inability to independently copy shared state.
+        TypeError
+            The entity kind is unsupported.
+
+        Notes
+        -----
+        Linked exams are associations, never containment descendants.
+        """
+
         self._boundary(boundary)
         if entity.graph is not self:
             raise ValueError("Entity does not belong to this graph")
@@ -810,18 +1278,149 @@ class DatasetGraph:
                 if self._source_rois.get(address) is obj:
                     self._source_rois.pop(address, None)
 
-    def select(self, *, level: str, predicate: Callable[[Any], bool]) -> Any:
+    @overload
+    def select(self, *, level: Literal["patient"], predicate: Callable[[Patient], bool]) -> Selection[Patient]: ...
+
+    @overload
+    def select(self, *, level: Literal["exam"], predicate: Callable[[Exam], bool]) -> Selection[Exam]: ...
+
+    @overload
+    def select(self, *, level: Literal["finding"], predicate: Callable[[Finding], bool]) -> Selection[Finding]: ...
+
+    @overload
+    def select(self, *, level: Literal["procedure"], predicate: Callable[[Procedure], bool]) -> Selection[Procedure]: ...
+
+    @overload
+    def select(self, *, level: Literal["pathology"], predicate: Callable[[Pathology], bool]) -> Selection[Pathology]: ...
+
+    @overload
+    def select(self, *, level: Literal["registry"], predicate: Callable[[CancerRegistryEntry], bool]) -> Selection[CancerRegistryEntry]: ...
+
+    @overload
+    def select(self, *, level: Literal["image"], predicate: Callable[[MammogramImage], bool]) -> Selection[MammogramImage]: ...
+
+    @overload
+    def select(self, *, level: Literal["roi"], predicate: Callable[[RegionOfInterest], bool]) -> Selection[RegionOfInterest]: ...
+
+    def select(self, *, level: Literal["patient", "exam", "finding", "procedure", "pathology", "registry", "image", "roi"], predicate: Callable[[Any], bool]) -> Selection[Any]:
+        """Select live objects at one registry level.
+
+        Parameters
+        ----------
+        level : {"patient", "exam", "finding", "procedure", "pathology", "registry", "image", "roi"}
+            Registry to inspect in insertion order.
+        predicate : callable
+            Called once per object; truthy results include that object. Exceptions
+            propagate. The callback should not change registry membership.
+
+        Returns
+        -------
+        Selection
+            Non-owning snapshot of membership with live typed objects. Later changes
+            do not re-evaluate the predicate; editing an object affects the graph.
+
+        Raises
+        ------
+        ValueError
+            Unknown level.
+        """
+
         from embed_data_model.core.selection import select
         return select(self, level=level, predicate=predicate)
 
-    def partition(self, *, level: str, key: Callable[[Any], Any]) -> Any:
+    @overload
+    def partition(self, *, level: Literal["patient"], key: Callable[[Patient], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: Literal["exam"], key: Callable[[Exam], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: Literal["finding"], key: Callable[[Finding], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: Literal["procedure"], key: Callable[[Procedure], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: Literal["pathology"], key: Callable[[Pathology], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: Literal["registry"], key: Callable[[CancerRegistryEntry], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: Literal["image"], key: Callable[[MammogramImage], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: Literal["roi"], key: Callable[[RegionOfInterest], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    @overload
+    def partition(self, *, level: str, key: Callable[[Any], Any]) -> Dict[Any, DatasetGraph]: ...
+
+    def partition(self, *, level: str, key: Callable[[Any], Any]) -> Dict[Any, DatasetGraph]:
+        """Make independent owning graphs grouped by a callback.
+
+        Parameters
+        ----------
+        level : {"patient", "exam", "finding", "procedure", "pathology", "registry", "image", "roi"}
+            Registry to group in insertion order.
+        key : callable
+            Returns a hashable group key, or a list/set/frozenset of keys to include
+            the object in multiple outputs. A tuple is a single key. An empty list
+            omits the object. Exceptions propagate; avoid mutating membership.
+
+        Returns
+        -------
+        dict of hashable to DatasetGraph
+            One independent graph per group. Containment and consumer attributes are
+            deep-copied, preserving subclasses and sharing within each output.
+            Ancestor shells have context=True and contain only selected branches.
+            Dictionary order follows first occurrence of group keys (set order is
+            unspecified). Cross-boundary associations remain semantic references.
+
+        Raises
+        ------
+        ValueError
+            Unknown level or consumer state that cannot be independently copied.
+        TypeError
+            A group key is not hashable.
+
+        Notes
+        -----
+        Consumer __deepcopy__ hooks are honored. Large overlapping groups multiply
+        memory use; this synchronous operation has no cancellation control.
+        """
+
         from embed_data_model.core.selection import partition
         return partition(self, level=level, key=key)
 
-    def partition_by_validation(self, *, level: str, validator: Any = None) -> Any:
+    def partition_by_validation(self, *, level: str,
+                                validator: Optional[Callable[[Any], ValidationResult]] = None,
+                                ) -> Tuple[DatasetGraph, DatasetGraph]:
+        """Partition into independent (valid, invalid) graphs.
+
+        Parameters
+        ----------
+        level : str
+            One of patient, exam, finding, procedure, pathology, registry, image, roi.
+        validator : callable or None, optional
+            Maps an object to ValidationResult. None uses validate with its default
+            aggregate checks and warning policy. Exceptions propagate.
+
+        Returns
+        -------
+        tuple of DatasetGraph, DatasetGraph
+            Valid graph first, invalid graph second. Missing groups are empty graphs
+            with default namespace/scope. Copy and error rules match partition.
+        """
+
         from embed_data_model.core.validation import validate
         parts = self.partition(level=level, key=lambda obj: (validator or validate)(obj).valid)
         return parts.get(True, DatasetGraph()), parts.get(False, DatasetGraph())
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new dictionary of registry names to serialized entity lists in
+        insertion order. Each entity serializes separately; repeated entities across
+        registries can appear more than once. Namespace, diagnostics and unresolved
+        records are not included. This is an export, not a graph round-trip format.
+        """
+
         return {kind: [obj.to_dict() for obj in values.values()] for kind, values in self._registries.items()}

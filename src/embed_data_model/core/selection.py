@@ -3,45 +3,199 @@ from __future__ import annotations
 
 from copy import copy, deepcopy
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterator, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, Iterator, Literal, Tuple, TypeVar, overload
 
 from embed_data_model.core.entity import MutableEntity
 from embed_data_model.core.graph import DatasetGraph, key_of, kind_of, subtree
 
 
-@dataclass(frozen=True)
-class Selection:
-    """A non-owning view of live objects; edits affect the source graph.
+if TYPE_CHECKING:
+    from embed_data_model.clinical.patients import Patient
+    from embed_data_model.clinical.exams import Exam
+    from embed_data_model.clinical.findings import Finding
+    from embed_data_model.clinical.procedures import Procedure
+    from embed_data_model.clinical.pathology import Pathology, CancerRegistryEntry
+    from embed_data_model.imaging.images import MammogramImage
+    from embed_data_model.imaging.rois import RegionOfInterest
 
-    Membership is evaluated when the view is created. Objects remain live, but
-    later predicate changes do not automatically re-evaluate the selection.
+_SelectedT = TypeVar("_SelectedT")
+
+
+@dataclass(frozen=True)
+class Selection(Generic[_SelectedT]):
+    """Non-owning snapshot of live graph objects.
+
+    Attributes
+    ----------
+    graph : DatasetGraph
+        Source graph; editing the selected objects affects it.
+    level : str
+        Selected registry kind.
+    objects : tuple
+        Live objects in source insertion order when evaluated. Membership is
+        never automatically recomputed after object or graph changes.
+    owning : bool, optional
+        Descriptive marker, default False; does not confer ownership.
+
+    Notes
+    -----
+    Iteration yields objects; len returns the snapshot size. The container is
+    frozen but its objects remain mutable.
     """
     graph: DatasetGraph
+    """Source graph; editing the selected objects affects it."""
     level: str
-    objects: Tuple[Any, ...]
+    """Selected registry kind."""
+    objects: Tuple[_SelectedT, ...]
+    """Live objects in source insertion order when evaluated. Membership is never
+    automatically recomputed after object or graph changes.
+    """
     owning: bool = False
+    """Descriptive marker, default False; does not confer ownership."""
 
-    def __iter__(self) -> Iterator[Any]:
+    def __iter__(self) -> Iterator[_SelectedT]:
         return iter(self.objects)
 
     def __len__(self) -> int:
         return len(self.objects)
 
 
+@overload
+def select(graph: DatasetGraph, *, level: Literal['patient'], predicate: Callable[[Patient], bool]) -> Selection[Patient]:
+    ...
+
+@overload
+def select(graph: DatasetGraph, *, level: Literal['exam'], predicate: Callable[[Exam], bool]) -> Selection[Exam]:
+    ...
+
+@overload
+def select(graph: DatasetGraph, *, level: Literal['finding'], predicate: Callable[[Finding], bool]) -> Selection[Finding]:
+    ...
+
+@overload
+def select(graph: DatasetGraph, *, level: Literal['procedure'], predicate: Callable[[Procedure], bool]) -> Selection[Procedure]:
+    ...
+
+@overload
+def select(graph: DatasetGraph, *, level: Literal['pathology'], predicate: Callable[[Pathology], bool]) -> Selection[Pathology]:
+    ...
+
+@overload
+def select(graph: DatasetGraph, *, level: Literal['registry'], predicate: Callable[[CancerRegistryEntry], bool]) -> Selection[CancerRegistryEntry]:
+    ...
+
+@overload
+def select(graph: DatasetGraph, *, level: Literal['image'], predicate: Callable[[MammogramImage], bool]) -> Selection[MammogramImage]:
+    ...
+
+@overload
+def select(graph: DatasetGraph, *, level: Literal['roi'], predicate: Callable[[RegionOfInterest], bool]) -> Selection[RegionOfInterest]:
+    ...
+
 def select(graph: DatasetGraph, *, level: str,
-           predicate: Callable[[Any], bool]) -> Selection:
+           predicate: Callable[[Any], bool]) -> Selection[Any]:
+    """Select live objects at one registry level.
+
+    Parameters
+    ----------
+    level : {"patient", "exam", "finding", "procedure", "pathology", "registry", "image", "roi"}
+        Registry to inspect in insertion order.
+    predicate : callable
+        Called once per object; truthy results include that object. Exceptions
+        propagate. The callback should not change registry membership.
+
+    Returns
+    -------
+    Selection
+        Non-owning snapshot of membership with live typed objects. Later changes
+        do not re-evaluate the predicate; editing an object affects the graph.
+
+    Raises
+    ------
+    ValueError
+        Unknown level.
+
+    Notes
+    -----
+    graph is the source DatasetGraph; no ownership is transferred.
+    """
+
     if level not in graph._registries:
         raise ValueError("Unknown selection level: " + level)
     return Selection(graph, level, tuple(obj for obj in graph._registries[level].values() if predicate(obj)))
 
 
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['patient'], key: Callable[[Patient], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['exam'], key: Callable[[Exam], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['finding'], key: Callable[[Finding], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['procedure'], key: Callable[[Procedure], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['pathology'], key: Callable[[Pathology], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['registry'], key: Callable[[CancerRegistryEntry], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['image'], key: Callable[[MammogramImage], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: Literal['roi'], key: Callable[[RegionOfInterest], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
+@overload
+def partition(graph: DatasetGraph, *, level: str, key: Callable[[Any], Any]) -> Dict[Any, DatasetGraph]:
+    ...
+
 def partition(graph: DatasetGraph, *, level: str,
               key: Callable[[Any], Any]) -> Dict[Any, DatasetGraph]:
-    """Copy groups independently; list/set keys place an object in many groups.
+    """Make independent owning graphs grouped by a callback.
 
-    Scalar keys (including tuples) identify one group. Returning an empty list
-    omits an object. Ancestor shells carry ``context=True`` and only selected
-    branches. A consumer copy failure raises ValueError; __deepcopy__ is honored.
+    Parameters
+    ----------
+    level : {"patient", "exam", "finding", "procedure", "pathology", "registry", "image", "roi"}
+        Registry to group in insertion order.
+    key : callable
+        Returns a hashable group key, or a list/set/frozenset of keys to include
+        the object in multiple outputs. A tuple is a single key. An empty list
+        omits the object. Exceptions propagate; avoid mutating membership.
+
+    Returns
+    -------
+    dict of hashable to DatasetGraph
+        One independent graph per group. Containment and consumer attributes are
+        deep-copied, preserving subclasses and sharing within each output.
+        Ancestor shells have context=True and contain only selected branches.
+        Dictionary order follows first occurrence of group keys (set order is
+        unspecified). Cross-boundary associations remain semantic references.
+
+    Raises
+    ------
+    ValueError
+        Unknown level or consumer state that cannot be independently copied.
+    TypeError
+        A group key is not hashable.
+
+    Notes
+    -----
+    Consumer __deepcopy__ hooks are honored. Large overlapping groups multiply
+    memory use; this synchronous operation has no cancellation control.
+
+    The graph parameter supplies the source DatasetGraph.
     """
     if level not in graph._registries:
         raise ValueError("Unknown partition level: " + level)
