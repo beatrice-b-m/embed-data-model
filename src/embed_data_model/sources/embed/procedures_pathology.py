@@ -21,6 +21,29 @@ def normalize_procedure(
     columns: Mapping[str, Optional[str]],
     source: Optional[SourceRef] = None,
 ) -> tuple[Optional[Procedure], tuple[Issue, ...]]:
+    """Normalize one performed procedure without guessing missing identity.
+
+    Parameters
+    ----------
+    row : mapping
+        Source column names to raw values; not mutated.
+    columns : mapping
+        Semantic field names to physical columns; None bindings omit fields.
+        Use the matching map from resolve_columns for EMBED defaults.
+    source : SourceRef or None
+        Physical diagnostic provenance, not clinical identity.
+
+    Returns
+    -------
+    Procedure or None, tuple of Issue
+        Resolved entity only with complete patient/date/type/known-side identity.
+        Missing components produce None and an incomplete_procedure_identity issue.
+
+    Notes
+    -----
+    No graph is mutated, no files are read and no scientific validity is inferred.
+    """
+
     patient_id = _identifier(row, columns.get("patient_id"))
     performed_date = _text(
         row, columns.get("performed_date", columns.get("procedure_date"))
@@ -75,6 +98,30 @@ def normalize_pathology(
     tuple[PathologyObservation, ...],
     tuple[Issue, ...],
 ]:
+    """Normalize reported diagnosis and ordered pathology descriptor slots.
+
+    Parameters
+    ----------
+    row : mapping
+        Source column names to raw values; not mutated.
+    columns : mapping
+        Semantic field names to physical columns; None bindings omit fields.
+        Use the matching map from resolve_columns for EMBED defaults.
+    source : SourceRef or None
+        Physical diagnostic provenance, not clinical identity.
+
+    Returns
+    -------
+    PathologyDiagnosis or None, tuple of PathologyObservation, tuple of Issue
+        Missing diagnosis fields yield None. Descriptor slots 1–10 retain source
+        order and duplicates; source_ordinal is the one-based slot number here.
+        No input facts yields (None, (), ()). No clinical event identity is inferred.
+
+    Notes
+    -----
+    No graph is mutated, no files are read and no scientific validity is inferred.
+    """
+
     observations = tuple(
         PathologyObservation(
             descriptor=descriptor,

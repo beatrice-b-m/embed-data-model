@@ -25,31 +25,82 @@ from embed_data_model.core.primitives import Laterality
 
 @dataclass(frozen=True)
 class MagViewSourceEvidence:
-    """Serializable source-code evidence used during MagView normalization."""
+    """Serializable source-code evidence used during MagView normalization.
+
+    Attributes
+    ----------
+    field : str
+        Source column name associated with the evidence or warning.
+    raw_value : str
+        Original unnormalized value retained as source evidence; not a semantic
+        identity.
+    normalized_kind : str
+        Non-empty label describing the normalized concept.
+    normalized_value : str
+        Normalized value retained alongside source evidence.
+    """
 
     field: str
+    """Source column name associated with the evidence or warning."""
     raw_value: str
+    """Original unnormalized value retained as source evidence; not a semantic identity."""
     normalized_kind: str
+    """Non-empty label describing the normalized concept."""
     normalized_value: str
+    """Normalized value retained alongside source evidence."""
 
 
 @dataclass(frozen=True)
 class MagViewNormalizationWarning:
-    """Serializable warning emitted for unknown or conflicting source values."""
+    """Serializable warning emitted for unknown or conflicting source values.
+
+    Attributes
+    ----------
+    code : str
+        Non-empty machine-readable diagnostic code.
+    message : str
+        Non-empty human-readable diagnostic explanation.
+    field : Optional[str]
+        Source column name associated with the evidence or warning. Default:
+        None.
+    raw_value : Optional[str]
+        Original unnormalized value retained as source evidence; not a semantic
+        identity. Default: None.
+    """
 
     code: str
+    """Non-empty machine-readable diagnostic code."""
     message: str
+    """Non-empty human-readable diagnostic explanation."""
     field: Optional[str] = None
+    """Source column name associated with the evidence or warning. Default: None."""
     raw_value: Optional[str] = None
+    """Original unnormalized value retained as source evidence; not a semantic
+    identity. Default: None.
+    """
 
 
 @dataclass(frozen=True)
 class MagViewLocationNormalization:
-    """Normalized MagView location result and source evidence."""
+    """Normalized MagView location result and source evidence.
+
+    Attributes
+    ----------
+    position : AnatomicalPosition
+        Normalized AnatomicalPosition; unobserved axes remain UNKNOWN.
+    evidence : Tuple[MagViewSourceEvidence, ...]
+        Ordered evidence for the normalized source codes. Default: ().
+    warnings : Tuple[MagViewNormalizationWarning, ...]
+        Diagnostic messages/records in emission order; empty means none emitted.
+        Default: ().
+    """
 
     position: AnatomicalPosition
+    """Normalized AnatomicalPosition; unobserved axes remain UNKNOWN."""
     evidence: Tuple[MagViewSourceEvidence, ...] = ()
+    """Ordered evidence for the normalized source codes. Default: ()."""
     warnings: Tuple[MagViewNormalizationWarning, ...] = ()
+    """Diagnostic messages/records in emission order; empty means none emitted. Default: ()."""
 
 
 @dataclass(frozen=True)
@@ -187,6 +238,28 @@ def normalize_magview_location(
     axes when present. Explicit depth is applied before location-derived depth,
     so it has precedence over defaults implied by codes such as subareolar or
     axillary tail.
+
+    Parameters
+    ----------
+    laterality : object
+        Side accepted by Laterality.coerce. Non-unilateral values emit a warning.
+    location_code, depth_code, clock_code : object, optional
+        Source codes, delimited strings or iterables; defaults None mean absent.
+        Location examples include OU and IN; depth accepts A/M/P; clock accepts
+        hours 1–12. Unknown/conflicting codes are retained in warnings/evidence.
+
+    Returns
+    -------
+    MagViewLocationNormalization
+        Anatomical position plus ordered evidence and warnings. Unknown axes
+        remain UNKNOWN and absent clock/named location remains None. Inputs are
+        not mutated. This does not localize a finding in an image.
+
+    Examples
+    --------
+    >>> result = normalize_magview_location(laterality="L", location_code="OU")
+    >>> result.position.quadrant.ml.value
+    'lateral'
     """
 
     side = Laterality.coerce(laterality)

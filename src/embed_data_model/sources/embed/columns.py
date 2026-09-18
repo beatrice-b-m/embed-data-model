@@ -189,7 +189,27 @@ _REQUIRED = {
 def resolve_columns(
     overrides: Optional[Mapping[str, Mapping[str, Optional[str]]]],
 ) -> dict[str, dict[str, Optional[str]]]:
-    """Merge validated partial overrides with EMBED's default field names."""
+    """Return mutable per-table column maps merged with EMBED defaults.
+
+    Parameters
+    ----------
+    overrides : mapping or None
+        Table name to partial semantic-field-to-physical-column mapping. None
+        copies all defaults. None field bindings disable optional fields only;
+        supported names are the keys of DEFAULT_COLUMNS. No input is mutated.
+
+    Returns
+    -------
+    dict of str to dict
+        Independent table maps. DEFAULT_COLUMNS stays read-only and unchanged.
+
+    Raises
+    ------
+    TypeError
+        overrides or a field map is not a mapping.
+    ValueError
+        Unknown table/semantic field, blank column, or unbound required field.
+    """
 
     resolved = {table: dict(fields) for table, fields in DEFAULT_COLUMNS.items()}
     if overrides is None:

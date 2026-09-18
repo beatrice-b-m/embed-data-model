@@ -91,6 +91,32 @@ def normalize_medication_history(
     patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[MedicationHistoryObservation], tuple[Issue, ...]]:
+    """Normalize one patient-reported medication row.
+
+    Parameters
+    ----------
+    row : mapping
+        Source column names to raw values; not mutated.
+    columns : mapping
+        Semantic field names to physical columns; None bindings omit fields.
+        Use the matching map from resolve_columns for EMBED defaults.
+    source : SourceRef or None
+        Physical diagnostic provenance, not clinical identity.
+    patient_id : str
+        Non-empty patient ID supplied by the loader/caller.
+    record_id : str or None, optional
+        Explicit patient-scoped record ID; None (default) is an unkeyed snapshot.
+
+    Returns
+    -------
+    MedicationHistoryObservation or None, tuple of Issue
+        Reported fact and diagnostics; None if required category/medication is absent.
+
+    Notes
+    -----
+    No graph is mutated, no files are read and no scientific validity is inferred.
+    """
+
     issues: list[Issue] = []
     raw_category = _upper(row, columns["category"])
     raw_code = _upper(row, columns["medication"])
@@ -163,6 +189,32 @@ def normalize_procedure_history(
     patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[ProcedureHistoryObservation], tuple[Issue, ...]]:
+    """Normalize one patient-reported prior procedure row.
+
+    Parameters
+    ----------
+    row : mapping
+        Source column names to raw values; not mutated.
+    columns : mapping
+        Semantic field names to physical columns; None bindings omit fields.
+        Use the matching map from resolve_columns for EMBED defaults.
+    source : SourceRef or None
+        Physical diagnostic provenance, not clinical identity.
+    patient_id : str
+        Non-empty patient ID supplied by the loader/caller.
+    record_id : str or None, optional
+        Explicit patient-scoped record ID; None (default) is an unkeyed snapshot.
+
+    Returns
+    -------
+    ProcedureHistoryObservation or None, tuple of Issue
+        Reported fact and diagnostics; None if required category/procedure is absent.
+
+    Notes
+    -----
+    No graph is mutated, no files are read and no scientific validity is inferred.
+    """
+
     issues: list[Issue] = []
     raw_category = _upper(row, columns["category"])
     raw_code = _upper(row, columns["procedure"])

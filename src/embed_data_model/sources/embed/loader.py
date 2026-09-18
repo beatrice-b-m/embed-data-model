@@ -8,7 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from math import isfinite
 from numbers import Integral, Real
-from typing import Any, Callable, Mapping, Optional, Sequence, Union
+from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Union
 
 from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.findings import (
@@ -27,7 +27,7 @@ from embed_data_model.core.anatomy import AnatomicalPosition, Quadrant
 from embed_data_model.core.graph import DatasetGraph
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, IssueSeverity, SourceRef
-from embed_data_model.core.tables import TableNormalizationError, TableRecord, iter_records
+from embed_data_model.core.tables import TableNormalizationError, TableRecord, _TableInput, iter_records
 from embed_data_model.sources.embed.columns import resolve_columns
 from embed_data_model.sources.embed.histories import (
     normalize_medication_history,
@@ -42,11 +42,32 @@ _MISSING = object()
 
 @dataclass(frozen=True)
 class LoadReport:
-    """The graph and invocation-local issues produced by one load."""
+    """Result of one synchronous loading invocation.
+
+    Attributes
+    ----------
+    graph : DatasetGraph
+        Live owning graph, identical to ``into`` when supplied to load_embed.
+    issues : tuple of Issue
+        Diagnostics from this invocation only, in adapter emission order. An
+        empty tuple is not a guarantee of clinical completeness or validity.
+    source_scope : str
+        Effective physical-source label used for this invocation.
+
+    Notes
+    -----
+    The report is frozen; its graph remains mutable. Issues are not automatically
+    copied into graph.issues. Run validate explicitly for quality checks.
+    """
 
     graph: DatasetGraph
+    """Live owning graph, identical to ``into`` when supplied to load_embed."""
     issues: tuple[Issue, ...]
+    """Diagnostics from this invocation only, in adapter emission order. An empty
+    tuple is not a guarantee of clinical completeness or validity.
+    """
     source_scope: str
+    """Effective physical-source label used for this invocation."""
 
 
 @dataclass(frozen=True)
@@ -61,33 +82,112 @@ class _InputRow:
 
 def load_embed(
     *,
-    patients: Any = None,
-    exams: Any = None,
-    findings: Any = None,
-    images: Any = None,
-    rois: Any = None,
-    hormone_history: Any = None,
-    procedure_history: Any = None,
-    procedures: Any = None,
-    pathology: Any = None,
-    magview: Any = None,
-    registry: Any = None,
-    registry_rows: Any = None,
+    patients: Optional[_TableInput] = None,
+    exams: Optional[_TableInput] = None,
+    findings: Optional[_TableInput] = None,
+    images: Optional[_TableInput] = None,
+    rois: Optional[_TableInput] = None,
+    hormone_history: Optional[_TableInput] = None,
+    procedure_history: Optional[_TableInput] = None,
+    procedures: Optional[_TableInput] = None,
+    pathology: Optional[_TableInput] = None,
+    magview: Optional[_TableInput] = None,
+    registry: Optional[_TableInput] = None,
+    registry_rows: Optional[_TableInput] = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
     identity_namespace: Optional[str] = None,
     source_keys: Optional[Mapping[str, SourceKeySelector]] = None,
     columns: Optional[Mapping[str, Mapping[str, Optional[str]]]] = None,
-    mode: str = "refresh",
+    mode: Literal["refresh", "merge"] = "refresh",
     retain_raw: bool = False,
 ) -> LoadReport:
-    """Load optional EMBED tables into one mutable semantic graph.
+    """Load any supported subset of EMBED tables into a mutable graph.
 
-    One invocation is one complete grouped snapshot.  ``refresh`` resets the
-    bound adapter-managed fields for each addressed grain; ``merge`` applies
-    supplied non-null fields and requires explicit collection identifiers where
-    equality cannot be established.  A missing table never refreshes that
-    grain, and a child projection only ensures its parents.
+    Parameters
+    ----------
+    patients, exams, findings : iterable of mappings or DataFrame-like, optional
+        Narrow clinical tables. Default None skips the grain. Each iterable is
+        consumed and materialized once; rows need semantic IDs in mapped columns.
+    images, rois : iterable of mappings or DataFrame-like, optional
+        Image metadata and complete image-local ROI collections. Default None
+        skips explicit input. Image rows can also project ROI collections.
+        Missing/null ROI coordinates preserve the collection; an explicit empty
+        list clears it. Explicit rois take precedence for addressed images.
+    hormone_history, procedure_history : iterable of mappings or DataFrame-like, optional
+        Patient-reported facts, not verified performed procedures. Default None
+        skips the table. Merge of unkeyed history requires explicit record IDs.
+    procedures, pathology : iterable of mappings or DataFrame-like, optional
+        Performed procedures and reported pathology bundles; default None.
+    magview : iterable of mappings or DataFrame-like, optional
+        Wide rows projected into clinical grains and supplied associations.
+        Default None. Wide and narrow projections are reconciled together.
+    registry, registry_rows : iterable of mappings or DataFrame-like, optional
+        Patient-scoped registry entries. Both default None; registry_rows is an
+        alias and cannot be supplied together with registry. Payload columns are
+        unbound by default and must be configured explicitly.
+    into : DatasetGraph or None, optional
+        Existing graph to mutate in place; None creates a graph. Existing entity
+        objects and consumer metadata survive refresh at matching semantic keys.
+    source_scope : str or None, optional
+        Non-empty diagnostic materialization label. None uses the target graph's
+        scope ("in-memory" for a new graph); does not change an existing scope.
+    identity_namespace : str or None, optional
+        Namespace label, default "default" for a new graph. If supplied with
+        into, must match its namespace. This is not a prefix applied to IDs.
+    source_keys : mapping or None, optional
+        Table name to physical column name or row callback. None omits physical
+        keys. These diagnose rows; neither keys, indexes nor ordinals supply
+        missing clinical identity. Callback/key failures become issues.
+    columns : mapping or None, optional
+        Table name to semantic-field-to-column overrides. None uses
+        ``sources.embed.columns.DEFAULT_COLUMNS``. Partial maps retain defaults;
+        a None binding disables an optional field. Required fields cannot be
+        unbound. Supported table names are the input names except registry_rows.
+    mode : {"refresh", "merge"}, optional
+        Default "refresh" resets bound adapter-managed scalars at addressed
+        grains, including absent/null fields. "merge" applies non-null values;
+        conflicting populated facts become unknown with an issue. Missing tables
+        and unspecified descendant grains survive either mode.
+    retain_raw : bool, optional
+        Compatibility control, default False. Currently validated but otherwise
+        unused: True does not retain a raw-row ledger.
+
+    Returns
+    -------
+    LoadReport
+        The live graph, invocation-local issues, and effective source scope.
+        Loading does not automatically run quality validation.
+
+    Raises
+    ------
+    TypeError
+        Invalid into, retain_raw, source_keys or columns shape, or both registry
+        aliases supplied.
+    ValueError
+        Invalid mode, scope, namespace, column binding or source-key table.
+
+    Notes
+    -----
+    One invocation is one complete grouped snapshot. Assemble complete semantic
+    objects across stream chunks before refresh. The call is synchronous, has no
+    cancellation control, and may partially mutate the graph before an exception.
+    There is no row limit; memory use grows with the materialized inputs. No files
+    or pixels are opened. Objects own metadata, not file resources.
+
+    ROI input replaces the complete addressed collection in either mode, including
+    manual annotations. Save/pop manual ROIs before replacement if needed.
+    Association refresh replaces supplied sets; merge unions them. Explicit null
+    clears a supplied association set in refresh; absent columns preserve it.
+
+    Examples
+    --------
+    >>> from embed_data_model import load_embed
+    >>> report = load_embed(patients=[{"empi_anon": "P1"}])
+    >>> report.graph.patient("P1").patient_id
+    'P1'
+    >>> report.issues
+    ()
     """
 
     if into is not None and not isinstance(into, DatasetGraph):

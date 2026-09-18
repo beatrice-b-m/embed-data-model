@@ -11,35 +11,96 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Tuple, Union, cast
+from typing import Any, Callable, Iterable, Iterator, Mapping, Optional, Tuple, Union, Literal, Protocol, cast
 
 from embed_data_model.core.source import CanonicalKey, canonicalize_source_key
 
 
 KeyCallback = Callable[[Mapping[Any, Any]], Any]
+
+class _DataFrameLike(Protocol):
+    """Structural table input; no runtime pandas dependency is required."""
+
+    @property
+    def index(self) -> Any: ...
+
+    @property
+    def columns(self) -> Any: ...
+
+    def to_dict(self, orient: Literal["records"]) -> list[dict[Any, Any]]: ...
+
+
+_TableInput = Union[Iterable[Mapping[str, Any]], _DataFrameLike]
+
 KeySelector = Optional[Union[str, KeyCallback]]
 
 
 @dataclass(frozen=True)
 class TableIssue:
-    """A shape-level problem that a source loader can convert to an Issue."""
+    """A shape-level problem that a source loader can convert to an Issue.
+
+    Attributes
+    ----------
+    code : str
+        Non-empty machine-readable diagnostic code.
+    message : str
+        Non-empty human-readable diagnostic explanation.
+    ordinal : int
+        Zero-based physical row position for diagnostics only; never clinical
+        identity.
+    severity : str
+        Diagnostic level: info, warning or error. Errors invalidate
+        ValidationResult; warnings do not by default. Default: 'error'.
+    key_name : Optional[str]
+        Requested physical key column, or None for a callback/unspecified
+        column. Default: None.
+    raw_key : Any
+        Original key value retained for diagnostics; excluded from
+        equality/hash. Default: None.
+    """
 
     code: str
+    """Non-empty machine-readable diagnostic code."""
     message: str
+    """Non-empty human-readable diagnostic explanation."""
     ordinal: int
+    """Zero-based physical row position for diagnostics only; never clinical identity."""
     severity: str = "error"
+    """Diagnostic level: info, warning or error. Errors invalidate
+    ValidationResult; warnings do not by default. Default: 'error'.
+    """
     key_name: Optional[str] = None
+    """Requested physical key column, or None for a callback/unspecified column. Default: None."""
     raw_key: Any = field(default=None, compare=False, hash=False, repr=False)
+    """Original key value retained for diagnostics; excluded from equality/hash. Default: None."""
 
 
 @dataclass(frozen=True)
 class TableRecord:
-    """One normalized mapping and an optional physical diagnostic key."""
+    """One normalized mapping and an optional physical diagnostic key.
+
+    Attributes
+    ----------
+    source_key : Optional[CanonicalKey]
+        Physical source row key; does not supply clinical identity.
+    mapping : Mapping[Any, Any]
+        Shallow-copied read-only row mapping; nested values are not deep-copied.
+    ordinal : int
+        Zero-based physical row position for diagnostics only; never clinical
+        identity.
+    issues : Tuple[TableIssue, ...]
+        Ordered diagnostics supplied by this operation; empty means none.
+        Default: ().
+    """
 
     source_key: Optional[CanonicalKey]
+    """Physical source row key; does not supply clinical identity."""
     mapping: Mapping[Any, Any]
+    """Shallow-copied read-only row mapping; nested values are not deep-copied."""
     ordinal: int
+    """Zero-based physical row position for diagnostics only; never clinical identity."""
     issues: Tuple[TableIssue, ...] = ()
+    """Ordered diagnostics supplied by this operation; empty means none. Default: ()."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "mapping", MappingProxyType(dict(self.mapping)))
@@ -59,7 +120,21 @@ class TableRecord:
 
 
 class TableNormalizationError(ValueError):
-    """A table-level shape error with fields suitable for an Issue."""
+    """Table-level shape error raised by iter_records.
+
+    Parameters
+    ----------
+    code : str
+        Machine-readable diagnostic code, also exposed as .code.
+    message : str
+        Human-readable text returned by str(error).
+    ordinal : int or None, optional
+        Zero-based row position, exposed as .ordinal; None means table-wide.
+
+    Notes
+    -----
+    This is a ValueError subclass. Per-row source-key failures are TableIssue
+    values attached to records rather than exceptions."""
 
     def __init__(self, code: str, message: str, ordinal: Optional[int] = None) -> None:
         self.code = code
@@ -67,13 +142,37 @@ class TableNormalizationError(ValueError):
         super().__init__(message)
 
 
-def iter_records(table: Any, key: KeySelector = None) -> Iterator[TableRecord]:
-    """Yield normalized records from mappings or a pandas-like DataFrame.
+def iter_records(table: Optional[_TableInput], key: KeySelector = None) -> Iterator[TableRecord]:
+    """Normalize table rows without assigning clinical identities.
 
-    Requested-key failures are attached to their row and never silently fall
-    back to an index or position.  All rows are yielded so semantic loaders can
-    use their own identifiers even when a physical diagnostic key is missing,
-    duplicated, or malformed.
+    Parameters
+    ----------
+    table : iterable of mappings, DataFrame-like, or None
+        Rows in source order. DataFrames must expose index, columns and
+        to_dict(orient="records"). None yields nothing. A single row must be
+        wrapped in an iterable. All rows are materialized before yielding.
+    key : str, callable or None, optional
+        Physical key column or callback receiving a mapping. None (default)
+        omits physical keys; DataFrame indexes/ordinals are never fallback keys.
+
+    Yields
+    ------
+    TableRecord
+        Shallow read-only row mapping, zero-based ordinal and optional canonical
+        key. Missing, duplicate or callback-failed keys become row issues and
+        source_key=None; the rows still yield in source order.
+
+    Raises
+    ------
+    TableNormalizationError
+        Unsupported input shape, non-mapping row or inconsistent DataFrame data.
+    TypeError
+        key is neither a string, callback nor None.
+
+    Notes
+    -----
+    The iterable is consumed; no resources are opened or closed. Memory usage is
+    proportional to the table. Nested row values are shared, not deep-copied.
     """
 
     if table is None:
@@ -94,7 +193,7 @@ def iter_records(table: Any, key: KeySelector = None) -> Iterator[TableRecord]:
         return
 
     try:
-        iterator = iter(table)
+        iterator = iter(cast(Iterable[Mapping[str, Any]], table))
     except TypeError as exc:
         raise TableNormalizationError(
             "unsupported_table", "table must be an iterable of mappings"
