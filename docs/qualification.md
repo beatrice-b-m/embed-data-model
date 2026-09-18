@@ -58,3 +58,43 @@ measurement revision and environment.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for compatibility expectations and the
 [integration guide](downstream-integration.md) for consumer acceptance checks.
+
+## Inline API review — 2026-09-17
+
+This later review supplements the release qualification above. Initial gaps
+included terse constructor/field documentation, undocumented property getters,
+`Any` graph lookup/collection results, and opaque ROI keyword forwarding.
+NumPy-style sections now describe public entry points, domain fields, returned
+records, mutation/ownership, missing facts, units, and serialization boundaries.
+The root AGENTS.md now requires inline documentation and typing with API changes.
+
+On local macOS with CPython 3.13.11:
+
+- 304 tests passed with the optional Jedi test enabled, including the existing
+  semantic and graph suites, public documentation coverage, inline doctests,
+  external examples, packaging and the isolated installed-wheel journey.
+- Ruff passed over source, tests, examples and benchmarks. Mypy passed over 35
+  package modules plus the consumer type fixture, targeting Python 3.9.
+- The researcher journey ran successfully and printed `ValidationResult(issues=())`.
+- Both wheel and source archive contained `py.typed`. The fresh wheel environment
+  ran outside the checkout with `PYTHONPATH` removed. Runtime help/signature
+  checks, inline examples and mypy consumer assertions passed against that
+  installation; no separate stubs or runtime dependencies were added.
+- Jedi 0.20.0 (Parso 0.8.7) verified package imports, loader arguments and mode
+  choices, ROI factory options/hover documentation, pathology identity keywords,
+  exam member completion and result navigation through `LoadReport.graph`.
+  It was installed in a temporary directory, not added as a runtime dependency.
+
+The Jedi checks exercise an editor language engine, not a GUI editor. No VS Code,
+Pylance, PyCharm or other GUI editor session was tested. Runtime `inspect` and
+`pydoc` checks are separate evidence and do not establish editor rendering.
+The other supported Python minor versions and remote CI were not rerun for this
+review; the earlier release matrix does not qualify these changes.
+
+Runtime behavior and the root export list are preserved. Typing now narrows
+known mode/selection-level choices and nullable results; dynamically computed
+selection levels need appropriate Literal annotations. Open mutation keywords
+remain intentionally dynamic for consumer attributes. The inactive `retain_raw`
+control, inaccessible direct pathology attachment/date fallback and shallow ROI
+copy/serialization constraints are documented in [the API reference](api.md#current-limitations-exposed-by-inline-review).
+No private data or scientific outcomes were evaluated.

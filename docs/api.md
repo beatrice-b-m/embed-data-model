@@ -4,6 +4,22 @@ This reference specifies the behavior defined by the [contract](contract.md).
 See the [user guide](user-guide.md) for runnable examples and
 [qualification](qualification.md) for dated verification evidence.
 
+Public classes, properties and entry points carry inline usage contracts for
+editor hovers and `help()`. For example, inspect `help(load_embed)`,
+`help(DatasetGraph.partition)`, or `help(RegionOfInterest.from_embed_coordinates)`
+after importing them from the package root. Field descriptions appear in class
+help and alongside annotated fields. The distribution includes `py.typed`;
+there is no separate stub package.
+
+Graph lookups return a typed entity or `None`; collection properties contain
+live entities. Selection overloads use the eight supported literal level names
+to retain the type of iterated objects and callback parameters. Dynamic level
+variables should be annotated with the corresponding `Literal` choices.
+Mutation `**fields` intentionally remains open for consumer attributes; consult
+the entity constructor for ordinary fields and their types. ROI factory overloads
+expose base constructor options and preserve arbitrary subclass forwarding.
+These annotations do not introduce runtime validation or new root exports.
+
 ## Identity, ownership, and mutation
 
 One accession has one `Exam`; its `asserted_patient_ids` retains all source claims. Conflicting claims leave
@@ -133,3 +149,28 @@ part of construction. Bounds, ordered geometry, confidence, clinical age/date,
 severity, and modality/frame plausibility are checked by explicit validation.
 Warnings do not invalidate by default; error issues do. Missing optional tables
 alone are valid. Validation is read-only and never called implicitly by loading.
+
+## Current limitations exposed by inline review
+
+`retain_raw` on `load_embed` accepts a boolean but currently has no effect;
+`True` does not retain a raw-row ledger. Inputs are materialized in memory,
+loading is synchronous, and arbitrary multi-field updates are not transactions.
+`validate(graph)` does not traverse graph registries; validate individual roots
+or use `partition_by_validation` at the desired level.
+
+For direct `Pathology` construction, use an explicit hashable `identity` or
+`patient_id` plus `record_id`. The historical error message advertises
+`attachment_identity` plus `report_documented_date`, but the date is consumed
+by the named constructor parameter before the fallback sees it. This path
+still raises `TypeError`; use `identity=(attachment_identity, report_date)`.
+The adapter's own attachment/date identity construction is unaffected.
+
+ROI `resize`/`realign` and image `with_landmark` return standalone **shallow**
+copies. They retain shared mutable metadata and other referenced values; use
+graph partitions when independent owning copies are needed. ROI `to_dict()`
+copies metadata without recursively encoding arbitrary consumer objects, so
+its output is JSON-ready only when those metadata values already are.
+
+MagView normalization recognizes its source codes, such as `W` for upper outer,
+`OU` for outer and `IN` for inner. The earlier quickstart's `UOQ` was unrecognized;
+examples now use `W` and assert that finding normalization emits no warnings.

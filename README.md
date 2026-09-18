@@ -68,7 +68,7 @@ report = load_embed(
             "desc": "screening",
             "asses": "4",
             "recc": "biopsy",
-            "location": "UOQ",
+            "location": "W",
             "depth": "P",
         }
     ],
@@ -81,6 +81,7 @@ finding = graph.finding("A-001", "1")
 assert patient is not None and exam is not None and finding is not None
 assert finding.laterality is Laterality.LEFT
 assert finding.interpretation.assessment == "4"
+assert not finding.normalization_warnings
 assert not report.issues
 
 exam.update(description="reviewed")

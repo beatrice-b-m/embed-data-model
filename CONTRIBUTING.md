@@ -57,6 +57,22 @@ the public API and supported table mappings.
 Synthetic library tests establish software behavior; consumer studies establish
 their own scientific validity.
 
+Inline API documentation follows [AGENTS.md](AGENTS.md). The normal pytest run
+checks documented public classes/members, constructor field coverage and inline
+doctests. Mypy also checks `tests/typing/public_api.py`, a consumer journey that
+asserts nullable lookup results, subclass preservation and typed selection
+navigation. The wheel test repeats these consumer checks against an isolated
+installation and checks `py.typed` in both wheel and source archive.
+
+Optional editor-engine checks use Jedi without requiring a GUI editor:
+
+```bash
+uv run --frozen --with 'jedi==0.20.0' pytest tests/integration/test_editor_support.py
+```
+
+Without Jedi that optional test is skipped. Record language-engine checks,
+runtime `inspect`/`help()` checks and actual GUI editor checks separately.
+
 ## Review and commits
 
 Follow [AGENTS.md](AGENTS.md): each logical change requires a descriptive granular
