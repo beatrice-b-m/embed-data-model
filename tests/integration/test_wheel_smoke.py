@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from tarfile import open as open_tar
 import venv
 from zipfile import ZipFile
 
@@ -30,7 +31,7 @@ def test_built_wheel_imports_and_loads_outside_source_tree(tmp_path: Path) -> No
     wheel_dir = tmp_path / "wheel"
     wheel_dir.mkdir()
     subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(wheel_dir)],
+        [sys.executable, "-m", "build", "--wheel", "--sdist", "--no-isolation", "--outdir", str(wheel_dir)],
         cwd=build_root,
         check=True,
         capture_output=True,
@@ -42,6 +43,9 @@ def test_built_wheel_imports_and_loads_outside_source_tree(tmp_path: Path) -> No
         archive_files = archive.namelist()
         package_files = [name for name in archive_files if name.endswith(".py")]
     assert any(name.startswith("embed_data_model/") for name in package_files)
+    assert "embed_data_model/py.typed" in archive_files
+    with open_tar(next(wheel_dir.glob("*.tar.gz"))) as archive:
+        assert any(name.endswith("/src/embed_data_model/py.typed") for name in archive.getnames())
     assert not any(name.startswith("embed_toolkit/") for name in package_files)
     assert any(
         ".dist-info/" in name and Path(name).name.lower().startswith("license")
@@ -63,6 +67,10 @@ def test_built_wheel_imports_and_loads_outside_source_tree(tmp_path: Path) -> No
     code = """
 from importlib.metadata import distribution
 from pathlib import Path
+import doctest
+import importlib
+import inspect
+import pydoc
 import embed_data_model
 from embed_data_model import (
     DatasetGraph, Patient, Exam, Finding, Procedure, ProcedureIdentity,
@@ -154,6 +162,14 @@ assert metadata.metadata["Name"] == "embed-data-model"
 assert metadata.metadata["License-Expression"] == "MIT"
 assert metadata.version == embed_data_model.__version__
 assert "site-packages" in Path(embed_data_model.__file__).as_posix()
+assert Path(embed_data_model.__file__).with_name("py.typed").is_file()
+assert "patient_id" in inspect.signature(Pathology).parameters
+assert "Returns" in pydoc.render_doc(load_embed)
+assert "metadata" in pydoc.render_doc(Exam.metadata)
+for name in ("", "core.graph", "core.validation", "clinical.pathology",
+             "imaging.rois", "sources.embed.loader", "sources.embed.magview"):
+    module = importlib.import_module("embed_data_model" + ("." + name if name else ""))
+    assert doctest.testmod(module).failed == 0
 """
     clean_environment = os.environ.copy()
     clean_environment.pop("PYTHONPATH", None)
@@ -165,6 +181,21 @@ assert "site-packages" in Path(embed_data_model.__file__).as_posix()
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+    # Resolve all consumer imports exclusively from the installed wheel while
+    # using the development mypy runner; this catches missing typing metadata.
+    consumer = tmp_path / "public_api.py"
+    shutil.copyfile(project_root / "tests" / "typing" / "public_api.py", consumer)
+    type_environment = clean_environment.copy()
+    type_environment.pop("MYPYPATH", None)
+    typing_config = tmp_path / "mypy.ini"
+    typing_config.write_text("[mypy]\npython_version = 3.9\n")
+    result = subprocess.run(
+        [sys.executable, "-m", "mypy", "--config-file", str(typing_config),
+         "--python-executable", str(python), str(consumer)],
+        cwd=tmp_path, env=type_environment, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
     # Run the actual researcher-facing example against only the installed wheel.
     journey = tmp_path / "researcher_journeys.py"
