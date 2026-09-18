@@ -37,7 +37,13 @@ SourceValue = Union[SourceLocator, SourceRef]
 
 
 class FindingRecordType(str, Enum):
-    """Explicit semantic kind of a finding record."""
+    """Explicit semantic kind of a finding record.
+
+    Members
+    -------
+    FINDING='finding',
+    SYNTHETIC_CONTRALATERAL_NEGATIVE='synthetic_contralateral_negative'.
+    """
 
     FINDING = "finding"
     SYNTHETIC_CONTRALATERAL_NEGATIVE = "synthetic_contralateral_negative"
@@ -45,13 +51,34 @@ class FindingRecordType(str, Enum):
 
 @dataclass(frozen=True)
 class FindingNormalizationEvidence:
-    """Source-scoped evidence supporting one normalized finding attribute."""
+    """Source-scoped evidence supporting one normalized finding attribute.
+
+    Attributes
+    ----------
+    source : SourceValue
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events.
+    source_field : str
+        Source column/slot that supplied the normalized evidence.
+    raw_value : Any
+        Original unnormalized value retained as source evidence; not a semantic
+        identity.
+    normalized_kind : str
+        Non-empty label describing the normalized concept.
+    normalized_value : Any
+        Normalized value retained alongside source evidence. Default: None.
+    """
 
     source: SourceValue
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
     source_field: str
+    """Source column/slot that supplied the normalized evidence."""
     raw_value: Any
+    """Original unnormalized value retained as source evidence; not a semantic identity."""
     normalized_kind: str
+    """Non-empty label describing the normalized concept."""
     normalized_value: Any = None
+    """Normalized value retained alongside source evidence. Default: None."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, (SourceLocator, SourceRef)):
@@ -62,6 +89,11 @@ class FindingNormalizationEvidence:
                 raise ValueError(f"{attribute} must be a non-empty string")
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new non-recursive dictionary of represented fields, encoding enum
+        values and nested evidence through their serializers. Graph ownership is not
+        included.
+        """
+
         return {
             "source": self.source.to_dict(),
             "source_field": self.source_field,
@@ -73,13 +105,36 @@ class FindingNormalizationEvidence:
 
 @dataclass(frozen=True)
 class FindingNormalizationWarning:
-    """Source-scoped warning emitted while normalizing finding anatomy."""
+    """Source-scoped warning emitted while normalizing finding anatomy.
+
+    Attributes
+    ----------
+    source : SourceValue
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events.
+    code : str
+        Non-empty machine-readable diagnostic code.
+    message : str
+        Non-empty human-readable diagnostic explanation.
+    source_field : Optional[str]
+        Source column/slot that supplied the normalized evidence. Default: None.
+    raw_value : Any
+        Original unnormalized value retained as source evidence; not a semantic
+        identity. Default: None.
+    """
 
     source: SourceValue
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
     code: str
+    """Non-empty machine-readable diagnostic code."""
     message: str
+    """Non-empty human-readable diagnostic explanation."""
     source_field: Optional[str] = None
+    """Source column/slot that supplied the normalized evidence. Default: None."""
     raw_value: Any = None
+    """Original unnormalized value retained as source evidence; not a semantic
+    identity. Default: None.
+    """
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, (SourceLocator, SourceRef)):
@@ -94,6 +149,11 @@ class FindingNormalizationWarning:
             raise ValueError("source_field must be a non-empty string when supplied")
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new non-recursive dictionary of represented fields, encoding enum
+        values and nested evidence through their serializers. Graph ownership is not
+        included.
+        """
+
         return {
             "source": self.source.to_dict(),
             "source_field": self.source_field,
@@ -104,9 +164,81 @@ class FindingNormalizationWarning:
 
 
 class Finding(MutableEntity):
-    """A mutable clinical finding at accession/finding-number grain."""
+    """A mutable clinical finding at accession/finding-number grain.
+
+    Parameters
+    ----------
+    accession_number : str
+        Non-empty exam accession identifying the clinical examination.
+    laterality : Laterality
+        Breast side. Coercible values are normalized; unknown values become
+        UNKNOWN where coercion is supported.
+    finding_number : str
+        Non-empty finding identifier scoped to its accession; not a row ordinal.
+    finding_type : Optional[str], optional
+        Reported finding category; None means not supplied. Default: None.
+    interpretation : Optional[ImagingInterpretation], optional
+        Finding-level assessment/recommendation object, retained by reference;
+        None means absent. Default: None.
+    anatomical_position : Optional[AnatomicalPosition], optional
+        Reported anatomy, independent of image coordinates; None means unknown.
+        Default: None.
+    source_location_codes : Optional[Dict[str, Any]], optional
+        Source location codes copied into a dict, retaining raw evidence.
+        Default: None.
+    source_depth_codes : Optional[Dict[str, Any]], optional
+        Source depth codes copied into a dict, retaining raw evidence. Default:
+        None.
+    source_distance_codes : Optional[Dict[str, Any]], optional
+        Source distance codes copied into a dict, retaining raw evidence.
+        Default: None.
+    normalization_evidence : Optional[Iterable[FindingNormalizationEvidence]], optional
+        Ordered source-code evidence retained for normalized finding anatomy.
+        Default: None.
+    descriptors : Optional[Mapping[str, Any]], optional
+        Reported descriptor payload; no diagnosis is inferred from these values.
+        Default: None.
+    normalization_warnings : Optional[Iterable[FindingNormalizationWarning]], optional
+        Ordered warnings for unknown or conflicting source codes. Default: None.
+    metadata : Optional[Mapping[str, Any]], optional
+        Consumer metadata, shallow-copied into a mutable dict. Nested values
+        remain shared. Default: None.
+    record_type : FindingRecordType, optional
+        Semantic kind; FINDING is the default. Synthetic contralateral negatives
+        must be explicit. Default: FindingRecordType.FINDING.
+    procedures : Optional[Iterable[Procedure]], optional
+        Initial performed procedures; objects are attached by reference and may
+        be shared. Default: None.
+    source : Optional[object], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+
+    Raises
+    ------
+    ValueError
+        Blank accession/finding ID or incompatible interpretation/procedure context.
+    TypeError
+        Invalid interpretation, anatomy, evidence or warning type."""
 
     __key_fields__ = ("accession_number", "finding_number")
+
+    finding_type: Optional[str]
+    """Reported finding category; None means not supplied."""
+    interpretation: Optional[ImagingInterpretation]
+    """Finding-level assessment/recommendation object, retained by reference; None
+    means absent.
+    """
+    anatomical_position: Optional[AnatomicalPosition]
+    """Reported anatomy, independent of image coordinates; None means unknown."""
+    source: Optional[object]
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
 
     def __init__(
         self,
@@ -158,50 +290,84 @@ class Finding(MutableEntity):
 
     @property
     def finding_id(self) -> str:
+        """Alias for finding_number; unique only within an accession."""
+
         return ":".join((self.accession_number, self.finding_number))
 
     @property
     def source_location_codes(self) -> Dict[str, Any]:
+        """Live dictionary of raw source location evidence."""
+
         return readonly_mapping(self._source_location_codes)  # type: ignore[return-value]
 
     @property
     def source_depth_codes(self) -> Dict[str, Any]:
+        """Live dictionary of raw source depth evidence."""
+
         return readonly_mapping(self._source_depth_codes)  # type: ignore[return-value]
 
     @property
     def source_distance_codes(self) -> Dict[str, Any]:
+        """Live dictionary of raw source distance evidence."""
+
         return readonly_mapping(self._source_distance_codes)  # type: ignore[return-value]
 
     @property
     def normalization_evidence(self) -> Tuple[FindingNormalizationEvidence, ...]:
+        """Immutable tuple of source normalization evidence in supplied order."""
+
         return tuple(self._normalization_evidence)
 
     @property
     def descriptors(self) -> Dict[str, Any]:
+        """Reported descriptors in stored order; container behavior follows the return
+        type and values are not deep-copied.
+        """
+
         return self._descriptors
 
     @descriptors.setter
     def descriptors(self, values: Mapping[str, Any]) -> None:
+        """Reported descriptors in stored order; container behavior follows the return
+        type and values are not deep-copied.
+        """
+
         self._descriptors = dict(values)
 
     @property
     def normalization_warnings(self) -> Tuple[FindingNormalizationWarning, ...]:
+        """Immutable tuple of normalization warnings in supplied order."""
+
         return tuple(self._normalization_warnings)
 
     @property
     def metadata(self) -> Dict[str, Any]:
+        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
+        nested values remain shared.
+        """
+
         return self._metadata
 
     @metadata.setter
     def metadata(self, values: Dict[str, Any]) -> None:
+        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
+        nested values remain shared.
+        """
+
         self._metadata = dict(values)
 
     @property
     def procedures(self) -> Tuple["Procedure", ...]:
+        """Tuple of live performed procedures in stored traversal order, deduplicated
+        by Python identity where aggregated.
+        """
+
         return tuple(self._procedures)
 
     @property
     def pathologies(self) -> Tuple["Pathology", ...]:
+        """Alias for pathology, preserving live objects and collection order."""
+
         result: List["Pathology"] = []
         seen = set()
         for procedure in self._procedures:
@@ -213,6 +379,10 @@ class Finding(MutableEntity):
 
     @property
     def pathology(self) -> Tuple["Pathology", ...]:
+        """Tuple of live pathology bundles in stored traversal order, deduplicated by
+        Python identity where aggregated.
+        """
+
         return self.pathologies
 
     def merge_observation(self, observation: "Finding") -> None:
@@ -241,6 +411,25 @@ class Finding(MutableEntity):
         ) + 1
 
     def add_procedure(self, procedure: "Procedure") -> "Procedure":
+        """Attach procedure and return the retained live object.
+
+        Parameters
+        ----------
+        procedure : Procedure
+            Compatible object with matching parent context. Retained by reference.
+
+        Returns
+        -------
+        Procedure
+            Attached object. Graph-backed containment delegates membership to the
+            graph; embedded observations remain local values.
+
+        Raises
+        ------
+        TypeError, ValueError
+            Wrong object kind, incompatible parent context, or conflicting identity.
+        """
+
         if self.graph is not None:
             result = self.graph.attach(self, procedure)
             return procedure if result is None else result
@@ -292,6 +481,11 @@ class Finding(MutableEntity):
         }
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)
 
 

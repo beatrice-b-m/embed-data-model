@@ -64,7 +64,27 @@ def _raw_number(value: Optional[float], name: str) -> Optional[float]:
 
 
 class HistoryTimeEstimate(MutableEntity):
-    """Partial reported timing with raw numeric components."""
+    """Partial reported timing with raw numeric components.
+
+    Parameters
+    ----------
+    age : Optional[float], optional
+        Reported age in years; None means absent. Numeric values are retained
+        for optional plausibility checks. Default: None.
+    year : Optional[float], optional
+        Reported calendar year; None means absent, without imputation. Default:
+        None.
+    month : Optional[float], optional
+        Reported month number (normally 1–12); None means absent. Range checked
+        by validate. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
 
     def __init__(
         self,
@@ -80,24 +100,51 @@ class HistoryTimeEstimate(MutableEntity):
 
     @property
     def is_empty(self) -> bool:
+        """True when age, year and month are all None; zero is a supplied value."""
+
         return self.age is None and self.year is None and self.month is None
 
     def _to_dict_data(self, state: Any) -> Dict[str, object]:
         return {"age": self.age, "year": self.year, "month": self.month}
 
     def to_dict(self) -> Dict[str, object]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)
 
 
 class PatientHistoryObservation(MutableEntity):
-    """Base for a patient-reported fact or an explicitly keyed record."""
+    """Base for a patient-reported fact or an explicitly keyed record.
+
+    Parameters
+    ----------
+    patient_id : str
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts.
+    source : Optional[SourceValue], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+    record_id : Optional[object], optional
+        Explicit patient-scoped record ID, converted to stripped text when
+        supplied. None represents an unkeyed reported fact. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
 
     __key_fields__ = ("patient_id", "record_id")
 
     def __init__(
         self,
         patient_id: str,
-        source: Optional[object] = None,
+        source: Optional[SourceValue] = None,
         record_id: Optional[object] = None,
     ) -> None:
         super().__init__()
@@ -112,6 +159,10 @@ class PatientHistoryObservation(MutableEntity):
         return self.patient_id, self.record_id
 
     def reference_dict(self) -> Dict[str, object]:
+        """Return a new non-recursive reference dictionary with identity and source
+        evidence; this does not serialize the full observation.
+        """
+
         return {
             "patient_id": self.patient_id,
             "record_id": self.record_id,
@@ -122,16 +173,72 @@ class PatientHistoryObservation(MutableEntity):
         return self.reference_dict()
 
     def to_dict(self) -> Dict[str, object]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)
 
 
 class MedicationHistoryObservation(PatientHistoryObservation):
-    """A reported hormone, medication, contraceptive, or treatment exposure."""
+    """A reported hormone, medication, contraceptive, or treatment exposure.
+
+    Parameters
+    ----------
+    patient_id : str
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts.
+    source : Optional[SourceValue], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+    category : str, optional
+        Non-empty reported category. Although the default is empty, callers must
+        supply a non-empty value. Default: ''.
+    medication : str, optional
+        Non-empty reported medication code/name. The empty default is rejected.
+        Default: ''.
+    context_accession : Optional[str], optional
+        Exam context in which the history was reported; not proof the event
+        occurred at that exam. Default: None.
+    continuous : Optional[bool], optional
+        Whether continuous exposure was reported; None means unknown. Default:
+        None.
+    current : Optional[bool], optional
+        Whether current exposure was reported; None means unknown. Default:
+        None.
+    reported_duration : Optional[str], optional
+        Raw duration text; no units or numeric duration are inferred. Default:
+        None.
+    started : Optional[HistoryTimeEstimate], optional
+        Optional partial reported start timing, retained by reference; an empty
+        estimate becomes None. Default: None.
+    stopped : Optional[HistoryTimeEstimate], optional
+        Optional partial reported stop timing, retained by reference; an empty
+        estimate becomes None. Default: None.
+    comment : Optional[str], optional
+        Optional source comment; blank text normalizes to None. Default: None.
+    record_id : Optional[object], optional
+        Explicit patient-scoped record ID, converted to stripped text when
+        supplied. None represents an unkeyed reported fact. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
+
+    continuous: Optional[bool]
+    """Whether continuous exposure was reported; None means unknown."""
+    current: Optional[bool]
+    """Whether current exposure was reported; None means unknown."""
 
     def __init__(
         self,
         patient_id: str,
-        source: Optional[object] = None,
+        source: Optional[SourceValue] = None,
         category: str = "",
         medication: str = "",
         context_accession: Optional[str] = None,
@@ -180,16 +287,59 @@ class MedicationHistoryObservation(PatientHistoryObservation):
         }
 
     def to_dict(self) -> Dict[str, object]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)
 
 
 class ProcedureHistoryObservation(PatientHistoryObservation):
-    """A reported prior procedure, separate from verified procedures."""
+    """A reported prior procedure, separate from verified procedures.
+
+    Parameters
+    ----------
+    patient_id : str
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts.
+    source : Optional[SourceValue], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+    category : str, optional
+        Non-empty reported category. Although the default is empty, callers must
+        supply a non-empty value. Default: ''.
+    procedure : str, optional
+        Non-empty reported procedure code/name. The empty default is rejected.
+        Default: ''.
+    detail : Optional[str], optional
+        Optional reported procedure detail; blank text normalizes to None.
+        Default: None.
+    context_accession : Optional[str], optional
+        Exam context in which the history was reported; not proof the event
+        occurred at that exam. Default: None.
+    laterality : Laterality, optional
+        Breast side. Coercible values are normalized; unknown values become
+        UNKNOWN where coercion is supported. Default: Laterality.UNKNOWN.
+    reported_result : Optional[str], optional
+        Optional reported prior procedure result; blank text normalizes to None.
+        Default: None.
+    record_id : Optional[object], optional
+        Explicit patient-scoped record ID, converted to stripped text when
+        supplied. None represents an unkeyed reported fact. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
 
     def __init__(
         self,
         patient_id: str,
-        source: Optional[object] = None,
+        source: Optional[SourceValue] = None,
         category: str = "",
         procedure: str = "",
         detail: Optional[str] = None,
@@ -221,6 +371,11 @@ class ProcedureHistoryObservation(PatientHistoryObservation):
         }
 
     def to_dict(self) -> Dict[str, object]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)
 
 

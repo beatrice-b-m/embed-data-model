@@ -39,12 +39,34 @@ def _to_plain(value: Any) -> Any:
 
 @dataclass(frozen=True)
 class ProcedureIdentity:
-    """Complete immutable identity for one resolved procedure."""
+    """Complete immutable identity for one resolved procedure.
+
+    Attributes
+    ----------
+    patient_id : str
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts.
+    performed_date : str
+        Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
+        Construction checks text, validate checks dates.
+    procedure_type : str
+        Non-empty reported procedure kind; part of semantic identity.
+    laterality : Laterality
+        Known LEFT, RIGHT or BILATERAL side. UNKNOWN raises ValueError.
+    """
 
     patient_id: str
+    """Patient identifier. Non-empty text; source patient claims and assigned exam
+    ownership are separate facts.
+    """
     performed_date: str
+    """Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
+    Construction checks text, validate checks dates.
+    """
     procedure_type: str
+    """Non-empty reported procedure kind; part of semantic identity."""
     laterality: Laterality
+    """Known LEFT, RIGHT or BILATERAL side. UNKNOWN raises ValueError."""
 
     def __post_init__(self) -> None:
         for attribute in ("patient_id", "performed_date", "procedure_type"):
@@ -58,6 +80,11 @@ class ProcedureIdentity:
         object.__setattr__(self, "laterality", side)
 
     def to_dict(self) -> Dict[str, str]:
+        """Return a new non-recursive dictionary of represented fields, encoding enum
+        values and nested evidence through their serializers. Graph ownership is not
+        included.
+        """
+
         return {
             "patient_id": self.patient_id,
             "performed_date": self.performed_date,
@@ -68,7 +95,29 @@ class ProcedureIdentity:
 
 @dataclass(frozen=True)
 class UnresolvedProcedureOccurrence:
-    """Normalized procedure evidence that cannot establish clinical identity."""
+    """Normalized procedure evidence that cannot establish clinical identity.
+
+    Attributes
+    ----------
+    source : SourceValue
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events.
+    missing_identity_fields : Tuple[str, ...]
+        Distinct non-empty names of missing identity fields, consistent with
+        supplied facts.
+    patient_id : Optional[str]
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts. Default: None.
+    performed_date : Optional[str]
+        Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
+        Construction checks text, validate checks dates. Default: None.
+    procedure_type : Optional[str]
+        Non-empty reported procedure kind; part of semantic identity. Default:
+        None.
+    laterality : Laterality
+        Breast side. Coercible values are normalized; unknown values become
+        UNKNOWN where coercion is supported. Default: Laterality.UNKNOWN.
+    """
 
     IDENTITY_FIELDS: ClassVar[Tuple[str, ...]] = (
         "patient_id",
@@ -78,11 +127,23 @@ class UnresolvedProcedureOccurrence:
     )
 
     source: SourceValue
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
     missing_identity_fields: Tuple[str, ...]
+    """Distinct non-empty names of missing identity fields, consistent with supplied facts."""
     patient_id: Optional[str] = None
+    """Patient identifier. Non-empty text; source patient claims and assigned exam
+    ownership are separate facts. Default: None.
+    """
     performed_date: Optional[str] = None
+    """Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
+    Construction checks text, validate checks dates. Default: None.
+    """
     procedure_type: Optional[str] = None
+    """Non-empty reported procedure kind; part of semantic identity. Default: None."""
     laterality: Laterality = Laterality.UNKNOWN
+    """Breast side. Coercible values are normalized; unknown values become UNKNOWN
+    where coercion is supported. Default: Laterality.UNKNOWN.
+    """
 
     def __post_init__(self) -> None:
         if not isinstance(self.source, (SourceLocator, SourceRef)):
@@ -119,6 +180,11 @@ class UnresolvedProcedureOccurrence:
             )
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new non-recursive dictionary of represented fields, encoding enum
+        values and nested evidence through their serializers. Graph ownership is not
+        included.
+        """
+
         return {
             "source": self.source.to_dict(),
             "missing_identity_fields": list(self.missing_identity_fields),
@@ -130,7 +196,33 @@ class UnresolvedProcedureOccurrence:
 
 
 class Procedure(MutableEntity):
-    """One mutable performed procedure that can own pathology bundles."""
+    """One mutable performed procedure that can own pathology bundles.
+
+    Parameters
+    ----------
+    identity : ProcedureIdentity
+        Semantic identity used for graph membership; use rekey for a registered
+        entity.
+    sources : Optional[Iterable[object]], optional
+        Source evidence in supplied order. None starts an empty collection;
+        source adds one item. Default: None.
+    metadata : Optional[Dict[str, Any]], optional
+        Consumer metadata, shallow-copied into a mutable dict. Nested values
+        remain shared. Default: None.
+    pathologies : Optional[Iterable[Pathology]], optional
+        Initial pathology bundles, retained by reference in supplied order.
+        Default: None.
+    source : Optional[object], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
 
     __key_fields__ = ("identity",)
 
@@ -163,22 +255,38 @@ class Procedure(MutableEntity):
 
     @property
     def sources(self) -> Tuple[object, ...]:
+        """Tuple of retained source evidence in insertion order."""
+
         return tuple(self._sources)
 
     @property
     def metadata(self) -> Dict[str, Any]:
+        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
+        nested values remain shared.
+        """
+
         return self._metadata
 
     @metadata.setter
     def metadata(self, values: Dict[str, Any]) -> None:
+        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
+        nested values remain shared.
+        """
+
         self._metadata = dict(values)
 
     @property
     def pathologies(self) -> Tuple["Pathology", ...]:
+        """Alias for pathology, preserving live objects and collection order."""
+
         return tuple(self._pathologies)
 
     @property
     def pathology(self) -> Tuple["Pathology", ...]:
+        """Tuple of live pathology bundles in stored traversal order, deduplicated by
+        Python identity where aggregated.
+        """
+
         return self.pathologies
 
     def add_source(self, source: object) -> object:
@@ -231,4 +339,9 @@ class Procedure(MutableEntity):
         }
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)

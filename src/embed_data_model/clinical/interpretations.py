@@ -25,9 +25,46 @@ def _optional_source(source: Optional[object]) -> Optional[SourceValue]:
 
 
 class ImagingInterpretation(MutableEntity):
-    """Assessment and recommendation documented for one finding."""
+    """Assessment and recommendation documented for one finding.
+
+    Parameters
+    ----------
+    accession_number : str
+        Non-empty exam accession identifying the clinical examination.
+    finding_number : str
+        Non-empty finding identifier scoped to its accession; not a row ordinal.
+    sources : Optional[Iterable[Optional[object]]], optional
+        Source evidence in supplied order. None starts an empty collection;
+        source adds one item. Default: None.
+    assessment : Optional[str], optional
+        Reported assessment code/text; None means missing and no category is
+        inferred. Default: None.
+    assessment_availability : AvailabilityState, optional
+        Binding status; assessment must be None unless status is BOUND. Default:
+        AvailabilityState.BOUND.
+    recommendation : Optional[str], optional
+        Reported recommendation; None means missing. Default: None.
+    recommendation_availability : AvailabilityState, optional
+        Binding status; recommendation must be None unless status is BOUND.
+        Default: AvailabilityState.BOUND.
+    source : Optional[SourceValue], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
 
     __key_fields__ = ("accession_number", "finding_number")
+
+    assessment: Optional[str]
+    """Reported assessment code/text; None means missing and no category is inferred."""
+    recommendation: Optional[str]
+    """Reported recommendation; None means missing."""
 
     def __init__(
         self,
@@ -38,7 +75,7 @@ class ImagingInterpretation(MutableEntity):
         assessment_availability: AvailabilityState = AvailabilityState.BOUND,
         recommendation: Optional[str] = None,
         recommendation_availability: AvailabilityState = AvailabilityState.BOUND,
-        source: Optional[object] = None,
+        source: Optional[SourceValue] = None,
     ) -> None:
         super().__init__()
         self.accession_number = _required_text(accession_number, "accession_number")
@@ -91,10 +128,15 @@ class ImagingInterpretation(MutableEntity):
 
     @property
     def sources(self) -> Tuple[Optional[SourceValue], ...]:
+        """Tuple of retained source evidence in insertion order.
+        """
+
         return self._sources
 
     @sources.setter
     def sources(self, values: Iterable[Optional[object]]) -> None:
+        """Tuple of retained source evidence in insertion order."""
+
         self._sources = self._validate_sources(values)
 
     @property
@@ -105,6 +147,10 @@ class ImagingInterpretation(MutableEntity):
 
     @source.setter
     def source(self, value: Optional[object]) -> None:
+        """Return the first retained source, or None when sources is empty. Assignment
+        replaces the entire sources collection with zero or one value.
+        """
+
         self._sources = () if value is None else (self._optional(value),)
 
     @staticmethod
@@ -125,4 +171,9 @@ class ImagingInterpretation(MutableEntity):
         }
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)

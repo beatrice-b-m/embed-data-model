@@ -22,27 +22,47 @@ SourceValue = Union[SourceLocator, SourceRef]
 
 
 class PatientAttributeName(str, Enum):
-    """Governed patient attributes represented by source observations."""
+    """Governed patient attributes represented by source observations.
+
+    Members
+    -------
+    SEX='sex', BIRTH_YEAR='birth_year'.
+    """
 
     SEX = "sex"
     BIRTH_YEAR = "birth_year"
 
 
 class PatientObservationTimeBasis(str, Enum):
-    """Source context used to order patient attribute observations."""
+    """Source context used to order patient attribute observations.
+
+    Members
+    -------
+    EXAM_DATE_CONTEXT='exam_date_context'.
+    """
 
     EXAM_DATE_CONTEXT = "exam_date_context"
 
 
 class ExamAttributeName(str, Enum):
-    """Governed invariant attributes reconciled across exam source rows."""
+    """Governed invariant attributes reconciled across exam source rows.
+
+    Members
+    -------
+    EXAM_DATE='exam_date', DESCRIPTION='description'.
+    """
 
     EXAM_DATE = "exam_date"
     DESCRIPTION = "description"
 
 
 class UndatedObservationPolicy(str, Enum):
-    """Treatment of observations without a usable context date."""
+    """Treatment of observations without a usable context date.
+
+    Members
+    -------
+    REJECT='reject', EXCLUDE='exclude'.
+    """
 
     REJECT = "reject"
     EXCLUDE = "exclude"
@@ -59,16 +79,41 @@ def _source_dict(source: Optional[SourceValue]) -> Optional[dict[str, object]]:
 
 
 class ExamAttributeObservation(MutableEntity):
-    """One source-attributed observation of an invariant exam fact."""
+    """One source-attributed observation of an invariant exam fact.
+
+    Parameters
+    ----------
+    accession_number : str
+        Non-empty exam accession identifying the clinical examination.
+    attribute : ExamAttributeName
+        Governed attribute name identifying which fact the observation
+        represents.
+    value : Optional[str]
+        Reported value, including explicit None; missing values are not silently
+        filled.
+    source : Optional[SourceValue], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
 
     __key_fields__ = ("accession_number", "attribute", "source")
+
+    value: Optional[str]
+    """Reported value, including explicit None; missing values are not silently filled."""
 
     def __init__(
         self,
         accession_number: str,
         attribute: ExamAttributeName,
         value: Optional[str],
-        source: Optional[object] = None,
+        source: Optional[SourceValue] = None,
     ) -> None:
         super().__init__()
         if not isinstance(accession_number, str) or not accession_number.strip():
@@ -85,9 +130,15 @@ class ExamAttributeObservation(MutableEntity):
 
     @property
     def identity(self) -> Tuple[str, ExamAttributeName, Optional[SourceValue]]:
+        """Semantic identity used for equality of addresses, independent of Python object identity."""
+
         return self.accession_number, self.attribute, self.source
 
     def reference_dict(self) -> dict[str, object]:
+        """Return a new non-recursive reference dictionary with identity and source
+        evidence; this does not serialize the full observation.
+        """
+
         return {
             "accession_number": self.accession_number,
             "attribute": self.attribute.value,
@@ -98,20 +149,59 @@ class ExamAttributeObservation(MutableEntity):
         return {**self.reference_dict(), "value": self.value}
 
     def to_dict(self) -> dict[str, object]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)
 
 
 class PatientAttributeObservation(MutableEntity):
-    """One source-attributed patient value, including an explicit null."""
+    """One source-attributed patient value, including an explicit null.
+
+    Parameters
+    ----------
+    patient_id : str
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts.
+    attribute : PatientAttributeName
+        Governed attribute name identifying which fact the observation
+        represents.
+    value : Any
+        Reported value, including explicit None; missing values are not silently
+        filled.
+    source : Optional[SourceValue], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+    context_date : Optional[date], optional
+        Date of the reporting context, not necessarily the date of the reported
+        event. Default: None.
+    time_basis : PatientObservationTimeBasis, optional
+        Declared meaning of context_date; selection compares only matching time
+        bases. Default: PatientObservationTimeBasis.EXAM_DATE_CONTEXT.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+    """
 
     __key_fields__ = ("patient_id", "attribute", "source")
+
+    context_date: Optional[date]
+    """Date of the reporting context, not necessarily the date of the reported event."""
+    value: Any
+    """Reported value, including explicit None; missing values are not silently filled."""
 
     def __init__(
         self,
         patient_id: str,
         attribute: PatientAttributeName,
         value: Any,
-        source: Optional[object] = None,
+        source: Optional[SourceValue] = None,
         context_date: Optional[date] = None,
         time_basis: PatientObservationTimeBasis = (
             PatientObservationTimeBasis.EXAM_DATE_CONTEXT
@@ -178,11 +268,28 @@ class PatientAttributeObservation(MutableEntity):
 
 @dataclass(frozen=True)
 class PatientAttributeAsOfPolicy:
-    """Explicit temporal policy for selecting one patient attribute value."""
+    """Explicit temporal policy for selecting one patient attribute value.
+
+    Attributes
+    ----------
+    as_of_date : date
+        Latest eligible context date, inclusive; must be a date, not a datetime.
+    time_basis : PatientObservationTimeBasis
+        Declared meaning of context_date; selection compares only matching time
+        bases.
+    undated : UndatedObservationPolicy
+        Policy for observations with no context date: IGNORE excludes them;
+        REJECT makes selection unresolved.
+    """
 
     as_of_date: date
+    """Latest eligible context date, inclusive; must be a date, not a datetime."""
     time_basis: PatientObservationTimeBasis
+    """Declared meaning of context_date; selection compares only matching time bases."""
     undated: UndatedObservationPolicy
+    """Policy for observations with no context date: IGNORE excludes them; REJECT
+    makes selection unresolved.
+    """
 
     def __post_init__(self) -> None:
         if type(self.as_of_date) is not date:
@@ -195,6 +302,11 @@ class PatientAttributeAsOfPolicy:
         object.__setattr__(self, "undated", UndatedObservationPolicy(self.undated))
 
     def to_dict(self) -> dict[str, str]:
+        """Return a new non-recursive dictionary of represented fields, encoding enum
+        values and nested evidence through their serializers. Graph ownership is not
+        included.
+        """
+
         return {
             "as_of_date": self.as_of_date.isoformat(),
             "time_basis": self.time_basis.value,
@@ -204,17 +316,64 @@ class PatientAttributeAsOfPolicy:
 
 @dataclass(frozen=True)
 class PatientAttributeSelection:
-    """Resolved or unresolved result of one explicit as-of selection."""
+    """Resolved or unresolved result of one explicit as-of selection.
+
+    Attributes
+    ----------
+    patient_id : str
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts.
+    attribute : PatientAttributeName
+        Governed attribute name identifying which fact the observation
+        represents.
+    as_of_policy : PatientAttributeAsOfPolicy
+        Explicit cutoff, time basis and undated policy used for selection.
+    resolution_state : ResolutionState
+        Whether evidence resolved; UNRESOLVED means no supported result could be
+        selected.
+    selected_value : Any
+        Selected reported value. None can be a resolved explicit null; inspect
+        resolution_state. Default: None.
+    selected_context_date : Optional[date]
+        Latest eligible reporting context date; None for unresolved selection.
+        Default: None.
+    supporting_sources : Tuple[Optional[SourceValue], ...]
+        Unique supporting sources in observation order; None can represent
+        unknown provenance. Default: ().
+    reason : str
+        Machine-readable resolution reason or explanatory text, depending on
+        producer. Default: ''.
+    issues : Tuple[BuildIssue, ...]
+        Ordered diagnostics supplied by this operation; empty means none.
+        Default: ().
+    """
 
     patient_id: str
+    """Patient identifier. Non-empty text; source patient claims and assigned exam
+    ownership are separate facts.
+    """
     attribute: PatientAttributeName
+    """Governed attribute name identifying which fact the observation represents."""
     as_of_policy: PatientAttributeAsOfPolicy
+    """Explicit cutoff, time basis and undated policy used for selection."""
     resolution_state: ResolutionState
+    """Whether evidence resolved; UNRESOLVED means no supported result could be selected."""
     selected_value: Any = None
+    """Selected reported value. None can be a resolved explicit null; inspect
+    resolution_state. Default: None.
+    """
     selected_context_date: Optional[date] = None
+    """Latest eligible reporting context date; None for unresolved selection. Default: None."""
     supporting_sources: Tuple[Optional[SourceValue], ...] = ()
+    """Unique supporting sources in observation order; None can represent unknown
+    provenance. Default: ().
+    """
     reason: str = ""
+    """Machine-readable resolution reason or explanatory text, depending on
+    producer. Default: ''.
+    """
     issues: Tuple[BuildIssue, ...] = ()
+    """Ordered diagnostics supplied by this operation; empty means none. Default: ()."""
 
     def __post_init__(self) -> None:
         if not isinstance(self.patient_id, str) or not self.patient_id.strip():
@@ -318,7 +477,35 @@ def select_patient_attribute_as_of(
     attribute: PatientAttributeName,
     policy: PatientAttributeAsOfPolicy,
 ) -> PatientAttributeSelection:
-    """Select an attributed value only under an explicit temporal policy."""
+    """Select the latest eligible source-reported patient attribute.
+
+    Parameters
+    ----------
+    observations : iterable of PatientAttributeObservation
+        Consumed once. Only matching patient, attribute and time basis are used.
+    patient_id : str
+        Non-empty patient ID; not inferred from the observations.
+    attribute : PatientAttributeName
+        Governed attribute to select.
+    policy : PatientAttributeAsOfPolicy
+        Explicit inclusive as-of date, time basis and treatment of undated facts.
+        REJECT yields unresolved if any matching fact is undated; IGNORE skips it.
+
+    Returns
+    -------
+    PatientAttributeSelection
+        Latest eligible date and value. Equal-date conflicting values are
+        unresolved; a single explicit None value can be RESOLVED. No eligible
+        observation is unresolved. Supporting sources preserve observation order.
+        Input objects are not mutated and future dates are excluded.
+
+    Raises
+    ------
+    TypeError
+        Invalid policy or observation type.
+    ValueError
+        Blank patient ID or invalid attribute.
+    """
 
     if not isinstance(patient_id, str) or not patient_id.strip():
         raise ValueError("patient_id must be a non-empty string")

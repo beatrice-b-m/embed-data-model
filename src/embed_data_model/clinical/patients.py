@@ -31,9 +31,62 @@ if TYPE_CHECKING:
 
 
 class Patient(MutableEntity):
-    """A mutable patient root containing exams and reported facts."""
+    """A mutable patient root containing exams and reported facts.
+
+    Parameters
+    ----------
+    patient_id : str
+        Patient identifier. Non-empty text; source patient claims and assigned
+        exam ownership are separate facts.
+    exams : Optional[Iterable[Exam]], optional
+        Initial exams in supplied order; entities are attached by reference, not
+        copied. Default: None.
+    attribute_observations : Optional[Iterable[PatientAttributeObservation]], optional
+        Source-attributed facts retained by reference in supplied order; context
+        must match the parent. Default: None.
+    metadata : Optional[Mapping[str, Any]], optional
+        Consumer metadata, shallow-copied into a mutable dict. Nested values
+        remain shared. Default: None.
+    history_observations : Optional[Iterable[PatientHistoryObservation]], optional
+        Patient-reported facts retained by reference; explicit IDs reconcile
+        matching records. Default: None.
+    sex : Optional[str], optional
+        Source-reported sex value; None means absent, with no inference.
+        Default: None.
+    birth_year : Optional[int], optional
+        Reported calendar birth year; None means unknown. Plausibility is
+        checked by validate. Default: None.
+    context_date : Optional[Any], optional
+        Date of the reporting context, not necessarily the date of the reported
+        event. Default: None.
+    source : Optional[object], optional
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+
+    Notes
+    -----
+    Scalar fields are mutable. Constructor parameters describe the initial public
+    fields; collection properties document their views. Use update/rekey to keep
+    registered identities and relationships coherent. Construction checks basic
+    representation; validate performs optional quality checks. No files are owned.
+
+    Raises
+    ------
+    ValueError
+        Blank patient ID, child context mismatch or conflicting child identity.
+    TypeError
+        An initial exam/observation has an unsupported type."""
 
     __key_fields__ = ("patient_id",)
+
+    sex: Optional[str]
+    """Source-reported sex value; None means absent, with no inference."""
+    birth_year: Optional[int]
+    """Reported calendar birth year; None means unknown. Plausibility is checked by validate."""
+    context_date: Optional[Any]
+    """Date of the reporting context, not necessarily the date of the reported event."""
+    source: Optional[object]
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
 
     def __init__(
         self,
@@ -67,26 +120,44 @@ class Patient(MutableEntity):
 
     @property
     def exams(self) -> Tuple[Exam, ...]:
+        """Tuple snapshot of live exams in attachment order; edits to an exam affect this patient."""
+
         return tuple(self._exams)
 
     @property
     def metadata(self) -> Dict[str, Any]:
+        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
+        nested values remain shared.
+        """
+
         return self._metadata
 
     @metadata.setter
     def metadata(self, values: Mapping[str, Any]) -> None:
+        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
+        nested values remain shared.
+        """
+
         self._metadata = dict(values)
 
     @property
     def attribute_observations(self) -> Tuple[PatientAttributeObservation, ...]:
+        """Tuple snapshot of live source-attributed observations in insertion order."""
+
         return tuple(self._attribute_observations)
 
     @property
     def history_observations(self) -> Tuple[PatientHistoryObservation, ...]:
+        """Tuple snapshot of live reported-history observations in stored order."""
+
         return tuple(self._history_observations)
 
     @property
     def findings(self) -> Tuple[Finding, ...]:
+        """Tuple of live findings in stored traversal order; aggregate traversal
+        deduplicates Python identity.
+        """
+
         result: List[Finding] = []
         seen = set()
         for exam in self._exams:
@@ -98,6 +169,10 @@ class Patient(MutableEntity):
 
     @property
     def procedures(self) -> Tuple["Procedure", ...]:
+        """Tuple of live performed procedures in stored traversal order, deduplicated
+        by Python identity where aggregated.
+        """
+
         result: List["Procedure"] = []
         seen = set()
         for exam in self._exams:
@@ -109,6 +184,10 @@ class Patient(MutableEntity):
 
     @property
     def pathology(self) -> Tuple["Pathology", ...]:
+        """Tuple of live pathology bundles in stored traversal order, deduplicated by
+        Python identity where aggregated.
+        """
+
         result: List["Pathology"] = []
         seen = set()
         for exam in self._exams:
@@ -120,10 +199,16 @@ class Patient(MutableEntity):
 
     @property
     def pathologies(self) -> Tuple["Pathology", ...]:
+        """Alias for pathology, preserving live objects and collection order."""
+
         return self.pathology
 
     @property
     def registry_pathology(self) -> Tuple["CancerRegistryEntry", ...]:
+        """Live registry entries reachable through supplied exam assignments; not
+        contained pathology.
+        """
+
         result: List["CancerRegistryEntry"] = []
         seen = set()
         for exam in self._exams:
@@ -135,10 +220,18 @@ class Patient(MutableEntity):
 
     @property
     def registry_entries(self) -> Tuple["CancerRegistryEntry", ...]:
+        """Resolved live registry entries. Association resolution order is not a
+        clinical or temporal ordering.
+        """
+
         return self.registry_pathology
 
     @property
     def medication_history(self) -> Tuple[MedicationHistoryObservation, ...]:
+        """Medication-history subset in stored order; values are live reported facts,
+        not inferred events.
+        """
+
         return tuple(
             item
             for item in self._history_observations
@@ -147,6 +240,10 @@ class Patient(MutableEntity):
 
     @property
     def procedure_history(self) -> Tuple[ProcedureHistoryObservation, ...]:
+        """Procedure-history subset in stored order; values are reported facts, not
+        verified procedures.
+        """
+
         return tuple(
             item
             for item in self._history_observations
@@ -154,6 +251,25 @@ class Patient(MutableEntity):
         )
 
     def add_exam(self, exam: Exam) -> Exam:
+        """Attach exam and return the retained live object.
+
+        Parameters
+        ----------
+        exam : Exam
+            Compatible object with matching parent context. Retained by reference.
+
+        Returns
+        -------
+        Exam
+            Attached object. Graph-backed containment delegates membership to the
+            graph; embedded observations remain local values.
+
+        Raises
+        ------
+        TypeError, ValueError
+            Wrong object kind, incompatible parent context, or conflicting identity.
+        """
+
         if self.graph is not None:
             result = self.graph.attach(self, exam)
             return exam if result is None else result
@@ -181,6 +297,25 @@ class Patient(MutableEntity):
         self,
         observation: PatientAttributeObservation,
     ) -> PatientAttributeObservation:
+        """Attach observation and return the retained live object.
+
+        Parameters
+        ----------
+        observation : PatientAttributeObservation
+            Compatible object with matching parent context. Retained by reference.
+
+        Returns
+        -------
+        PatientAttributeObservation
+            Attached object. Graph-backed containment delegates membership to the
+            graph; embedded observations remain local values.
+
+        Raises
+        ------
+        TypeError, ValueError
+            Wrong object kind, incompatible parent context, or conflicting identity.
+        """
+
         if not isinstance(observation, PatientAttributeObservation):
             raise TypeError("observation must be a PatientAttributeObservation")
         if observation.patient_id != self.patient_id:
@@ -192,6 +327,14 @@ class Patient(MutableEntity):
         self,
         observation: PatientHistoryObservation,
     ) -> PatientHistoryObservation:
+        """Add a reported fact or reconcile an explicitly keyed history record.
+
+        The observation must be PatientHistoryObservation with this patient_id, or
+        TypeError/ValueError is raised. Matching (concrete type, non-null record_id)
+        updates and returns the existing live object; unkeyed facts append in order.
+        Repeated insertion of the identical Python object returns it unchanged.
+        """
+
         if not isinstance(observation, PatientHistoryObservation):
             raise TypeError("observation must be a PatientHistoryObservation")
         if observation.patient_id != self.patient_id:
@@ -213,7 +356,14 @@ class Patient(MutableEntity):
         self,
         values: Iterable[PatientHistoryObservation],
     ) -> Tuple[PatientHistoryObservation, ...]:
-        """Replace the complete embedded history snapshot for this patient."""
+        """Replace the complete patient history collection and return its live tuple.
+
+        values is consumed once in supplied order. Matching (type, record_id) retains
+        and updates the existing object; unkeyed values remain distinct. Empty input
+        clears the collection. TypeError rejects non-history values; ValueError rejects
+        foreign patient IDs or duplicate explicit keys. Earlier keyed updates can
+        remain if a later duplicate fails; this is not a transaction.
+        """
 
         replacement = tuple(values)
         for item in replacement:
@@ -250,7 +400,13 @@ class Patient(MutableEntity):
         record_id: object,
         **fields: Any,
     ) -> PatientHistoryObservation:
-        """Update one explicitly keyed history record in place."""
+        """Update one explicitly keyed history record in place and return it.
+
+        record_id is normalized with str(...).strip(). **fields are forwarded to the
+        observation's update method; constructor fields and consumer attributes are
+        accepted. Raises KeyError for no match, ValueError for an empty/ambiguous ID,
+        and propagates setter errors. Unkeyed history snapshots cannot be addressed.
+        """
 
         normalized = str(record_id).strip()
         if not normalized:
@@ -272,7 +428,16 @@ class Patient(MutableEntity):
         kind: Union[Type[PatientHistoryObservation], str],
         items: Iterable[PatientHistoryObservation],
     ) -> Tuple[PatientHistoryObservation, ...]:
-        """Replace one unkeyed reported-fact collection, including with empty."""
+        """Replace one history subset and return the supplied replacement tuple.
+
+        kind is a history subclass or case-insensitive class name. Aliases are
+        medication/medication_history and procedure/procedure_history/reported_procedure.
+        items is consumed once; empty input clears the subset. Unmatched observations
+        remain before replacements. set_history_snapshot reconciles explicit keys, so
+        returned supplied objects can differ from the retained live objects. TypeError
+        rejects invalid kinds/items; ValueError rejects foreign context, kind mismatches
+        or duplicate explicit keys. This operation is not transactional.
+        """
 
         replacement = tuple(items)
         for item in replacement:
@@ -321,6 +486,11 @@ class Patient(MutableEntity):
         }
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a new dictionary representation of the represented fields. Nested
+        entity serialization uses semantic references for repeated objects; consumer
+        values are not a guaranteed lossless round trip.
+        """
+
         return serialize_entity(self)
 
 
