@@ -7,6 +7,26 @@ mammography data. The distribution is `embed-data-model`; import
 and compatibility expectations.
 
 
+## Inline API documentation
+
+- Update docstrings and type annotations alongside every public API change,
+  including root exports, supported specialist modules, public members, and
+  returned objects. Bring touched public interfaces into compliance.
+- Use NumPy-style docstrings for purpose, parameters and defaults, returns,
+  relevant exceptions, and useful examples. Document exported entry points,
+  including wrappers, rather than only their implementation helpers.
+- Explain applicable missing-value, unit, ordering, mutation, ownership,
+  side-effect, limit, and serialization contracts. Keep essential usage in
+  docstrings and consistent with `docs/api.md`, `docs/contract.md`, and the
+  runnable examples in `docs/user-guide.md` and `examples/`.
+- Provide precise public types and statically discoverable signatures,
+  including decorator controls and forwarded options. Keep private arguments
+  out of supported interfaces and preserve Python 3.9 compatibility.
+- Execute changed examples and run the applicable checks in `CONTRIBUTING.md`.
+  For interface changes, check editor signatures, completions, and navigation
+  through returned objects; report runtime introspection separately from actual
+  editor verification. Verify typing metadata in distribution artifacts.
+
 ## Git Commit Policy
 
 Every completed task must be tracked in a descriptive, granular git commit.
