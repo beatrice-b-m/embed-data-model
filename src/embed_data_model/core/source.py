@@ -11,7 +11,12 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 class IssueSeverity(str, Enum):
-    """Severity of an ingestion issue."""
+    """Severity of an ingestion issue.
+
+    Members
+    -------
+    INFO='info', WARNING='warning', ERROR='error'.
+    """
 
     INFO = "info"
     WARNING = "warning"
@@ -24,10 +29,25 @@ class CanonicalKey:
 
     The tag is part of equality and hashing, avoiding Python's otherwise loose
     equality between values such as ``True``, ``1``, and ``1.0``.
+
+    Attributes
+    ----------
+    tag : str
+        Canonical encoding tag: bool, int, float, string, date, datetime, or
+        tuple. Participates in equality/hash.
+    value : Any
+        Tag-matching scalar: ISO text for dates, finite float for float, or a
+        tuple of CanonicalKey values. Wrong type raises TypeError.
     """
 
     tag: str
+    """Canonical encoding tag: bool, int, float, string, date, datetime, or tuple.
+    Participates in equality/hash.
+    """
     value: Any
+    """Tag-matching scalar: ISO text for dates, finite float for float, or a tuple
+    of CanonicalKey values. Wrong type raises TypeError.
+    """
 
     def __post_init__(self) -> None:
         valid = {"bool", "int", "float", "string", "date", "datetime", "tuple"}
@@ -101,7 +121,27 @@ def is_null_scalar(value: Any) -> bool:
 
 
 def canonicalize_source_key(value: Any) -> CanonicalKey:
-    """Normalize a supported source key into its tagged immutable form."""
+    """Convert a physical row key to an immutable type-tagged value.
+
+    Parameters
+    ----------
+    value : object
+        CanonicalKey, bool, int, finite float, nonblank str, date, datetime, or
+        tuple of supported values. NumPy-like scalars exposing item() are unboxed.
+
+    Returns
+    -------
+    CanonicalKey
+        Existing keys are returned unchanged. Strings retain whitespace; date
+        and datetime use ISO text. Tags distinguish True, 1 and 1.0.
+
+    Raises
+    ------
+    ValueError
+        Null/NaN, nonfinite float or blank string.
+    TypeError
+        Unsupported key type. Callback errors from item() propagate.
+    """
 
     if isinstance(value, CanonicalKey):
         return value
@@ -144,11 +184,27 @@ def canonicalize_source_key(value: Any) -> CanonicalKey:
 
 @dataclass(frozen=True)
 class SourceRef:
-    """Identity of one physical row within a source materialization."""
+    """Identity of one physical row within a source materialization.
+
+    Attributes
+    ----------
+    source_scope : str
+        Non-empty physical materialization label.
+    source_table : str
+        Non-empty physical source table label.
+    source_key : Any
+        Physical key accepted by canonicalize_source_key, converted to
+        CanonicalKey at construction. Use key for typed access.
+    """
 
     source_scope: str
+    """Non-empty physical materialization label."""
     source_table: str
+    """Non-empty physical source table label."""
     source_key: Any
+    """Physical key accepted by canonicalize_source_key, converted to CanonicalKey
+    at construction. Use key for typed access.
+    """
 
     def __post_init__(self) -> None:
         for attribute in ("source_scope", "source_table"):
@@ -197,13 +253,42 @@ class SourceRef:
 
 @dataclass(frozen=True)
 class Issue:
-    """A compact, immutable problem report for the new loading surface."""
+    """A compact, immutable problem report for the new loading surface.
+
+    Attributes
+    ----------
+    code : str
+        Non-empty machine-readable diagnostic code.
+    message : str
+        Non-empty human-readable diagnostic explanation.
+    severity : IssueSeverity
+        Diagnostic level: info, warning or error. Errors invalidate
+        ValidationResult; warnings do not by default. Default:
+        IssueSeverity.ERROR.
+    source : Optional[SourceRef]
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events. Default: None.
+    context : Mapping[str, Any]
+        Shallow-copied read-only diagnostic mapping. Nested mutable values are
+        not frozen. Default: a fresh empty mapping.
+    """
 
     code: str
+    """Non-empty machine-readable diagnostic code."""
     message: str
+    """Non-empty human-readable diagnostic explanation."""
     severity: IssueSeverity = IssueSeverity.ERROR
+    """Diagnostic level: info, warning or error. Errors invalidate
+    ValidationResult; warnings do not by default. Default: IssueSeverity.ERROR.
+    """
     source: Optional[SourceRef] = None
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not
+    clinical events. Default: None.
+    """
     context: Mapping[str, Any] = field(default_factory=dict)
+    """Shallow-copied read-only diagnostic mapping. Nested mutable values are not
+    frozen. Default: a fresh empty mapping.
+    """
     _fingerprint: Tuple[Any, ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -251,13 +336,35 @@ class Issue:
 
 @dataclass(frozen=True)
 class UnresolvedReference:
-    """A relationship whose target is absent or conflicts with canonical state."""
+    """A relationship whose target is absent or conflicts with canonical state.
+
+    Attributes
+    ----------
+    source_kind : str
+        Registry kind of the source endpoint.
+    source_id : str
+        Display string for the source identity; not necessarily a reversible key
+        encoding.
+    target_kind : str
+        Registry kind of the target endpoint.
+    target_id : str
+        Display string for the target identity; not necessarily a reversible key
+        encoding.
+    reason : str
+        Machine-readable resolution reason or explanatory text, depending on
+        producer.
+    """
 
     source_kind: str
+    """Registry kind of the source endpoint."""
     source_id: str
+    """Display string for the source identity; not necessarily a reversible key encoding."""
     target_kind: str
+    """Registry kind of the target endpoint."""
     target_id: str
+    """Display string for the target identity; not necessarily a reversible key encoding."""
     reason: str
+    """Machine-readable resolution reason or explanatory text, depending on producer."""
 
     def __post_init__(self) -> None:
         for attribute in (
@@ -272,6 +379,10 @@ class UnresolvedReference:
                 raise ValueError(f"{attribute} must be a non-empty string")
 
     def to_dict(self) -> Dict[str, str]:
+        """Return a new string-valued diagnostic dictionary. Identity display strings
+        are not a graph reconstruction format.
+        """
+
         return {
             "source_kind": self.source_kind,
             "source_id": self.source_id,

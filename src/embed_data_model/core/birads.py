@@ -14,7 +14,12 @@ from typing import Any, Dict, Generic, Mapping, Optional, Tuple, Type, TypeVar
 
 
 class MassShape(Enum):
-    """Normalized BI-RADS v2025 mammography mass shape descriptors."""
+    """Normalized BI-RADS v2025 mammography mass shape descriptors.
+
+    Members
+    -------
+    OVAL='oval', ROUND='round', IRREGULAR='irregular', LOBULATED='lobulated'.
+    """
 
     OVAL = "oval"
     ROUND = "round"
@@ -23,7 +28,13 @@ class MassShape(Enum):
 
 
 class MassMargin(Enum):
-    """Normalized BI-RADS v2025 mammography mass margin descriptors."""
+    """Normalized BI-RADS v2025 mammography mass margin descriptors.
+
+    Members
+    -------
+    CIRCUMSCRIBED='circumscribed', INDISTINCT='indistinct', OBSCURED='obscured',
+    SPICULATED='spiculated'.
+    """
 
     CIRCUMSCRIBED = "circumscribed"
     INDISTINCT = "indistinct"
@@ -32,7 +43,17 @@ class MassMargin(Enum):
 
 
 class CalcMorphology(Enum):
-    """Normalized BI-RADS v2025 mammography calcification morphology."""
+    """Normalized BI-RADS v2025 mammography calcification morphology.
+
+    Members
+    -------
+    SKIN='skin', VASCULAR='vascular', COARSE='coarse',
+    LARGE_ROD_LIKE='large_rod_like', ROUND='round', RIM='rim',
+    LUCENT_CENTERED='lucent_centered', LAYERING='layering', SUTURE='suture',
+    AMORPHOUS='amorphous', COARSE_HETEROGENEOUS='coarse_heterogeneous',
+    FINE_PLEOMORPHIC='fine_pleomorphic',
+    FINE_LINEAR_OR_FINE_LINEAR_BRANCHING='fine_linear_or_fine_linear_branching'.
+    """
 
     SKIN = "skin"
     VASCULAR = "vascular"
@@ -50,7 +71,13 @@ class CalcMorphology(Enum):
 
 
 class AsymmetryType(Enum):
-    """Normalized BI-RADS v2025 mammography asymmetry descriptors."""
+    """Normalized BI-RADS v2025 mammography asymmetry descriptors.
+
+    Members
+    -------
+    ASYMMETRY='asymmetry', GLOBAL_ASYMMETRY='global_asymmetry',
+    FOCAL_ASYMMETRY='focal_asymmetry'.
+    """
 
     ASYMMETRY = "asymmetry"
     GLOBAL_ASYMMETRY = "global_asymmetry"
@@ -58,13 +85,24 @@ class AsymmetryType(Enum):
 
 
 class LegacyMassMargin(Enum):
-    """Known non-v2025 mass margin values retained for source preservation."""
+    """Known non-v2025 mass margin values retained for source preservation.
+
+    Members
+    -------
+    MICROLOBULATED='microlobulated'.
+    """
 
     MICROLOBULATED = "microlobulated"
 
 
 class LegacyCalcMorphology(Enum):
-    """Known non-v2025 calcification morphology values retained for sources."""
+    """Known non-v2025 calcification morphology values retained for sources.
+
+    Members
+    -------
+    MILK_OF_CALCIUM='milk_of_calcium', DYSTROPHIC='dystrophic',
+    COARSE_HETERO='coarse_hetero', FINE_LINEAR='fine_linear'.
+    """
 
     MILK_OF_CALCIUM = "milk_of_calcium"
     DYSTROPHIC = "dystrophic"
@@ -73,7 +111,12 @@ class LegacyCalcMorphology(Enum):
 
 
 class LegacyAsymmetryType(Enum):
-    """Known discontinued asymmetry descriptors retained for source values."""
+    """Known discontinued asymmetry descriptors retained for source values.
+
+    Members
+    -------
+    DEVELOPING='developing'.
+    """
 
     DEVELOPING = "developing"
 
@@ -89,24 +132,57 @@ class SourceLexiconValue(Generic[NormalizedT, LegacyT]):
     ``normalized`` is the v2025 lexicon value to use for clinical logic.
     ``legacy`` is populated when the source value is a known discontinued or
     local value rather than a normalized lexicon member.
+
+    Attributes
+    ----------
+    raw_value : Any
+        Original unnormalized value retained as source evidence; not a semantic
+        identity.
+    source_system : Optional[str]
+        Optional source vocabulary label, retained without choosing
+        normalization policy. Default: None.
+    normalized : Optional[NormalizedT]
+        Recognized normalized enum value, or None when not normalized. Default:
+        None.
+    legacy : Optional[LegacyT]
+        Recognized legacy enum value, or None. Legacy values are preserved
+        rather than silently reclassified. Default: None.
+    warnings : Tuple[str, ...]
+        Diagnostic messages/records in emission order; empty means none emitted.
+        Default: ().
     """
 
     raw_value: Any
+    """Original unnormalized value retained as source evidence; not a semantic identity."""
     source_system: Optional[str] = None
+    """Optional source vocabulary label, retained without choosing normalization
+    policy. Default: None.
+    """
     normalized: Optional[NormalizedT] = None
+    """Recognized normalized enum value, or None when not normalized. Default: None."""
     legacy: Optional[LegacyT] = None
+    """Recognized legacy enum value, or None. Legacy values are preserved rather
+    than silently reclassified. Default: None.
+    """
     warnings: Tuple[str, ...] = ()
+    """Diagnostic messages/records in emission order; empty means none emitted. Default: ()."""
 
     @property
     def is_normalized(self) -> bool:
+        """True when a normalized value is present."""
+
         return self.normalized is not None and self.legacy is None
 
     @property
     def is_legacy(self) -> bool:
+        """True when a preserved legacy value is present."""
+
         return self.legacy is not None
 
     @property
     def is_unknown(self) -> bool:
+        """True when neither normalized nor legacy is present; raw evidence remains available."""
+
         return self.normalized is None and self.legacy is None
 
 
@@ -115,7 +191,22 @@ def normalize_mass_shape(
     *,
     source_system: Optional[str] = None,
 ) -> SourceLexiconValue[MassShape, Enum]:
-    """Normalize a source mass shape into the v2025 lexicon."""
+    """Normalize a source mass shape into the v2025 lexicon.
+
+    Parameters
+    ----------
+    value : object
+        Source code, enum or text. Recognized aliases normalize; missing/unknown
+        values remain represented as raw evidence without inventing a category.
+    source_system : str or None, optional
+        Optional provenance label, default None; does not change mapping policy.
+
+    Returns
+    -------
+    SourceLexiconValue
+        Original value, optional normalized/legacy enum, and warning strings.
+        Legacy categories are preserved rather than mapped to a modern category.
+    """
 
     return _normalize_source_value(
         value,
@@ -131,7 +222,22 @@ def normalize_mass_margin(
     *,
     source_system: Optional[str] = None,
 ) -> SourceLexiconValue[MassMargin, LegacyMassMargin]:
-    """Normalize a source mass margin while preserving legacy values."""
+    """Normalize a source mass margin while preserving legacy values.
+
+    Parameters
+    ----------
+    value : object
+        Source code, enum or text. Recognized aliases normalize; missing/unknown
+        values remain represented as raw evidence without inventing a category.
+    source_system : str or None, optional
+        Optional provenance label, default None; does not change mapping policy.
+
+    Returns
+    -------
+    SourceLexiconValue
+        Original value, optional normalized/legacy enum, and warning strings.
+        Legacy categories are preserved rather than mapped to a modern category.
+    """
 
     return _normalize_source_value(
         value,
@@ -147,7 +253,22 @@ def normalize_calc_morphology(
     *,
     source_system: Optional[str] = None,
 ) -> SourceLexiconValue[CalcMorphology, LegacyCalcMorphology]:
-    """Normalize a source calcification morphology value."""
+    """Normalize a source calcification morphology value.
+
+    Parameters
+    ----------
+    value : object
+        Source code, enum or text. Recognized aliases normalize; missing/unknown
+        values remain represented as raw evidence without inventing a category.
+    source_system : str or None, optional
+        Optional provenance label, default None; does not change mapping policy.
+
+    Returns
+    -------
+    SourceLexiconValue
+        Original value, optional normalized/legacy enum, and warning strings.
+        Legacy categories are preserved rather than mapped to a modern category.
+    """
 
     return _normalize_source_value(
         value,
@@ -163,7 +284,22 @@ def normalize_asymmetry_type(
     *,
     source_system: Optional[str] = None,
 ) -> SourceLexiconValue[AsymmetryType, LegacyAsymmetryType]:
-    """Normalize a source asymmetry descriptor."""
+    """Normalize a source asymmetry descriptor.
+
+    Parameters
+    ----------
+    value : object
+        Source code, enum or text. Recognized aliases normalize; missing/unknown
+        values remain represented as raw evidence without inventing a category.
+    source_system : str or None, optional
+        Optional provenance label, default None; does not change mapping policy.
+
+    Returns
+    -------
+    SourceLexiconValue
+        Original value, optional normalized/legacy enum, and warning strings.
+        Legacy categories are preserved rather than mapped to a modern category.
+    """
 
     return _normalize_source_value(
         value,

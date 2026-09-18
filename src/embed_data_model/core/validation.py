@@ -12,12 +12,24 @@ from embed_data_model.core.source import Issue, IssueSeverity
 
 @dataclass(frozen=True)
 class ValidationResult:
-    """Warnings remain usable; error findings classify the selection as invalid."""
+    """Immutable quality report returned by validate.
+
+    Attributes
+    ----------
+    issues : tuple of Issue, optional
+        Findings in emission order, default empty. Warnings alone remain valid;
+        use validate(warnings_invalid=True) to promote warnings to errors.
+    """
 
     issues: Tuple[Issue, ...] = ()
+    """Findings in emission order, default empty. Warnings alone remain valid; use
+    validate(warnings_invalid=True) to promote warnings to errors.
+    """
 
     @property
     def valid(self) -> bool:
+        """Return True if issues contains no error; an empty report is valid."""
+
         return not any(issue.severity == IssueSeverity.ERROR for issue in self.issues)
 
 
@@ -26,11 +38,40 @@ Validator = Callable[[Any], Iterable[Issue]]
 
 def validate(entity: Any, *, validators: Iterable[Validator] = (),
              aggregate: bool = True, warnings_invalid: bool = False) -> ValidationResult:
-    """Inspect an object and optionally descendants; never mutate or ingest.
+    """Inspect supplied facts without mutating the object.
 
-    Custom validators return iterable Issue values and run once per visited object.
-    Missing optional observations/tables do not produce an issue. This is a quality
-    report about supplied facts, not an inference of diagnosis or completeness.
+    Parameters
+    ----------
+    entity : object
+        Object to inspect. Missing optional facts do not produce issues. Passing
+        a DatasetGraph does not traverse its registries; validate its entities.
+    validators : iterable of callable, optional
+        Additional callbacks accepting one visited object and returning an
+        iterable of Issue values. Default empty; each runs once per object.
+    aggregate : bool, optional
+        Default True traverses containment children and embedded observations,
+        interpretations, history timing, anatomy and landmarks. False checks
+        only entity. Traversal deduplicates Python identity and excludes links.
+    warnings_invalid : bool, optional
+        Default False preserves severity. True copies warning issues as errors
+        in this result, leaving the originals unchanged.
+
+    Returns
+    -------
+    ValidationResult
+        Built-in and custom issues in traversal/emission order; valid is False
+        when at least one error exists. The result is not a diagnosis.
+
+    Raises
+    ------
+    Exception
+        Exceptions raised by custom validators propagate to the caller.
+
+    Examples
+    --------
+    >>> from embed_data_model import Patient, validate
+    >>> validate(Patient("P1")).valid
+    True
     """
     custom = tuple(validators)
     issues: list[Issue] = []

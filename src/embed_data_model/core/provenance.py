@@ -9,21 +9,37 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 class SourceScopeKind(str, Enum):
-    """Kind of release boundary within which a source locator is meaningful."""
+    """Kind of release boundary within which a source locator is meaningful.
+
+    Members
+    -------
+    DATASET='dataset', MATERIALIZATION='materialization'.
+    """
 
     DATASET = "dataset"
     MATERIALIZATION = "materialization"
 
 
 class ResolutionState(str, Enum):
-    """Whether source evidence resolved to a governed domain object."""
+    """Whether source evidence resolved to a governed domain object.
+
+    Members
+    -------
+    RESOLVED='resolved', UNRESOLVED='unresolved'.
+    """
 
     RESOLVED = "resolved"
     UNRESOLVED = "unresolved"
 
 
 class AvailabilityState(str, Enum):
-    """Profile-level status of a governed concept or field."""
+    """Profile-level status of a governed concept or field.
+
+    Members
+    -------
+    BOUND='bound', RAW_ONLY='raw_only', UNAVAILABLE='unavailable',
+    UNMODELED='unmodeled', UNSUPPORTED='unsupported'.
+    """
 
     BOUND = "bound"
     RAW_ONLY = "raw_only"
@@ -33,7 +49,12 @@ class AvailabilityState(str, Enum):
 
 
 class IssueSeverity(str, Enum):
-    """Stable severity vocabulary for build-time issues."""
+    """Stable severity vocabulary for build-time issues.
+
+    Members
+    -------
+    INFO='info', WARNING='warning', ERROR='error'.
+    """
 
     INFO = "info"
     WARNING = "warning"
@@ -47,14 +68,39 @@ class SourceLocator:
     A row ordinal is useful for positional source tables, while a source key is
     useful when the table supplies its own record locator. Exactly one is
     required so locator equality has one unambiguous row-addressing rule.
+
+    Attributes
+    ----------
+    scope : str
+        Non-empty dataset/materialization scope label.
+    scope_kind : SourceScopeKind
+        Whether scope identifies a dataset or one materialization.
+    source_profile : str
+        Non-empty source-profile label.
+    source_table : str
+        Non-empty physical source table label.
+    row_ordinal : Optional[int]
+        Zero-based physical position, or None. Exactly one of
+        row_ordinal/source_key is required. Default: None.
+    source_key : Optional[str]
+        Physical source row key; does not supply clinical identity. Default:
+        None.
     """
 
     scope: str
+    """Non-empty dataset/materialization scope label."""
     scope_kind: SourceScopeKind
+    """Whether scope identifies a dataset or one materialization."""
     source_profile: str
+    """Non-empty source-profile label."""
     source_table: str
+    """Non-empty physical source table label."""
     row_ordinal: Optional[int] = None
+    """Zero-based physical position, or None. Exactly one of row_ordinal/source_key
+    is required. Default: None.
+    """
     source_key: Optional[str] = None
+    """Physical source row key; does not supply clinical identity. Default: None."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scope_kind", SourceScopeKind(self.scope_kind))
@@ -90,13 +136,39 @@ class SourceLocator:
 
 @dataclass(frozen=True)
 class BuildIssue:
-    """A structured build-time problem tied to its source evidence."""
+    """A structured build-time problem tied to its source evidence.
+
+    Attributes
+    ----------
+    code : str
+        Non-empty machine-readable diagnostic code.
+    message : str
+        Non-empty human-readable diagnostic explanation.
+    severity : IssueSeverity
+        Diagnostic level: info, warning or error. Errors invalidate
+        ValidationResult; warnings do not by default.
+    source : SourceLocator
+        Optional provenance. SourceRef and SourceLocator identify evidence, not
+        clinical events.
+    context : Mapping[str, Any]
+        Shallow-copied read-only diagnostic mapping. Nested mutable values are
+        not frozen. Default: a fresh empty mapping.
+    """
 
     code: str
+    """Non-empty machine-readable diagnostic code."""
     message: str
+    """Non-empty human-readable diagnostic explanation."""
     severity: IssueSeverity
+    """Diagnostic level: info, warning or error. Errors invalidate
+    ValidationResult; warnings do not by default.
+    """
     source: SourceLocator
+    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
     context: Mapping[str, Any] = field(default_factory=dict)
+    """Shallow-copied read-only diagnostic mapping. Nested mutable values are not
+    frozen. Default: a fresh empty mapping.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "severity", IssueSeverity(self.severity))
@@ -120,12 +192,30 @@ class BuildIssue:
 
 @dataclass(frozen=True)
 class SourceOccurrence:
-    """Independently addressable source evidence, not a clinical object."""
+    """Independently addressable source evidence, not a clinical object.
+
+    Attributes
+    ----------
+    locator : SourceLocator
+        Physical evidence address, never a clinical identity.
+    raw_values : Mapping[str, Any]
+        Shallow-copied read-only source mapping; nested values remain shared.
+    resolution_state : ResolutionState
+        Whether evidence resolved; UNRESOLVED means no supported result could be
+        selected.
+    issues : Tuple[BuildIssue, ...]
+        Ordered diagnostics supplied by this operation; empty means none.
+        Default: ().
+    """
 
     locator: SourceLocator
+    """Physical evidence address, never a clinical identity."""
     raw_values: Mapping[str, Any]
+    """Shallow-copied read-only source mapping; nested values remain shared."""
     resolution_state: ResolutionState
+    """Whether evidence resolved; UNRESOLVED means no supported result could be selected."""
     issues: Tuple[BuildIssue, ...] = ()
+    """Ordered diagnostics supplied by this operation; empty means none. Default: ()."""
 
     def __post_init__(self) -> None:
         object.__setattr__(

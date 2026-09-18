@@ -17,6 +17,11 @@ class CoercibleEnum(Enum):
 
     @classmethod
     def coerce(cls: Type[_CoercibleEnumT], value: Any) -> _CoercibleEnumT:
+        """Return an existing member, exact enum value, or recognized source alias.
+        Missing/unrecognized values become UNKNOWN for concrete package enums. Enum
+        subclasses without UNKNOWN may raise ValueError.
+        """
+
         if isinstance(value, cls):
             return value
         try:
@@ -39,7 +44,12 @@ def _normalized_text(value: Any) -> str:
 
 
 class Laterality(CoercibleEnum):
-    """Breast side encoded independently of any source table."""
+    """Breast side encoded independently of any source table.
+
+    Members
+    -------
+    LEFT='L', RIGHT='R', BILATERAL='B', UNKNOWN='UNKNOWN'.
+    """
 
     LEFT = "L"
     RIGHT = "R"
@@ -63,9 +73,15 @@ class Laterality(CoercibleEnum):
 
     @property
     def is_unilateral(self) -> bool:
+        """True for LEFT and RIGHT only; BILATERAL and UNKNOWN are False."""
+
         return self in {self.LEFT, self.RIGHT}
 
     def expand(self) -> Tuple["Laterality", ...]:
+        """Return (LEFT, RIGHT) for BILATERAL, (self,) for a unilateral side, or () for
+        UNKNOWN. Order is always left then right.
+        """
+
         if self is self.BILATERAL:
             return (self.LEFT, self.RIGHT)
         if self.is_unilateral:
@@ -74,7 +90,12 @@ class Laterality(CoercibleEnum):
 
 
 class ViewPosition(CoercibleEnum):
-    """Mammography view position."""
+    """Mammography view position.
+
+    Members
+    -------
+    CC='CC', MLO='MLO', ML='ML', LM='LM', XCCL='XCCL', UNKNOWN='UNKNOWN'.
+    """
 
     CC = "CC"
     MLO = "MLO"
@@ -96,7 +117,12 @@ class ViewPosition(CoercibleEnum):
 
 
 class ImageModality(CoercibleEnum):
-    """Image acquisition or derived-image category."""
+    """Image acquisition or derived-image category.
+
+    Members
+    -------
+    FFDM='2D', DBT='3D', S2D='S2D', UNKNOWN='UNKNOWN'.
+    """
 
     FFDM = "2D"
     DBT = "3D"
@@ -123,7 +149,13 @@ class ImageModality(CoercibleEnum):
 
 
 class OrientationDirection(CoercibleEnum):
-    """DICOM patient orientation direction component."""
+    """DICOM patient orientation direction component.
+
+    Members
+    -------
+    P='P', A='A', L='L', R='R', HL='HL', HR='HR', FL='FL', FR='FR', H='H',
+    F='F', UNKNOWN='UNKNOWN'.
+    """
 
     P = "P"
     A = "A"
@@ -147,10 +179,20 @@ class OrientationDirection(CoercibleEnum):
 
 @dataclass(frozen=True)
 class PatientOrientation:
-    """Two-component DICOM patient orientation."""
+    """Two-component DICOM patient orientation.
+
+    Attributes
+    ----------
+    row : OrientationDirection
+        DICOM row direction (direction along a displayed row).
+    column : OrientationDirection
+        DICOM column direction (direction along a displayed column).
+    """
 
     row: OrientationDirection
+    """DICOM row direction (direction along a displayed row)."""
     column: OrientationDirection
+    """DICOM column direction (direction along a displayed column)."""
 
     @classmethod
     def coerce(
@@ -161,6 +203,12 @@ class PatientOrientation:
             Iterable[Union[str, OrientationDirection]],
         ],
     ) -> "PatientOrientation":
+        """Return orientation from an existing object, two-item iterable, or Python-
+        literal string such as "['P', 'L']". Unrecognized components become UNKNOWN.
+        Invalid syntax or arity raises ValueError. Existing objects are returned
+        unchanged.
+        """
+
         if isinstance(value, PatientOrientation):
             return value
         parsed = cls._parse(value)
@@ -191,17 +239,26 @@ class PatientOrientation:
 
     @property
     def exact(self) -> bool:
+        """True when neither component is UNKNOWN; does not validate orientation consistency."""
+
         return (
             self.row is not OrientationDirection.UNKNOWN
             and self.column is not OrientationDirection.UNKNOWN
         )
 
     def as_tuple(self) -> Tuple[str, str]:
+        """Return string-valued (row, column) direction codes, preserving order."""
+
         return self.row.value, self.column.value
 
 
 class FovRotation(CoercibleEnum):
-    """Field-of-view rotation metadata."""
+    """Field-of-view rotation metadata.
+
+    Members
+    -------
+    NONE=0.0, FULL=180.0, UNKNOWN='UNKNOWN'.
+    """
 
     NONE = 0.0
     FULL = 180.0
@@ -221,7 +278,12 @@ class FovRotation(CoercibleEnum):
 
 
 class FovHorizontalFlip(CoercibleEnum):
-    """Field-of-view horizontal flip metadata."""
+    """Field-of-view horizontal flip metadata.
+
+    Members
+    -------
+    YES='YES', NO='NO', UNKNOWN='UNKNOWN'.
+    """
 
     YES = "YES"
     NO = "NO"
