@@ -65,3 +65,27 @@ def test_procedure_type_and_pathology_codes_are_normalized():
     (procedure,) = graph.procedures
     assert procedure.identity.procedure_type == "CORE"
     assert {finding.finding_number for finding in graph.findings if procedure in finding.procedures} == {"1", "2"}
+
+
+@pytest.mark.parametrize("sentinel", [-2, -99, "-2"])
+def test_negative_distance_is_an_exceptional_code_not_a_measurement(sentinel):
+    report = load_embed(magview=[magview_row(side="L", location="UO", distance=sentinel)])
+
+    finding = report.graph.finding("A1", "1")
+    assert finding.anatomical_position.distance_from_nipple_cm is None
+    assert finding.source_distance_codes == {"distance": sentinel}
+    assert "exceptional_finding_distance" in {issue.code for issue in report.issues}
+
+
+def test_validation_rejects_a_negative_distance_supplied_directly():
+    from embed_data_model import Finding, validate
+    from embed_data_model.core.anatomy import AnatomicalPosition, Quadrant
+
+    position = AnatomicalPosition(
+        laterality=Laterality.LEFT,
+        quadrant=Quadrant(laterality=Laterality.LEFT),
+        distance_from_nipple_cm=-2.0,
+    )
+    finding = Finding("A1", Laterality.LEFT, "1", anatomical_position=position)
+
+    assert "distance_range" in {issue.code for issue in validate(finding).issues}

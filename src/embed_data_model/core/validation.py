@@ -109,6 +109,9 @@ def _quality(obj: Any) -> Iterable[Issue]:
     confidence = getattr(obj, "confidence", None)
     if confidence is not None and (not isinstance(confidence, Real) or not isfinite(float(confidence)) or not 0 <= float(confidence) <= 1):
         yield issue("confidence_range", "Confidence must be finite and between zero and one", value=confidence)
+    distance = getattr(obj, "distance_from_nipple_cm", None)
+    if distance is not None and (not isinstance(distance, Real) or not isfinite(float(distance)) or float(distance) < 0):
+        yield issue("distance_range", "Distance from nipple must be a finite non-negative measurement", value=distance)
     for field in ("height", "width", "frame_count"):
         value = getattr(obj, field, None)
         if value is not None and (not isinstance(value, Real) or not isfinite(float(value)) or float(value) <= 0):

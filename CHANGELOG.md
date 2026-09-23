@@ -11,6 +11,11 @@
   descriptors) are trimmed and uppercased before comparison, so formatting
   variants of one code no longer register as conflicting values. Procedure
   identities and descriptors now carry the normalized code.
+- A negative finding `distance` (EMBED uses values such as -2 and -99 as
+  undocumented exceptional codes) is no longer stored as a distance from the
+  nipple. The raw code stays in `source_distance_codes` and the load reports
+  `exceptional_finding_distance`. `validate` flags a negative or non-finite
+  distance supplied directly.
 
 ## 0.1.0 — 2026-09-09
 

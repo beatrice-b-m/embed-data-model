@@ -960,6 +960,20 @@ def _finding_anatomy(
                     context={"identity": key, "value": distance_raw},
                 )
             )
+        if distance is not None and distance < 0:
+            # EMBED uses negative values such as -2 and -99 as undocumented
+            # exceptional representations, never as physical measurements.
+            # The raw code stays in source_distance_codes.
+            distance = None
+            issues.append(
+                Issue(
+                    code="exceptional_finding_distance",
+                    message="negative finding distance is an exceptional source code, not a measurement",
+                    severity=IssueSeverity.WARNING,
+                    source=source,
+                    context={"identity": key, "value": distance_raw},
+                )
+            )
         if distance is not None and position is None and laterality is not Laterality.UNKNOWN:
             position = AnatomicalPosition(
                 laterality=laterality,
