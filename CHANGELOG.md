@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Refresh replaces only fields whose columns the rows supply. An explicit null
+  still clears a field, but a column absent from every row now leaves it
+  unchanged. Previously a findings-only MagView load cleared the exam date,
+  exam description and patient sex loaded earlier.
 - Default column bindings now name only columns that exist in the internal
   EMBED tables. `patients.birth_year`, `images.series_instance_uid` and
   pathology `diagnosis`, `result_category` and `malignant` are unbound by

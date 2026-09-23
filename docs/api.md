@@ -63,8 +63,9 @@ report containing the graph and issues. Inputs are optional. One invocation is
 one complete grouped snapshot; callers must assemble complete groups across
 streaming chunks before invoking refresh. Separate calls are separate snapshots.
 
-Refresh resets bound adapter-managed scalar fields, including absent/null fields,
-and applies the combined snapshot. Unbound fields, consumer metadata/attributes,
+Refresh replaces bound adapter-managed scalar fields whose columns are supplied,
+including explicit nulls, and applies the combined snapshot. Columns absent from
+every row leave their fields unchanged. Unbound fields, consumer metadata/attributes,
 subclass types, Python references, and unspecified descendant grains survive.
 Merge applies supplied non-null fields. Complementary rows combine; conflicting
 populated values become unknown with a diagnostic. Wide and narrow projections

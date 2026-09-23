@@ -57,8 +57,10 @@ Every supported table input is optional. One `load_embed` invocation groups rows
 into a complete snapshot per addressed semantic grain and returns its graph and
 issues. Callers assemble complete groups before applying streamed refreshes.
 
-Default refresh updates existing objects in place and resets bound adapter-managed
-scalar fields, including absent and explicitly null values. It preserves Python
+Default refresh updates existing objects in place and replaces bound
+adapter-managed scalar fields whose columns the rows supply, including explicitly
+null values. A column absent from every row of a grain leaves its field
+unchanged, so partial tables and extracts can be loaded progressively. It preserves Python
 references, subclasses, consumer attributes and metadata, unbound fields, and
 unsupplied child grains. Child-only loads ensure parent objects without resetting
 their scalar fields. Explicit merge applies non-null values. Complementary rows

@@ -25,7 +25,7 @@ def test_refresh_preserves_subclass_reference_extensions_and_children():
     finding = exam.add_finding(Finding("A", Laterality.LEFT, "1"))
     load_embed(exams=[{"acc_anon":"A", "desc":"new"}], into=graph)
     assert graph.exam("A") is exam and isinstance(exam, ResearchExam)
-    assert exam.description == "new" and exam.exam_date is None
+    assert exam.description == "new" and exam.exam_date == "2020-01-01"
     assert exam.findings == (finding,) and exam.project == {"values":[1]}
     assert exam.metadata["consumer"] == "keep"
 
@@ -75,7 +75,7 @@ def test_finding_refresh_respects_unbound_fields_and_conflicting_merge_values():
     finding.finding_type = "consumer"
     load_embed(findings=[{"acc_anon":"A", "numfind":1}], into=graph)
     assert finding.finding_type == "consumer"  # default finding_type is unbound
-    assert finding.laterality is Laterality.UNKNOWN
+    assert finding.laterality is Laterality.LEFT  # an absent side column is not supplied
     load_embed(findings=[{"acc_anon":"A", "numfind":1,"side":"L"},{"acc_anon":"A", "numfind":1,"side":"R"}], mode="merge", into=graph)
     assert finding.laterality is Laterality.UNKNOWN
     assert not graph.exam("A").ensure_side(Laterality.LEFT).findings
@@ -104,5 +104,7 @@ def test_interpretation_without_diagnostics_refreshes_in_place_and_respects_unbi
     load_embed(findings=[{"acc_anon": "A", "numfind": 1, "recc": "FU"}], into=graph, mode="merge")
     assert interpretation.assessment == "2" and interpretation.recommendation == "FU"
     load_embed(findings=[{"acc_anon": "A", "numfind": 1}], into=graph)
+    assert interpretation.assessment == "2" and interpretation.recommendation == "FU"
+    load_embed(findings=[{"acc_anon": "A", "numfind": 1, "asses": None, "recc": None}], into=graph)
     assert graph.findings[0].interpretation is interpretation
     assert interpretation.assessment is None and interpretation.recommendation is None

@@ -210,6 +210,12 @@ def test_registry_payload_is_explicit_and_refreshes_only_bound_fields():
     load(
         graph, columns=columns, registry=[{"empi_anon": "P", "cancer_registry_id": "7"}]
     )
+    assert obj.payload["diagnosis"] == "supplied"
+    load(
+        graph,
+        columns=columns,
+        registry=[{"empi_anon": "P", "cancer_registry_id": "7", "dx": None}],
+    )
     assert obj.payload["diagnosis"] is None
 
 

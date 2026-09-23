@@ -129,7 +129,8 @@ Treat each call to `load_embed` as one complete grouped snapshot for every
 semantic grain that it addresses.
 
 `mode="refresh"` is the default. For bound adapter-managed scalar fields it
-resets values that are absent or explicitly null in the incoming snapshot. It
+replaces the values whose columns the incoming rows supply, including explicit
+nulls; a column absent from the rows leaves its field unchanged. It
 updates the existing object in place, keeps consumer attributes/metadata and
 subclasses, and leaves unbound fields and unspecified child grains alone.
 

@@ -36,7 +36,8 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
         image = graph.image(first["image_id"]) if derivative else (
             graph.source_image(first["source_sop_instance_uid"]) if first["source_sop_instance_uid"] else graph.image(first["image_id"]))
         fields: dict[str, Any] = {}
-        for field in first["managed"]:
+        managed = set().union(*(item["managed"] for item in observations))
+        for field in sorted(managed):
             values = _distinct(item["fields"].get(field) for item in observations)
             if len(values) > 1:
                 _issue(issues, "conflicting_image_values", "Conflicting populated image values become unknown", identity=key, field=field)
@@ -136,7 +137,7 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
                   "frame_count": "frame_count", "study_instance_uid": "study_instance_uid", "series_instance_uid": "series_instance_uid",
                   "coordinate_frame_id": "coordinate_frame_id", "derived_image_type": "derived_image_type"}
     for semantic, field in scalar_map.items():
-        if columns.get(semantic) is not None:
+        if _supplied(row, columns, semantic):
             raw = _mapped(row, columns, semantic)
             if not is_null_scalar(raw):
                 if semantic == "laterality":
@@ -151,12 +152,13 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
                 fields[field] = raw
             else:
                 fields[field] = None
-    if columns.get("modality") is not None or columns.get("derived_image_type") is not None:
+    if _supplied(row, columns, "modality") or _supplied(row, columns, "derived_image_type"):
         raw_modality = _mapped(row, columns, "modality")
         raw_type = _mapped(row, columns, "derived_image_type")
         inferred = ImageModality.coerce(raw_type)
         fields["modality"] = inferred if inferred is not ImageModality.UNKNOWN else ImageModality.coerce(raw_modality)
-        fields["source_modality"] = _identifier(raw_modality)
+        if _supplied(row, columns, "modality"):
+            fields["source_modality"] = _identifier(raw_modality)
         if is_null_scalar(raw_modality) and is_null_scalar(raw_type):
             fields["modality"] = None
     if "frame_count" in fields and fields.get("modality") is not ImageModality.DBT:
@@ -260,6 +262,13 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
 
 def _signature(collection: tuple[RegionOfInterest, ...]) -> Any:
     return tuple((roi.coordinates, roi.source_frame_indices, roi.frame_provenance, roi.frame_derivation_method, roi.confidence, roi.annotation_source, roi.coordinate_frame_id) for roi in collection)
+
+
+def _supplied(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], semantic: str) -> bool:
+    """Return whether the row carries the bound column, including an explicit null."""
+
+    physical = columns.get(semantic)
+    return physical is not None and physical in row
 
 
 def _mapped(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], semantic: str) -> Any:

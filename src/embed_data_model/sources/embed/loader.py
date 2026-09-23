@@ -145,8 +145,10 @@ def load_embed(
         a None binding disables an optional field. Required fields cannot be
         unbound. Supported table names are the input names except registry_rows.
     mode : {"refresh", "merge"}, optional
-        Default "refresh" resets bound adapter-managed scalars at addressed
-        grains, including absent/null fields. "merge" applies non-null values;
+        Default "refresh" replaces bound adapter-managed scalars at addressed
+        grains whose columns the rows supply, including explicit nulls; a
+        column absent from every row leaves its field unchanged. "merge"
+        applies non-null values;
         conflicting populated facts become unknown with an issue. Missing tables
         and unspecified descendant grains survive either mode.
     retain_raw : bool, optional
@@ -445,7 +447,7 @@ def _load_patients(
             key,
             issues,
         )
-        updates = _updates_for_mode(fields, conflicts, columns, mode)
+        updates = _updates_for_mode(fields, conflicts, mode)
         if updates:
             _update_entity(graph, patient, updates)
 
@@ -469,19 +471,10 @@ def _load_exams(
             key,
             issues,
         )
+        renamed = {"exam_date": "exam_date", "exam_description": "description"}
         updates = _updates_for_mode(
-            {
-                "exam_date": fields.get("exam_date"),
-                "description": fields.get("exam_description"),
-            },
-            {
-                "exam_date": conflicts.get("exam_date", False),
-                "description": conflicts.get("exam_description", False),
-            },
-            {
-                "exam_date": columns.get("exam_date"),
-                "description": columns.get("exam_description"),
-            },
+            {renamed[name]: value for name, value in fields.items()},
+            {renamed[name]: value for name, value in conflicts.items()},
             mode,
         )
         if updates:
@@ -580,7 +573,7 @@ def _load_findings(
         managed_updates = {}
         for name, value in updates.items():
             semantics = dependencies.get(name, (_finding_field(name),))
-            if not any(columns.get(semantic) is not None for semantic in semantics):
+            if not any(semantic in fields for semantic in semantics):
                 continue
             if mode == "refresh" or any(conflicts.get(semantic) or fields.get(semantic) is not None for semantic in semantics):
                 managed_updates[name] = value
@@ -591,7 +584,7 @@ def _load_findings(
             # without discarding a consumer's live reference or extension state.
             current = existing.interpretation
             for name in ("assessment", "recommendation"):
-                if columns.get(name) is not None and (
+                if name in fields and (
                     mode == "refresh" or conflicts.get(name) or fields.get(name) is not None
                 ):
                     current.update(**{name: fields.get(name)})
@@ -804,7 +797,9 @@ def _combine_fields(
     conflicts: dict[str, bool] = {}
     for semantic, converter in converters.items():
         physical = columns.get(semantic)
-        if physical is None:
+        if physical is None or not _column_supplied(rows, physical):
+            # An unbound column, or one absent from every row, is not part of
+            # this snapshot: refresh leaves the current value alone.
             continue
         candidates: list[Any] = []
         for row in rows:
@@ -840,13 +835,12 @@ def _combine_fields(
 def _updates_for_mode(
     fields: Mapping[str, Any],
     conflicts: Mapping[str, bool],
-    columns: Mapping[str, Optional[str]],
     mode: str,
 ) -> dict[str, Any]:
+    """Select supplied field values to apply: all in refresh, populated in merge."""
+
     result: dict[str, Any] = {}
     for semantic, value in fields.items():
-        if columns.get(semantic) is None:
-            continue
         if mode == "refresh" or conflicts.get(semantic, False) or value is not None:
             result[semantic] = value
     return result

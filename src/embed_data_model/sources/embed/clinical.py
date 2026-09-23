@@ -224,9 +224,9 @@ def load_clinical(
         else:
             bound_slots = {
                 int(k.split("_")[1])
-                for *_, cmap, explicit in group
+                for _, _, _, row, cmap, _ in group
                 for k, v in cmap.items()
-                if k.startswith("descriptor_") and v is not None
+                if k.startswith("descriptor_") and v is not None and v in row
             }
             if bound_slots:
                 retained = {
@@ -343,7 +343,8 @@ def _combine(
     grouped: dict[str, list] = defaultdict(list)
     for row, cmap in rows:
         for field, physical in cmap.items():
-            if physical is None:
+            if physical is None or physical not in row:
+                # Absent columns are outside this snapshot and stay unchanged.
                 continue
             values = grouped[field]
             value = _value(row, physical)

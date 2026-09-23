@@ -163,8 +163,10 @@ adapters.
 ## Refresh and merge
 
 One invocation is one complete grouped snapshot for each grain it addresses.
-The default `mode="refresh"` resets bound adapter-managed scalar fields,
-including fields that are absent or explicitly null in that snapshot. It keeps
+The default `mode="refresh"` replaces bound adapter-managed scalar fields whose
+columns the rows supply, including explicitly null values. A column absent from
+every row leaves its field unchanged, so a findings-only extract does not erase
+exam or patient fields loaded earlier. It keeps
 the same Python object, subclass, consumer attributes and metadata, unbound
 fields, and child grains that were not supplied. A child-only load ensures
 missing parent shells but does not refresh the parent's fields.

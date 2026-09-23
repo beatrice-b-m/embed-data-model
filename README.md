@@ -123,9 +123,10 @@ separate from source SOP identity and source paths; ROI identity is scoped to
 an image and an explicit collection key. DataFrame indexes and row order are
 diagnostic details, never fallback clinical identity.
 
-Refresh is the default load mode. It resets bound adapter-managed scalar fields
-for each addressed grain, including an explicitly supplied null or an absent
-field in a complete snapshot. It keeps object references, subclasses,
+Refresh is the default load mode. For each addressed grain it replaces the
+bound fields whose columns the rows supply, including an explicitly supplied
+null. A column absent from the rows leaves its field unchanged, so tables and
+extracts with different columns can be loaded one after another. It keeps object references, subclasses,
 consumer-added attributes and metadata, unbound fields, and child grains that
 were not supplied. `mode="merge"` applies supplied non-null scalar values and
 reports conflicting populated values as issues. A single invocation is one
