@@ -144,11 +144,10 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
                 elif semantic == "view_position":
                     raw = ViewPosition.coerce(raw)
                 elif semantic in {"height", "width", "frame_count"}:
-                    try:
-                        raw = float(raw)
-                    except (ValueError, TypeError):
-                        _issue(issues, "image_numeric_parse", "Image dimension/frame fact is not numeric", field=semantic, value=raw)
-                        raw = None
+                    count = _count(raw)
+                    if count is None:
+                        _issue(issues, "image_numeric_parse", "Image dimension/frame fact is not a whole number", field=semantic, value=raw)
+                    raw = count
                 fields[field] = raw
             else:
                 fields[field] = None
@@ -275,6 +274,18 @@ def _identifier(value: Any) -> Optional[str]:
         return str(int(float(value)))
     text = str(value).strip()
     return text or None
+
+
+def _count(value: Any) -> Optional[int]:
+    """Return a pixel or frame count as int, or None when it is not whole."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(value, bool) or not number.is_integer():
+        return None
+    return int(number)
 
 
 def _distinct(values: Iterable[Any]) -> list[Any]:

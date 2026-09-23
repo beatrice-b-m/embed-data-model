@@ -20,6 +20,8 @@
   image types it is not a frame count. `validate` no longer rejects every DBT
   image with a frame count (it compared against the wrong modality value), and
   multiple frames on a non-DBT image is now a warning instead of an error.
+- Image `height`, `width` and `frame_count` load as integers, matching their
+  documented type; a fractional value is reported instead of stored.
 
 ## 0.1.0 — 2026-09-09
 
