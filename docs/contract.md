@@ -31,7 +31,9 @@ extraction, visualization, and scientific interpretation belong to consumers.
 Clinical identity comes from mapped source identifiers, never DataFrame indexes
 or row order. One accession identifies one exam. Conflicting source patient claims
 remain in `asserted_patient_ids`; ownership stays unset until explicitly assigned
-with `graph.assign_patient`. Explicit ownership persists across reloads.
+with `graph.assign_patient`. Explicit ownership persists across reloads. Refresh
+replaces an exam's claims with the claims its snapshot supplies, so a corrected
+source patient ID replaces the earlier one; merge adds claims.
 
 A finding's side is an attribute, not part of its identity. In EMBED a supplied
 null finding side means bilateral (code `B`) and projects to both breast sides;

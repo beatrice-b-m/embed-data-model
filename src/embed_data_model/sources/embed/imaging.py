@@ -18,7 +18,7 @@ from embed_data_model.sources.embed._values import reconcile_merge
 
 def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping[str, Any]]],
                  graph: Any, columns: Mapping[str, Mapping[str, Optional[str]]],
-                 mode: str, issues: list[Issue]) -> None:
+                 mode: str, issues: list[Issue], claims: dict[str, set[str]]) -> None:
     """Each ROI-bearing row supplies a complete collection, never a row identity.
 
     Automatic metadata collections are overridden only for images addressed by
@@ -70,12 +70,12 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
             if patient is not None:
                 graph.update(image, patient_id=patient)
         if accession:
-            exam = graph.exam(accession) or graph.register(Exam(accession))
+            if graph.exam(accession) is None:
+                graph.register(Exam(accession))
             for claim in patient_values:
                 if graph.patient(claim) is None:
                     graph.register(Patient(claim))
-            if patient_values:
-                graph.claim_patient(exam, patient_values)
+            claims.setdefault(accession, set()).update(patient_values)
             graph.reference("image", image.image_id, "exam", accession, relation="parent")
 
     automatic: dict[str, list[tuple[Mapping[str, Any], MammogramImage]]] = defaultdict(list)

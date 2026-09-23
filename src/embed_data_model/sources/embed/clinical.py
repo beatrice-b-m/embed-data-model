@@ -35,8 +35,13 @@ def load_clinical(
     columns: Mapping,
     mode: str,
     issues: list[Issue],
+    claims: dict[str, set[str]],
 ) -> None:
-    """Apply narrow and wide projections together, preserving object references."""
+    """Apply narrow and wide projections together, preserving object references.
+
+    Source patient claims are recorded in ``claims`` by accession; the caller
+    applies them once for the whole invocation.
+    """
     if mode not in {"refresh", "merge"}:
         raise ValueError("mode must be 'refresh' or 'merge'")
     merge = mode == "merge"
@@ -77,7 +82,7 @@ def load_clinical(
                     for k in ("performed_date", "procedure_type")
                 ):
                     continue
-                _claim(graph, row, cmap)
+                _claim(graph, row, cmap, claims)
                 addressed.add(("clinical", grain, attachment))
                 procedure, errors = normalize_procedure(row, cmap)
                 if procedure is None:
@@ -92,7 +97,7 @@ def load_clinical(
                 record_id = _identifier(row, cmap.get("record_id"))
                 if diagnosis is None and not descriptors and record_id is None:
                     continue
-                _claim(graph, row, cmap)
+                _claim(graph, row, cmap, claims)
                 procedure, _ = normalize_procedure(row, cmap)
                 if procedure is not None:
                     procedure_groups[procedure.identity].append(
@@ -308,7 +313,7 @@ def load_clinical(
                 reconcile_merge(retained, payload_updates, grain="registry", key=key, issues=issues)
             retained.update(payload_updates)
             graph.update(entity, payload=retained)
-    _collections(magview, graph, columns, merge, issues)
+    _collections(magview, graph, columns, merge, issues, claims)
 
 
 def _attachment(
@@ -326,7 +331,10 @@ def _attachment(
 
 
 def _claim(
-    graph: Any, row: Mapping[str, Any], cmap: Mapping[str, Optional[str]]
+    graph: Any,
+    row: Mapping[str, Any],
+    cmap: Mapping[str, Optional[str]],
+    claims: dict[str, set[str]],
 ) -> None:
     accession = _identifier(row, cmap.get("accession"))
     patient = _identifier(row, cmap.get("patient_id"))
@@ -337,7 +345,7 @@ def _claim(
         if exam is None:
             exam = graph.register(Exam(accession))
         if patient is not None:
-            graph.claim_patient(exam, {patient})
+            claims.setdefault(accession, set()).add(patient)
 
 
 def _link(
@@ -385,7 +393,12 @@ def _conflict_fields(issues: Iterable[Issue]) -> set[str]:
 
 
 def _collections(
-    rows: list[Mapping], graph: Any, columns: Mapping, merge: bool, issues: list[Issue]
+    rows: list[Mapping],
+    graph: Any,
+    columns: Mapping,
+    merge: bool,
+    issues: list[Issue],
+    claims: dict[str, set[str]],
 ) -> None:
     cmap = dict(columns.get("exams", {}))
     cmap.update(columns.get("magview", {}))
@@ -399,7 +412,7 @@ def _collections(
         accession = _identifier(row, cmap.get("accession", "acc_anon"))
         if accession is None:
             continue
-        _claim(graph, row, cmap)
+        _claim(graph, row, cmap, claims)
         if assignment is not None and assignment in row:
             values = assignments[accession]
             patient = _identifier(row, cmap.get("patient_id", "empi_anon"))

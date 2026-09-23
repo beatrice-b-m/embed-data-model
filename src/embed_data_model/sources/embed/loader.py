@@ -262,9 +262,11 @@ def load_embed(
         "exams": materialized["exams"] + projected["exams"],
         "findings": materialized["findings"] + projected["findings"],
     }
+    # Source patient claims per accession, applied once after every adapter ran.
+    claims: dict[str, set[str]] = {}
     _load_patients(core_rows["patients"], graph, column_maps["patients"], mode, issues)
-    _load_exams(core_rows["exams"], graph, column_maps["exams"], mode, issues)
-    _load_findings(core_rows["findings"], graph, column_maps["findings"], mode, issues, resolved_scope)
+    _load_exams(core_rows["exams"], graph, column_maps["exams"], mode, issues, claims)
+    _load_findings(core_rows["findings"], graph, column_maps["findings"], mode, issues, resolved_scope, claims)
 
     _load_history(
         materialized["hormone_history"],
@@ -296,6 +298,7 @@ def load_embed(
         columns=column_maps,
         mode=mode,
         issues=issues,
+        claims=claims,
     )
     load_imaging(
         images=[dict(item.mapping) for item in materialized["images"]],
@@ -304,7 +307,9 @@ def load_embed(
         columns=column_maps,
         mode=mode,
         issues=issues,
+        claims=claims,
     )
+    _apply_patient_claims(graph, claims, mode)
 
     return LoadReport(graph=graph, issues=tuple(issues), source_scope=resolved_scope)
 
@@ -462,6 +467,7 @@ def _load_exams(
     columns: Mapping[str, Optional[str]],
     mode: str,
     issues: list[Issue],
+    claims: dict[str, set[str]],
 ) -> None:
     groups = _group_rows(rows, columns, ("accession",), "exam", issues)
     for key in sorted(groups, key=repr):
@@ -485,7 +491,7 @@ def _load_exams(
             reconcile_merge(_current(exam, updates), updates, grain="exam", key=key, issues=issues)
         if updates:
             _update_entity(graph, exam, updates)
-        _claim_exam_from_rows(graph, exam, group, columns)
+        _claim_exam_from_rows(graph, exam, group, columns, claims)
 
 
 def _load_findings(
@@ -495,6 +501,7 @@ def _load_findings(
     mode: str,
     issues: list[Issue],
     source_scope: str,
+    claims: dict[str, set[str]],
 ) -> None:
     groups = _group_rows(
         rows,
@@ -507,7 +514,7 @@ def _load_findings(
         group = groups[key]
         accession, finding_number = key
         exam = _ensure_exam(graph, accession)
-        _claim_exam_from_rows(graph, exam, group, columns)
+        _claim_exam_from_rows(graph, exam, group, columns, claims)
         fields, conflicts = _combine_fields(
             group,
             columns,
@@ -748,6 +755,7 @@ def _claim_exam_from_rows(
     exam: Any,
     rows: Sequence[_InputRow],
     columns: Mapping[str, Optional[str]],
+    claims_by_exam: dict[str, set[str]],
 ) -> None:
     patient_column = columns.get("patient_id")
     claims = {
@@ -757,8 +765,28 @@ def _claim_exam_from_rows(
     }
     for patient_id in claims:
         _ensure_patient(graph, patient_id)
-    if claims:
-        graph.claim_patient(exam, claims)
+    claims_by_exam.setdefault(exam.accession_number, set()).update(claims)
+
+
+def _apply_patient_claims(
+    graph: DatasetGraph,
+    claims_by_exam: Mapping[str, set[str]],
+    mode: str,
+) -> None:
+    """Apply the patient claims one invocation supplied for each exam.
+
+    Refresh replaces an exam's claims with this snapshot's claims, so a
+    corrected source patient ID replaces the old one. Merge adds them.
+    """
+
+    for accession, claims in claims_by_exam.items():
+        exam = graph.exam(accession)
+        if exam is None or not claims:
+            continue
+        if mode == "refresh":
+            graph.set_patient_claims(exam, claims)
+        else:
+            graph.claim_patient(exam, claims)
 
 
 def _group_rows(

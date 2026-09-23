@@ -35,6 +35,7 @@ def test_normalizers_accept_optional_sources_and_preserve_raw_severity():
 
 def load(graph, *, mode="refresh", columns=None, **tables):
     issues = []
+    claims = {}
     load_clinical(
         procedures=tables.get("procedures", []),
         pathology=tables.get("pathology", []),
@@ -44,7 +45,10 @@ def load(graph, *, mode="refresh", columns=None, **tables):
         columns=columns or resolve_columns(None),
         mode=mode,
         issues=issues,
+        claims=claims,
     )
+    for accession, patient_ids in claims.items():
+        graph.claim_patient(graph.exam(accession), patient_ids)
     return issues
 
 

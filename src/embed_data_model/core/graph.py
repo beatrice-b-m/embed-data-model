@@ -723,6 +723,27 @@ class DatasetGraph:
         """
 
         claims = set(getattr(exam, "asserted_patient_ids", ())) | set(patient_ids)
+        self.set_patient_claims(exam, claims)
+
+    def set_patient_claims(self, exam: Exam, patient_ids: Iterable[str]) -> None:
+        """Replace an exam's source patient claims and reconcile its owner.
+
+        Parameters
+        ----------
+        exam : Exam
+            Exam whose ``asserted_patient_ids`` are replaced.
+        patient_ids : iterable of str
+            The complete current set of source claims; consumed once.
+
+        Notes
+        -----
+        A single claim assigns the owner and several conflicting claims leave it
+        unset, unless ownership was chosen with ``assign_patient``, which
+        persists. Refresh uses this so a corrected source patient ID replaces
+        the earlier claim instead of accumulating beside it.
+        """
+
+        claims = set(patient_ids)
         object.__setattr__(exam, "asserted_patient_ids", claims)
         if getattr(exam, "_owner_explicit", False):
             return

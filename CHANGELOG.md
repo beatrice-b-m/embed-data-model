@@ -15,6 +15,10 @@
 
 ### Fixed
 
+- A refresh that supplies a corrected patient ID for an exam now replaces its
+  source claims. Previously claims only accumulated, so a corrected row left
+  the exam permanently unowned. Merge still adds claims.
+  `DatasetGraph.set_patient_claims` replaces an exam's claims directly.
 - `mode="merge"` now detects values that contradict a populated value already
   in the graph. The field becomes unknown and the load reports
   `conflicting_<grain>_<field>`. Previously a later merge silently overwrote
