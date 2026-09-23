@@ -105,12 +105,15 @@ def load_clinical(
                     )
                     attachment = ("procedure", procedure.identity)
                 addressed.add(("clinical", grain, attachment))
-                date = getattr(diagnosis, "report_documented_date", None)
                 if record_id is not None and patient_id is not None:
                     key = (patient_id, record_id)
                     explicit = True
-                elif record_id is None and attachment is not None and date is not None:
-                    key = ("magview", attachment[1], date)
+                elif record_id is None and procedure is not None:
+                    # Pathology without a record ID belongs to its procedure,
+                    # whose patient/date/type/side tuple is the reliable
+                    # identity. The report date is provisional and is kept as
+                    # an attribute, never as identity.
+                    key = ("procedure", procedure.identity)
                     explicit = False
                 else:
                     unresolved(grain, attachment, row, "incomplete_pathology_identity")

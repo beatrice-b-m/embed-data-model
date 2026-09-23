@@ -4,6 +4,9 @@
 
 ### Changed
 
+- `Pathology(...)` requires an explicit `identity` or both `patient_id` and
+  `record_id`. The undocumented `**identity_parts` attachment/report-date
+  fallback, which could not be reached through the constructor, is removed.
 - Refresh replaces only fields whose columns the rows supply. An explicit null
   still clears a field, but a column absent from every row now leaves it
   unchanged. Previously a findings-only MagView load cleared the exam date,
@@ -15,6 +18,10 @@
 
 ### Fixed
 
+- Pathology on MagView procedure rows is keyed by its procedure and attaches to
+  it. It was keyed on the provisional pathology report date (`pdate_anon`), so
+  pathology without that date became an unresolved record even when its
+  procedure was fully identified. The report date is now only an attribute.
 - A refresh that supplies a corrected patient ID for an exam now replaces its
   source claims. Previously claims only accumulated, so a corrected row left
   the exam permanently unowned. Merge still adds claims.

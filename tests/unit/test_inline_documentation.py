@@ -98,9 +98,8 @@ def test_forwarded_constructor_keywords_preserve_behavior() -> None:
 
     assert Pathology(patient_id="P", record_id="R").identity == ("P", "R")
     assert Pathology("explicit", patient_id="P", record_id="R").identity == "explicit"
-    # This pre-existing contradiction is documented, not silently repaired.
     with pytest.raises(TypeError):
-        Pathology(attachment_identity="A", report_documented_date="2020-01-01")
+        Pathology(patient_id="P")
 
     class ResearchROI(RegionOfInterest):
         def __init__(self, *args: object, label: str, **kwargs: object) -> None:

@@ -40,8 +40,11 @@ null finding side means bilateral (code `B`) and projects to both breast sides;
 a side column absent from every row leaves the side unknown.
 
 Procedure identity requires patient, performed date, procedure type, and laterality.
-Pathology uses an explicit patient-scoped record ID or a supported attachment and
-report-date key. Insufficient or ambiguous identities remain unresolved records.
+Pathology uses an explicit patient-scoped record ID or, for MagView rows, the
+identity of the procedure it belongs to. The provisional pathology report date is
+an attribute, never identity. Pathology without a complete procedure or record ID,
+and procedure pathology whose descriptor slots disagree across rows, remain
+unresolved records.
 Unkeyed histories are patient-scoped reported facts, without inferred event identity.
 
 An image's mutable `image_id` is separate from its source SOP UID and path aliases.

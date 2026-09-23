@@ -161,11 +161,7 @@ loading is synchronous, and arbitrary multi-field updates are not transactions.
 or use `partition_by_validation` at the desired level.
 
 For direct `Pathology` construction, use an explicit hashable `identity` or
-`patient_id` plus `record_id`. The historical error message advertises
-`attachment_identity` plus `report_documented_date`, but the date is consumed
-by the named constructor parameter before the fallback sees it. This path
-still raises `TypeError`; use `identity=(attachment_identity, report_date)`.
-The adapter's own attachment/date identity construction is unaffected.
+`patient_id` plus `record_id`; anything else raises `TypeError`.
 
 ROI `resize`/`realign` and image `with_landmark` return standalone **shallow**
 copies. They retain shared mutable metadata and other referenced values; use

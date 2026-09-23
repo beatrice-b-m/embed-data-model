@@ -236,18 +236,19 @@ class PathologyDiagnosis(MutableEntity):
 
 
 class Pathology(MutableEntity):
-    """A mutable pathology report bundle at one semantic attachment grain.
+    """A mutable pathology bundle for one procedure or explicit pathology record.
 
-    ``identity`` is deliberately supplied by the adapter.  It should be a
-    hashable patient-scoped record ID or the documented attachment/date
-    fallback; this class never invents an identity from a physical row or
-    diagnosis payload.  Descriptor order and duplicate values are retained.
+    ``identity`` is supplied by the caller or adapter and is never derived from
+    a physical row, a report date or the diagnosis payload. The EMBED adapter
+    uses ``(patient_id, record_id)`` for explicitly keyed records and
+    ``("procedure", ProcedureIdentity)`` for pathology carried on MagView
+    procedure rows. Descriptor order and duplicate values are retained.
 
     Parameters
     ----------
     identity : Optional[Hashable], optional
-        Explicit hashable semantic key; prefer (patient_id, record_id) or an
-        explicit (attachment_identity, report_date) tuple. Default: None.
+        Explicit hashable semantic key. When None, ``patient_id`` and
+        ``record_id`` must both be supplied and form the key. Default: None.
     diagnosis : Optional[str], optional
         Reported diagnosis text; None means absent. No diagnosis is inferred.
         Default: None.
@@ -276,10 +277,9 @@ class Pathology(MutableEntity):
     payload : Optional[Mapping[str, Any]], optional
         Additional supplied payload, shallow-copied into a dict; no inferred
         clinical meaning. Default: None.
-    **identity_parts : Any
-        Additional identity inputs; use patient_id and record_id when identity is None.
-        attachment_identity/report_documented_date is not usable through this
-        forwarding path; pass that pair as an explicit identity tuple instead.
+    patient_id, record_id : str or None, optional, keyword-only
+        Explicit patient-scoped record key used when identity is None; the
+        identity becomes ``(patient_id, record_id)``. Both default None.
 
     Notes
     -----
@@ -287,15 +287,6 @@ class Pathology(MutableEntity):
     fields; collection properties document their views. Use update/rekey to keep
     registered identities and relationships coherent. Construction checks basic
     representation; validate performs optional quality checks. No files are owned.
-
-    Notes on identity keywords
-    --------------------------
-    patient_id and record_id are optional keyword-only inputs, both default None.
-    When identity is None and both are supplied, the key is their pair. An explicit
-    identity takes precedence. Additional identity_parts remain accepted for
-    compatibility, but the historical attachment_identity/report_documented_date
-    fallback cannot receive report_documented_date through this constructor.
-    Supply that pair explicitly as identity instead. No fallback infers event IDs.
 
     Examples
     --------
@@ -341,13 +332,14 @@ class Pathology(MutableEntity):
         *,
         patient_id: Optional[str] = None,
         record_id: Optional[Hashable] = None,
-        **identity_parts: Any,
     ) -> None:
         super().__init__()
         if identity is None:
-            identity = _fallback_pathology_identity(
-                {**identity_parts, "patient_id": patient_id, "record_id": record_id}
-            )
+            if patient_id is None or record_id is None:
+                raise TypeError(
+                    "Pathology requires an identity or both patient_id and record_id"
+                )
+            identity = (patient_id, record_id)
         try:
             hash(identity)
         except TypeError as exc:
@@ -663,27 +655,6 @@ def _severity_value(value: Any) -> Any:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return value
-
-
-def _fallback_pathology_identity(parts: Mapping[str, Any]) -> Hashable:
-    """Build only documented fallback identities supplied by an adapter."""
-
-    record_id = parts.get("record_id")
-    patient_id = parts.get("patient_id")
-    if record_id is not None and patient_id is not None:
-        return patient_id, record_id
-    attachment = parts.get("attachment_identity")
-    report_date = parts.get("report_documented_date")
-    if attachment is not None and report_date is not None:
-        try:
-            hash(attachment)
-        except TypeError as exc:
-            raise TypeError("attachment_identity must be hashable") from exc
-        return attachment, report_date
-    raise TypeError(
-        "Pathology requires a hashable identity or patient_id/record_id "
-        "or attachment_identity/report_documented_date"
-    )
 
 
 def _json_value(value: Any) -> Any:
