@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Default column bindings now name only columns that exist in the internal
+  EMBED tables. `patients.birth_year`, `images.series_instance_uid` and
+  pathology `diagnosis`, `result_category` and `malignant` are unbound by
+  default; bind them through `columns` if a source provides them.
+
 ### Fixed
 
 - A supplied null finding `side` now loads as bilateral and projects to both

@@ -237,14 +237,14 @@ def test_conflicting_refresh_removes_prior_resolved_fallback():
 
 def test_scalar_conflict_is_unknown_and_unbound_pathology_fields_survive():
     graph = DatasetGraph()
-    load(graph, pathology=[clinical_row(pathology_diagnosis="first")])
+    bound = resolve_columns({"pathology": {"diagnosis": "pathology_diagnosis"}})
+    load(graph, columns=bound, pathology=[clinical_row(pathology_diagnosis="first")])
     obj = graph.pathology[0]
-    columns = resolve_columns(None)
-    columns["pathology"]["diagnosis"] = None
-    load(graph, columns=columns, pathology=[clinical_row()])
+    load(graph, pathology=[clinical_row()])
     assert obj.diagnosis == "first"
     issues = load(
         graph,
+        columns=bound,
         pathology=[
             clinical_row(pathology_diagnosis="a"),
             clinical_row(pathology_diagnosis="b"),

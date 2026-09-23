@@ -1,6 +1,9 @@
 """Small, table-local column maps for the EMBED source loader.
 
 The maps bind only source facts that are established at this adapter boundary.
+Every bound default names a column that exists in the internal EMBED MagView
+or V1c image-metadata tables; semantic fields without such a column default to
+None and can be bound explicitly through ``columns``.
 In particular, registry payload fields and future image identity fields remain
 explicitly configurable instead of being guessed from similarly named columns.
 """
@@ -20,7 +23,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
             {
                 "patient_id": "empi_anon",
                 "sex": "GENDER_DESC",
-                "birth_year": "birth_year",
+                "birth_year": None,
                 "context_date": "studydate_anon",
             }
         ),
@@ -66,7 +69,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "width": "Columns",
                 "frame_count": "ImagesInAcquisition",
                 "study_instance_uid": None,
-                "series_instance_uid": "SeriesInstanceUID",
+                "series_instance_uid": None,
                 "coordinate_frame_id": None,
             }
         ),
@@ -133,9 +136,9 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "laterality": "bside",
                 "procedure_date": "procdate_anon",
                 "procedure_type": "type",
-                "diagnosis": "pathology_diagnosis",
-                "result_category": "pathology_result_category",
-                "malignant": "pathology_malignant",
+                "diagnosis": None,
+                "result_category": None,
+                "malignant": None,
                 "severity": "path_severity",
                 "report_documented_date": "pdate_anon",
                 **{f"descriptor_{index}": f"path{index}" for index in range(1, 11)},

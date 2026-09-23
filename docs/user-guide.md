@@ -249,13 +249,13 @@ The supported default map is:
 
 | Input | Identity and default bindings |
 | --- | --- |
-| `patients` | `patient_id <- empi_anon`; `sex <- GENDER_DESC`; `birth_year <- birth_year`; `context_date <- studydate_anon` |
+| `patients` | `patient_id <- empi_anon`; `sex <- GENDER_DESC`; `context_date <- studydate_anon`; `birth_year` unbound |
 | `exams` | `accession <- acc_anon`; `patient_id <- empi_anon`; `exam_date <- studydate_anon`; `exam_description <- desc` |
 | `findings` | `(accession, finding_number) <- (acc_anon, numfind)`; `patient_id <- empi_anon`; `laterality <- side` (a supplied null side is bilateral, like `B`); `assessment <- asses`; `recommendation <- recc`; `location <- location`; `depth <- depth`; `distance <- distance` (negative values are exceptional codes, kept raw only) |
-| `images` | source path `anon_dicom_path`; patient/accession `empi_anon`/`acc_anon`; laterality/view `ImageLateralityFinal`/`ViewPosition`; modality `Modality`; derived type `FinalImageType`; dimensions `Rows`/`Columns`; frames `ImagesInAcquisition` (DBT images only); series UID `SeriesInstanceUID` |
+| `images` | source path `anon_dicom_path`; patient/accession `empi_anon`/`acc_anon`; laterality/view `ImageLateralityFinal`/`ViewPosition`; modality `Modality`; derived type `FinalImageType`; dimensions `Rows`/`Columns`; frames `ImagesInAcquisition` (DBT images only); study/series UIDs from the path |
 | `rois` | source path `anon_dicom_path`; coordinates `ROI_coords`; frame facts `ROI_frames`; depth flag `ROI_depth_derived` |
 | `procedures` | identity `(empi_anon, procdate_anon, type, bside)`; optional accession/finding `(acc_anon, numfind)` |
-| `pathology` | optional record ID; attachment `(empi_anon, acc_anon, numfind, bside)`; procedure date `procdate_anon`; report date `pdate_anon`; descriptors `path1` through `path10` |
+| `pathology` | optional record ID; attachment `(empi_anon, acc_anon, numfind, bside)`; procedure date `procdate_anon`; report date `pdate_anon`; severity `path_severity`; descriptors `path1` through `path10`; `diagnosis`, `result_category` and `malignant` unbound |
 | `hormone_history` | patient `empi_anon`; category/code `type`/`code`; accession `acc_anon`; timing `first_age`, `mfirst`, `yfirst`, `last_age`, `mlast`, `ylast` |
 | `procedure_history` | patient `empi_anon`; category/procedure `type`/`pcode`; accession `acc_anon`; laterality `side`; result `result` |
 | `registry` | required patient/entry identity `empi_anon`/`cancer_registry_id`; payload is unbound by default |
