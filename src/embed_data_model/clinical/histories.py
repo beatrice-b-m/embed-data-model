@@ -13,6 +13,7 @@ from dataclasses import dataclass, fields
 from numbers import Real
 from typing import Any, Dict, Optional
 
+from embed_data_model.core.codes import Code
 from embed_data_model.core.entity import plain_value
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import SourceRef, optional_source
@@ -60,26 +61,24 @@ class HistoryTimeEstimate:
         return {"age": self.age, "year": self.year, "month": self.month}
 
 
-@dataclass(eq=False)
 class PatientHistoryObservation:
     """Base for one reported history fact, optionally with an explicit record ID.
 
     Observations are mutable: the loader refreshes a keyed record in place so a
     consumer's reference and extra attributes survive. Equality is identity.
+    Every observation has a ``source`` and a ``record_id``:
 
     Attributes
     ----------
-    source : SourceRef or None, optional
-        Row the fact was read from; evidence, not a clinical event. Default None.
-    record_id : str or None, optional
+    source : SourceRef or None
+        Row the fact was read from; evidence, not a clinical event.
+    record_id : str or None
         Explicit patient-scoped record ID, stripped to text. None marks an
-        unkeyed reported fact. Default None.
+        unkeyed reported fact.
     """
 
-    source: Optional[SourceRef] = None
-    """Row the fact was read from; evidence, not a clinical event."""
-    record_id: Optional[str] = None
-    """Explicit patient-scoped record ID; None for an unkeyed reported fact."""
+    source: Optional[SourceRef]
+    record_id: Optional[str]
 
     def __post_init__(self) -> None:
         self.source = optional_source(self.source)
@@ -100,17 +99,22 @@ class PatientHistoryObservation:
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-compatible dictionary of the declared fields."""
 
-        return {item.name: plain_value(getattr(self, item.name)) for item in fields(self)}
+        return {item.name: plain_value(getattr(self, item.name)) for item in fields(self)}  # type: ignore[arg-type]
 
 
 @dataclass(eq=False)
 class MedicationHistoryObservation(PatientHistoryObservation):
-    """A reported hormone, medication, contraceptive or treatment exposure.
+    """A reported hormone, therapy or contraceptive exposure.
 
     Attributes
     ----------
-    category, medication : str
-        Non-empty reported category and medication (decoded EMBED codes).
+    category : Code
+        Exposure category with its meaning (EMBED ``H`` hormone, ``T``
+        therapy, ``O`` contraceptive).
+    medication : Code
+        Exposure code with its meaning; the same code means different things
+        in different categories (``O`` is "Other hormone" under ``H``).
+        Text is accepted for either as a code without meaning.
     context_accession : str or None, optional
         Exam whose record carried the report; not when the exposure happened.
     continuous, current : bool or None, optional
@@ -121,12 +125,22 @@ class MedicationHistoryObservation(PatientHistoryObservation):
         Partial reported timing; an empty estimate becomes None.
     comment : str or None, optional
         Source comment; blank text becomes None.
+    source : SourceRef or None, optional
+        Row the fact was read from. Default None.
+    record_id : str or None, optional
+        Explicit patient-scoped record ID; None (default) for an unkeyed fact.
+
+    Examples
+    --------
+    >>> from embed_data_model import Code
+    >>> MedicationHistoryObservation(Code("H", "Hormone"), Code("TAMOX", "Tamoxifen")).medication.meaning
+    'Tamoxifen'
     """
 
-    category: str = ""
-    """Reported exposure category."""
-    medication: str = ""
-    """Reported medication or treatment."""
+    category: Code
+    """Exposure category and its meaning."""
+    medication: Code
+    """Exposure code and its meaning within the category."""
     context_accession: Optional[str] = None
     """Exam whose record carried the report; not when the exposure happened."""
     continuous: Optional[bool] = None
@@ -141,11 +155,15 @@ class MedicationHistoryObservation(PatientHistoryObservation):
     """Partial reported stop timing."""
     comment: Optional[str] = None
     """Source comment."""
+    source: Optional[SourceRef] = None
+    """Row the fact was read from; evidence, not a clinical event."""
+    record_id: Optional[str] = None
+    """Explicit patient-scoped record ID; None for an unkeyed reported fact."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        self.category = _required_text(self.category, "category")
-        self.medication = _required_text(self.medication, "medication")
+        self.category = _required_code(self.category, "category")
+        self.medication = _required_code(self.medication, "medication")
         for name in ("continuous", "current"):
             if getattr(self, name) is not None and not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be bool or None")
@@ -162,39 +180,56 @@ class ProcedureHistoryObservation(PatientHistoryObservation):
 
     Attributes
     ----------
-    category, procedure : str
-        Non-empty reported category and procedure (decoded EMBED codes).
-    detail : str or None, optional
-        Reported procedure detail.
+    category : Code
+        Procedure category with its meaning (EMBED ``B`` breast, ``G``
+        gynecological).
+    procedure : Code
+        Procedure code with its meaning within the category.
+        Text is accepted for either as a code without meaning.
     context_accession : str or None, optional
         Exam whose record carried the report; not when the procedure happened.
     laterality : Laterality, optional
         Reported breast side. Default UNKNOWN.
-    reported_result : str or None, optional
-        Reported historical result; not a verified pathology diagnosis.
+    reported_result : Code or None, optional
+        Reported historical result with its meaning; not a verified pathology
+        diagnosis. EMBED ``NONE`` means no result was reported, which is not a
+        negative result; None means the result is missing.
+    source : SourceRef or None, optional
+        Row the fact was read from. Default None.
+    record_id : str or None, optional
+        Explicit patient-scoped record ID; None (default) for an unkeyed fact.
     """
 
-    category: str = ""
-    """Reported procedure category."""
-    procedure: str = ""
-    """Reported procedure."""
-    detail: Optional[str] = None
-    """Reported procedure detail."""
+    category: Code
+    """Procedure category and its meaning."""
+    procedure: Code
+    """Procedure code and its meaning within the category."""
     context_accession: Optional[str] = None
     """Exam whose record carried the report; not when the procedure happened."""
     laterality: Laterality = Laterality.UNKNOWN
     """Reported breast side."""
-    reported_result: Optional[str] = None
-    """Reported historical result; not a verified pathology diagnosis."""
+    reported_result: Optional[Code] = None
+    """Reported historical result and its meaning; not a verified pathology diagnosis."""
+    source: Optional[SourceRef] = None
+    """Row the fact was read from; evidence, not a clinical event."""
+    record_id: Optional[str] = None
+    """Explicit patient-scoped record ID; None for an unkeyed reported fact."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        self.category = _required_text(self.category, "category")
-        self.procedure = _required_text(self.procedure, "procedure")
-        self.detail = _optional_text(self.detail, "detail")
+        self.category = _required_code(self.category, "category")
+        self.procedure = _required_code(self.procedure, "procedure")
         self.context_accession = _optional_text(self.context_accession, "context_accession")
         self.laterality = Laterality.coerce(self.laterality)
-        self.reported_result = _optional_text(self.reported_result, "reported_result")
+        self.reported_result = Code.coerce(self.reported_result)
+
+
+def _required_code(value: Any, name: str) -> Code:
+    if isinstance(value, Code):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a Code or non-empty string")
+    return Code(value)
 
 
 def _optional_text(value: Optional[str], name: str) -> Optional[str]:
@@ -203,12 +238,6 @@ def _optional_text(value: Optional[str], name: str) -> Optional[str]:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string or None")
     return value.strip() or None
-
-
-def _required_text(value: str, name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be a non-empty string")
-    return value.strip()
 
 
 def _optional_time(value: Optional[HistoryTimeEstimate], name: str) -> Optional[HistoryTimeEstimate]:

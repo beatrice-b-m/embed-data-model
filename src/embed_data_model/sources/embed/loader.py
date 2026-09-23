@@ -697,7 +697,7 @@ def _apply_history_snapshot(
             facts.append(item)
         else:
             incoming_groups.setdefault(item.record_id, []).append(item)
-    managed = ("category", "medication", "context_accession", "continuous", "current", "reported_duration", "started", "stopped", "comment") if kind == "medication" else ("category", "procedure", "detail", "context_accession", "laterality", "reported_result")
+    managed = ("category", "medication", "context_accession", "continuous", "current", "reported_duration", "started", "stopped", "comment") if kind == "medication" else ("category", "procedure", "context_accession", "laterality", "reported_result")
     for record_id, observations in incoming_groups.items():
         target = keyed.get(record_id)
         updates: dict[str, Any] = {}
