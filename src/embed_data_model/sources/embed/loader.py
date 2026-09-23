@@ -95,14 +95,11 @@ def load_embed(
     pathology: Optional[_TableInput] = None,
     magview: Optional[_TableInput] = None,
     registry: Optional[_TableInput] = None,
-    registry_rows: Optional[_TableInput] = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
-    identity_namespace: Optional[str] = None,
     source_keys: Optional[Mapping[str, SourceKeySelector]] = None,
     columns: Optional[Mapping[str, Mapping[str, Optional[str]]]] = None,
     mode: Literal["refresh", "merge"] = "refresh",
-    retain_raw: bool = False,
 ) -> LoadReport:
     """Load any supported subset of EMBED tables into a mutable graph.
 
@@ -124,9 +121,8 @@ def load_embed(
     magview : iterable of mappings or DataFrame-like, optional
         Wide rows projected into clinical grains and supplied associations.
         Default None. Wide and narrow projections are reconciled together.
-    registry, registry_rows : iterable of mappings or DataFrame-like, optional
-        Patient-scoped registry entries. Both default None; registry_rows is an
-        alias and cannot be supplied together with registry. Payload columns are
+    registry : iterable of mappings or DataFrame-like, optional
+        Patient-scoped registry entries. Default None. Payload columns are
         unbound by default and must be configured explicitly.
     into : DatasetGraph or None, optional
         Existing graph to mutate in place; None creates a graph. Existing entity
@@ -134,9 +130,6 @@ def load_embed(
     source_scope : str or None, optional
         Non-empty diagnostic materialization label. None uses the target graph's
         scope ("in-memory" for a new graph); does not change an existing scope.
-    identity_namespace : str or None, optional
-        Namespace label, default "default" for a new graph. If supplied with
-        into, must match its namespace. This is not a prefix applied to IDs.
     source_keys : mapping or None, optional
         Table name to physical column name or row callback. None omits physical
         keys. These diagnose rows; neither keys, indexes nor ordinals supply
@@ -145,7 +138,7 @@ def load_embed(
         Table name to semantic-field-to-column overrides. None uses
         ``sources.embed.columns.DEFAULT_COLUMNS``. Partial maps retain defaults;
         a None binding disables an optional field. Required fields cannot be
-        unbound. Supported table names are the input names except registry_rows.
+        unbound. Supported table names are the input table names.
     mode : {"refresh", "merge"}, optional
         Default "refresh" replaces bound adapter-managed scalars at addressed
         grains whose columns the rows supply, including explicit nulls; a
@@ -154,9 +147,6 @@ def load_embed(
         value or with the populated graph value becomes unknown with an
         issue. Missing tables
         and unspecified descendant grains survive either mode.
-    retain_raw : bool, optional
-        Compatibility control, default False. Currently validated but otherwise
-        unused: True does not retain a raw-row ledger.
 
     Returns
     -------
@@ -167,10 +157,9 @@ def load_embed(
     Raises
     ------
     TypeError
-        Invalid into, retain_raw, source_keys or columns shape, or both registry
-        aliases supplied.
+        Invalid into, source_keys or columns shape.
     ValueError
-        Invalid mode, scope, namespace, column binding or source-key table.
+        Invalid mode, scope, column binding or source-key table.
 
     Notes
     -----
@@ -202,34 +191,14 @@ def load_embed(
         raise TypeError("into must be a DatasetGraph or None")
     if mode not in {"refresh", "merge"}:
         raise ValueError("mode must be 'refresh' or 'merge'")
-    if not isinstance(retain_raw, bool):
-        raise TypeError("retain_raw must be a bool")
-    if registry is not None and registry_rows is not None:
-        raise TypeError("use either registry or registry_rows, not both")
-    if registry is None:
-        registry = registry_rows
     if source_scope is not None and (
         not isinstance(source_scope, str) or not source_scope.strip()
     ):
         raise ValueError("source_scope must be a non-empty string or None")
-    if identity_namespace is not None and (
-        not isinstance(identity_namespace, str) or not identity_namespace.strip()
-    ):
-        raise ValueError("identity_namespace must be a non-empty string or None")
 
     column_maps = resolve_columns(columns)
     selectors = _resolve_source_keys(source_keys)
-    if (
-        into is not None
-        and identity_namespace is not None
-        and identity_namespace != into.identity_namespace
-    ):
-        raise ValueError("identity_namespace does not match the target DatasetGraph")
-
-    graph = into or DatasetGraph(
-        identity_namespace=identity_namespace,
-        source_scope=source_scope,
-    )
+    graph = into or DatasetGraph(source_scope=source_scope)
     resolved_scope = source_scope or graph.source_scope
     issues: list[Issue] = []
 
@@ -571,7 +540,7 @@ def _load_findings(
             finding_number,
             fields.get("assessment"),
             fields.get("recommendation"),
-            _semantic_source(group, source_scope, "finding", key),
+            _semantic_source(group),
         )
         anatomy = _finding_anatomy(
             fields,
@@ -581,7 +550,7 @@ def _load_findings(
             key,
             issues,
         )
-        source = _semantic_source(group, source_scope, "finding", key)
+        source = _semantic_source(group)
         evidence = anatomy["evidence"]
         warnings = anatomy["warnings"]
         descriptors = fields.get("descriptors")
@@ -962,7 +931,7 @@ def _finding_anatomy(
     position: Optional[AnatomicalPosition] = None
     evidence: list[FindingNormalizationEvidence] = []
     warnings: list[FindingNormalizationWarning] = []
-    source = _semantic_source(rows, source_scope, "finding", key)
+    source = _semantic_source(rows)
     if has_anatomy:
         normalized = normalize_magview_location(
             laterality=laterality,
@@ -1064,18 +1033,6 @@ def _finding_anatomy(
     }
 
 
-def _source_code_map(
-    rows: Sequence[_InputRow],
-    semantic: str,
-) -> dict[str, Any]:
-    values: dict[str, Any] = {}
-    for row in rows:
-        value = row.mapping.get(semantic)
-        if value is not None:
-            values[semantic] = value
-    return values
-
-
 def _interpretation(
     accession: str,
     finding_number: str,
@@ -1150,20 +1107,9 @@ def _finding_field(name: str) -> str:
     }.get(name, name)
 
 
-def _all_values_absent(
-    fields: Mapping[str, Any],
-    columns: Mapping[str, Optional[str]],
-    semantic: str,
-) -> bool:
-    return columns.get(semantic) is not None and fields.get(semantic) is None
+def _semantic_source(rows: Sequence[_InputRow]) -> Optional[SourceRef]:
+    """Return the first physical source reference among a grain's rows."""
 
-
-def _semantic_source(
-    rows: Sequence[_InputRow],
-    source_scope: str,
-    grain: str,
-    key: Any,
-) -> Optional[SourceRef]:
     for row in rows:
         if row.source is not None:
             return row.source

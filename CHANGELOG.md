@@ -4,6 +4,9 @@
 
 ### Removed
 
+- `load_embed` parameters `retain_raw` (validated but never used),
+  `registry_rows` (an alias of `registry`) and `identity_namespace` (a label
+  that changed nothing).
 - The `core.provenance` module (`SourceLocator`, `BuildIssue`,
   `SourceOccurrence`, `ResolutionState`, `AvailabilityState`,
   `SourceScopeKind` and a duplicate `IssueSeverity`). The loader only ever

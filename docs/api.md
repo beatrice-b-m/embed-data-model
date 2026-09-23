@@ -153,10 +153,9 @@ severity, and modality/frame plausibility are checked by explicit validation.
 Warnings do not invalidate by default; error issues do. Missing optional tables
 alone are valid. Validation is read-only and never called implicitly by loading.
 
-## Current limitations exposed by inline review
+## Current limitations
 
-`retain_raw` on `load_embed` accepts a boolean but currently has no effect;
-`True` does not retain a raw-row ledger. Inputs are materialized in memory,
+Inputs are materialized in memory,
 loading is synchronous, and arbitrary multi-field updates are not transactions.
 `validate(graph)` does not traverse graph registries; validate individual roots
 or use `partition_by_validation` at the desired level.

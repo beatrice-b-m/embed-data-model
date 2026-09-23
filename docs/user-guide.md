@@ -106,8 +106,7 @@ boundary.
 
 `load_embed` accepts any combination of these optional inputs: `patients`,
 `exams`, `findings`, `images`, `rois`, `hormone_history`, `procedure_history`,
-`procedures`, `pathology`, `magview`, and `registry` (with `registry_rows` as an
-alias when `registry` is omitted). It accepts iterables of mappings, one-shot
+`procedures`, `pathology`, `magview`, and `registry`. It accepts iterables of mappings, one-shot
 generators, and DataFrame-like values. It returns a `LoadReport` with:
 
 - `report.graph`, the target `DatasetGraph`;
