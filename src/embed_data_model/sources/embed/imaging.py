@@ -66,7 +66,7 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
             graph.update(image, **fields)
             graph.update(image, source_paths=set(image.source_paths) | aliases)
             if accession is not None and image.accession_number != accession:
-                graph.rekey(image, accession_number=accession)
+                graph.update(image, accession_number=accession)
             if patient is not None:
                 graph.update(image, patient_id=patient)
         if accession:
@@ -76,7 +76,6 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
                 if graph.patient(claim) is None:
                     graph.register(Patient(claim))
             claims.setdefault(accession, set()).update(patient_values)
-            graph.reference("image", image.image_id, "exam", accession, relation="parent")
 
     automatic: dict[str, list[tuple[Mapping[str, Any], MammogramImage]]] = defaultdict(list)
     explicit: dict[str, list[tuple[Mapping[str, Any], MammogramImage]]] = defaultdict(list)
@@ -112,7 +111,6 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
             invalid = True
         if collections and not invalid:
             graph.replace_rois(image, collections[0])
-            graph.register(image)  # Index all current path aliases/positions.
 
 
 def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], issues: list[Issue]) -> Optional[dict[str, Any]]:

@@ -84,20 +84,24 @@ Clearing an association does not delete its target object.
 
 ## Mutation and graph membership
 
-Domain entities are mutable and can be constructed independently of a graph.
-`update` changes fields and `rekey` changes identifiers while maintaining indexes
-and dependent context. Child collections are read-only views; supported membership
-methods keep traversal and reverse links coherent. Source claims remain source facts.
+Entities are mutable and can be constructed independently of a graph. Each stores
+the keys of related entities rather than object pointers, and a graph resolves
+those keys through its indexes; a relationship exists whenever both ends are
+registered, in any arrival order. `update` changes fields and `rekey` changes
+keys; a key change is propagated to every entity that stored the old key, after
+a collision check covering the whole change. Collections are resolved views.
+Source claims remain source facts.
 
 An entity belongs to at most one graph. Registration rejects distinct objects at
-occupied keys. Popping a patient or exam carries its containment subtree. Exclusive
-descendants retain Python identity; shared descendants needed by the retained graph
-are independently copied at the movement boundary. Linked exams are associations,
-not containment children; crossing links retain semantic references.
+occupied keys. Popping an entity moves it and what it contains into a new graph.
+Exclusive descendants retain Python identity; descendants also contained by
+something that stays are deep-copied at the boundary. Linked exams are
+associations, not containment; keys crossing the boundary stay unresolved until
+their targets are present.
 
-Selections are live, non-owning views. Partitions are independent owning copies,
-with copied ancestor context for lower-level selections and only the selected
-branches. Consumer metadata is copied; unsupported copy operations raise an error.
+Selections are live, non-owning views. Partitions are independent graphs of deep
+copies: the selected entities, what they contain, and their ancestors as context.
+Consumer metadata is copied; unsupported copy operations raise an error.
 
 ## Validation and evidence
 

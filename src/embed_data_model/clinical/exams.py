@@ -1,293 +1,123 @@
-"""Mutable exam aggregates and read-only breast-side projections."""
+"""Breast-imaging exams and their per-breast views."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, Optional, Set, Tuple
 
-from embed_data_model.clinical.attributes import ExamAttributeObservation
-from embed_data_model.clinical.findings import Finding
-from embed_data_model.core.entity import (
-    MutableEntity,
-    entity_reference,
-    readonly_mapping,
-    serialize_entity,
-)
+from embed_data_model.core.entity import MutableEntity, Reference, readonly_mapping
+from embed_data_model.core.graph import ensure_graph
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.imaging.images import MammogramImage
 
 if TYPE_CHECKING:
+    from embed_data_model.clinical.findings import Finding
     from embed_data_model.clinical.pathology import CancerRegistryEntry, Pathology
+    from embed_data_model.clinical.patients import Patient
     from embed_data_model.clinical.procedures import Procedure
+    from embed_data_model.imaging.images import MammogramImage
 
 
-class BreastSide(MutableEntity):
-    """Read-only-view helper grouping unilateral findings and images.
+@dataclass(frozen=True)
+class BreastSide:
+    """The findings and images of one breast within an exam.
 
-    Parameters
+    Computed from the exam on each access, so it always reflects current
+    finding and image laterality. A bilateral finding appears on both sides;
+    images of unknown laterality appear on neither.
+
+    Attributes
     ----------
     accession_number : str
-        Non-empty exam accession identifying the clinical examination.
+        The exam's accession.
     laterality : Laterality
-        LEFT or RIGHT only; other sides raise ValueError.
-    findings : Optional[Iterable[Finding]], optional
-        Initial findings in supplied order; entities are attached by reference,
-        not copied. Default: None.
-    images : Optional[Iterable[MammogramImage]], optional
-        Initial images in supplied order; entities are attached by reference,
-        not copied. Default: None.
+        LEFT or RIGHT.
+    findings : tuple of Finding
+        Findings on this side in the exam's order.
+    images : tuple of MammogramImage
+        Images of this side in the exam's order.
+    """
 
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
-
-    Raises
-    ------
-    ValueError
-        Blank accession, non-unilateral side or incompatible finding/image context.
-    TypeError
-        A supplied finding has an unsupported type."""
-
-    def __init__(
-        self,
-        accession_number: str,
-        laterality: Laterality,
-        findings: Optional[Iterable[Finding]] = None,
-        images: Optional[Iterable[MammogramImage]] = None,
-    ) -> None:
-        super().__init__()
-        self.accession_number = _required_text(accession_number, "accession_number")
-        self.laterality = Laterality.coerce(laterality)
-        if not self.laterality.is_unilateral:
-            raise ValueError("BreastSide requires LEFT or RIGHT laterality")
-        self._findings: List[Finding] = []
-        self._images: List[MammogramImage] = []
-        for finding in findings or ():
-            self._attach_finding_local(finding)
-        for image in images or ():
-            self._attach_image_local(image)
-        self._finish_initialization()
-
-    @property
-    def identity(self) -> Tuple[str, Laterality]:
-        """Semantic identity used for equality of addresses, independent of Python object identity."""
-
-        return self.accession_number, self.laterality
-
-    @property
-    def findings(self) -> Tuple[Finding, ...]:
-        """Tuple of live findings in stored traversal order; aggregate traversal
-        deduplicates Python identity.
-        """
-
-        return tuple(self._findings)
-
-    @property
-    def images(self) -> Tuple[MammogramImage, ...]:
-        """Tuple snapshot of live images in attachment order; no pixels are loaded."""
-
-        return tuple(self._images)
-
-    def add_finding(self, finding: Finding) -> Finding:
-        """Attach finding and return the retained live object.
-
-        Parameters
-        ----------
-        finding : Finding
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        Finding
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        return self._attach_finding_local(finding)
-
-    def add_image(self, image: MammogramImage) -> MammogramImage:
-        """Attach image and return the retained live object.
-
-        Parameters
-        ----------
-        image : MammogramImage
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        MammogramImage
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        return self._attach_image_local(image)
-
-    def _attach_finding_local(self, finding: Finding) -> Finding:
-        if not isinstance(finding, Finding):
-            raise TypeError("BreastSide findings must be Finding entities")
-        if finding.accession_number != self.accession_number:
-            raise ValueError("Finding accession_number must match BreastSide")
-        if self.laterality not in Laterality.coerce(finding.laterality).expand():
-            raise ValueError("Finding laterality must match BreastSide laterality")
-        for existing in self._findings:
-            if existing.identity == finding.identity:
-                if existing is finding:
-                    return existing
-                raise ValueError(
-                    "Distinct Finding objects cannot share an identity in a BreastSide"
-                )
-        self._findings.append(finding)
-        return finding
-
-    def _attach_image_local(self, image: MammogramImage) -> MammogramImage:
-        if image.accession_number != self.accession_number:
-            raise ValueError("Image accession_number must match BreastSide")
-        if image.laterality is not self.laterality:
-            raise ValueError("Image laterality must match BreastSide laterality")
-        for existing in self._images:
-            if existing.image_id == image.image_id:
-                if existing is image:
-                    return existing
-                raise ValueError(
-                    "Distinct MammogramImage objects cannot share image_id in a BreastSide"
-                )
-        self._images.append(image)
-        return image
-
-    def _children(self) -> Tuple[MutableEntity, ...]:
-        # Sides are projections, not additional graph containment edges.
-        return ()
-
-    def _attach_local(self, child: MutableEntity) -> MutableEntity:
-        if isinstance(child, Finding):
-            return self._attach_finding_local(child)
-        if isinstance(child, MammogramImage):
-            return self._attach_image_local(child)
-        raise TypeError("BreastSide children must be Finding or MammogramImage")
-
-    def _detach_local(self, child: MutableEntity) -> MutableEntity:
-        for collection in (self._findings, self._images):
-            for index, existing in enumerate(collection):
-                if existing is child:
-                    return collection.pop(index)
-        return child
-
-    def _to_dict_data(self, state: Any) -> Dict[str, object]:
-        return self.to_dict()
-
-    def to_dict(self) -> Dict[str, object]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return {
-            "accession_number": self.accession_number,
-            "laterality": self.laterality.value,
-            "finding_references": [
-                {
-                    "accession_number": finding.accession_number,
-                    "finding_number": finding.finding_number,
-                }
-                for finding in self._findings
-            ],
-            "image_references": [image.image_id for image in self._images],
-        }
+    accession_number: str
+    """The exam's accession."""
+    laterality: Laterality
+    """LEFT or RIGHT."""
+    findings: Tuple["Finding", ...] = ()
+    """Findings on this side."""
+    images: Tuple["MammogramImage", ...] = ()
+    """Images of this side."""
 
 
 class Exam(MutableEntity):
-    """A mutable clinical exam keyed by accession number.
+    """A breast-imaging exam, keyed by accession number.
 
     Parameters
     ----------
     accession_number : str
-        Non-empty exam accession identifying the clinical examination.
-    patient_id : Optional[str], optional
-        Patient identifier. Non-empty text; source patient claims and assigned
-        exam ownership are separate facts. Default: None.
-    exam_date : Optional[str], optional
-        Reported exam calendar date, conventionally ISO YYYY-MM-DD; None means
-        absent. Default: None.
-    description : Optional[str], optional
-        Source-reported exam description; None means absent. Default: None.
-    attribute_observations : Optional[Iterable[ExamAttributeObservation]], optional
-        Source-attributed facts retained by reference in supplied order; context
-        must match the parent. Default: None.
-    findings : Optional[Iterable[Finding]], optional
-        Initial findings in supplied order; entities are attached by reference,
-        not copied. Default: None.
-    images : Optional[Iterable[MammogramImage]], optional
-        Initial images in supplied order; entities are attached by reference,
-        not copied. Default: None.
-    procedures : Optional[Iterable[Procedure]], optional
-        Initial performed procedures; objects are attached by reference and may
-        be shared. Default: None.
-    pathology : Optional[Iterable[Pathology]], optional
-        Initial pathology bundles, retained by reference in supplied order.
-        Default: None.
-    registry_pathology : Optional[Iterable[CancerRegistryEntry]], optional
-        Supplied registry associations, not contained pathology reports.
-        Default: None.
-    breast_sides : Optional[Mapping[Laterality, BreastSide]], optional
-        Initial unilateral projections; contained findings/images are
-        incorporated into the exam. Default: None.
-    metadata : Optional[Mapping[str, Any]], optional
-        Consumer metadata, shallow-copied into a mutable dict. Nested values
-        remain shared. Default: None.
-    asserted_patient_ids : Optional[Iterable[str]], optional
-        Source patient claims, copied to a set; not a choice of ownership.
-        Default: None.
-    linked_accessions : Optional[Iterable[str]], optional
-        Supplied linked-exam claims, copied to a set. Missing targets may
-        resolve later. Default: None.
-    registry_references : Optional[Iterable[Tuple[str, str]]], optional
-        Supplied (patient_id, registry_id) assignments, copied to a set.
-        Default: None.
+        Non-empty exam accession.
+    patient_id : str or None, optional
+        Owning patient. When given, it is also recorded as a source claim.
+        Default None.
+    exam_date : str or None, optional
+        Exam date as supplied, conventionally ISO ``YYYY-MM-DD``. Default None.
+    description : str or None, optional
+        Source exam (procedure) description. Default None.
+    asserted_patient_ids : iterable of str, optional
+        Source patient claims. A single claim with no ``patient_id`` makes
+        that patient the owner; conflicting claims leave the exam unowned.
+    linked_accessions : iterable of str, optional
+        Accessions of exams in the same imaging episode (never prior or
+        follow-up exams). Targets may be missing.
+    registry_references : iterable of (str, str), optional
+        Assigned cancer-registry entries as ``(patient_id, registry_id)``.
     owner_explicit : bool, optional
-        Whether assigned patient ownership is explicit and should survive later
-        source claims. Default: False.
-    source : Optional[object], optional
-        Optional SourceRef locating the source row; evidence, not a
-        clinical event. Default: None.
+        Whether ``patient_id`` was chosen explicitly and survives later source
+        claims. Default False.
+    metadata : mapping, optional
+        Consumer metadata, copied into a dict.
+    source : SourceRef or None, optional
+        Row the exam was read from.
 
     Notes
     -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
+    Collections such as ``findings`` are resolved by the owning graph from the
+    keys that related entities store; an exam without a graph has none. Adding
+    a child to an exam without a graph first registers the exam in a new one.
 
-    Raises
-    ------
-    ValueError
-        Blank accession/assigned patient ID or incompatible child context/identity.
-    TypeError
-        An initial child or observation has an unsupported type."""
-
-    __key_fields__ = ("accession_number",)
-
-    patient_id: Optional[str]
-    """Patient identifier. Non-empty text; source patient claims and assigned exam
-    ownership are separate facts.
+    Examples
+    --------
+    >>> from embed_data_model import Exam, Finding
+    >>> exam = Exam("A1")
+    >>> finding = exam.add_finding(Finding("A1", "B", "1"))
+    >>> sorted(side.value for side in exam.breast_sides)
+    ['L', 'R']
     """
+
+    kind = "exam"
+    __key_fields__ = ("accession_number",)
+    _references = (
+        Reference("patient_id", "patient"),
+        Reference("linked_accessions", "exam", "association", many=True),
+        Reference("registry_references", "registry", "child", many=True),
+    )
+
+    accession_number: str
+    """Exam accession; the registry key."""
+    patient_id: Optional[str]
+    """Owning patient, or None when unowned or claims conflict."""
     exam_date: Optional[str]
-    """Reported exam calendar date, conventionally ISO YYYY-MM-DD; None means absent."""
+    """Exam date as supplied."""
     description: Optional[str]
-    """Source-reported exam description; None means absent."""
+    """Source exam description."""
+    asserted_patient_ids: Set[str]
+    """Source patient claims; not a choice of owner."""
+    linked_accessions: Set[str]
+    """Accessions of same-episode exams this exam lists."""
+    registry_references: Set[Tuple[str, str]]
+    """Assigned registry entries as ``(patient_id, registry_id)``."""
+    metadata: Dict[str, Any]
+    """Consumer metadata."""
     source: Optional[object]
-    """Optional SourceRef locating the source row; evidence, not a clinical event."""
+    """Row the exam was read from."""
 
     def __init__(
         self,
@@ -295,648 +125,190 @@ class Exam(MutableEntity):
         patient_id: Optional[str] = None,
         exam_date: Optional[str] = None,
         description: Optional[str] = None,
-        attribute_observations: Optional[Iterable[ExamAttributeObservation]] = None,
-        findings: Optional[Iterable[Finding]] = None,
-        images: Optional[Iterable[MammogramImage]] = None,
-        procedures: Optional[Iterable["Procedure"]] = None,
-        pathology: Optional[Iterable["Pathology"]] = None,
-        registry_pathology: Optional[Iterable["CancerRegistryEntry"]] = None,
-        breast_sides: Optional[Mapping[Laterality, BreastSide]] = None,
-        metadata: Optional[Mapping[str, Any]] = None,
         asserted_patient_ids: Optional[Iterable[str]] = None,
         linked_accessions: Optional[Iterable[str]] = None,
         registry_references: Optional[Iterable[Tuple[str, str]]] = None,
         owner_explicit: bool = False,
+        metadata: Optional[Mapping[str, Any]] = None,
         source: Optional[object] = None,
     ) -> None:
         super().__init__()
-        self.accession_number = _required_text(accession_number, "accession_number")
+        self.accession_number = accession_number
+        claims = set(asserted_patient_ids or ())
+        if patient_id is not None:
+            claims.add(patient_id)
+        elif len(claims) == 1:
+            patient_id = next(iter(claims))
         self.patient_id = patient_id
+        self.asserted_patient_ids = claims
         self.exam_date = exam_date
         self.description = description
-        self.source = source
-        self._attribute_observations: List[ExamAttributeObservation] = []
-        self._findings: List[Finding] = []
-        self._images: List[MammogramImage] = []
-        self._procedures: List["Procedure"] = []
-        self._pathology: List["Pathology"] = []
-        self._breast_sides: Dict[Laterality, BreastSide] = {}
-        self._metadata: Dict[str, Any] = dict(metadata or {})
-        self._asserted_patient_ids = _clean_id_set(asserted_patient_ids)
-        if patient_id is not None:
-            self._asserted_patient_ids.add(patient_id)
-        if len(self._asserted_patient_ids) == 1 and patient_id is None:
-            self.patient_id = next(iter(self._asserted_patient_ids))
-        if self.patient_id is not None:
-            self.patient_id = _required_text(self.patient_id, "patient_id")
+        self.linked_accessions = set(linked_accessions or ())
+        self.registry_references = set(registry_references or ())
         self._owner_explicit = bool(owner_explicit)
-        self._linked_accessions = _clean_id_set(linked_accessions)
-        self._registry_references = _clean_reference_set(registry_references)
-        self._linked_exams: Dict[str, Exam] = {}
-        self._registry_entries: Dict[Tuple[str, str], "CancerRegistryEntry"] = {}
+        self.metadata = dict(metadata or {})
+        self.source = source
 
-        for side in (breast_sides or {}).values():
-            if side.accession_number != self.accession_number:
-                raise ValueError("BreastSide accession_number must match Exam")
-            self.ensure_side(side.laterality)
-            for finding in side.findings:
-                self._attach_finding_local(finding)
-            for image in side.images:
-                self._attach_image_local(image)
-        for finding in findings or ():
-            self._attach_finding_local(finding)
-        for image in images or ():
-            self._attach_image_local(image)
-        for procedure in procedures or ():
-            self._attach_procedure_local(procedure)
-        for pathology_item in _items(pathology):
-            self._attach_pathology_local(pathology_item)
-        for entry in registry_pathology or ():
-            self._attach_local(entry)
-        for observation in attribute_observations or ():
-            self.add_attribute_observation(observation)
-        self._finish_initialization()
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "accession_number":
+            return _required_text(value, "accession_number")
+        if name == "patient_id":
+            return None if value is None else _required_text(value, "patient_id")
+        if name in {"asserted_patient_ids", "linked_accessions"}:
+            return {_required_text(item, "identifier") for item in value or ()}
+        if name == "registry_references":
+            return {
+                (_required_text(patient, "patient_id"), _required_text(registry, "registry_id"))
+                for patient, registry in value or ()
+            }
+        if name == "metadata":
+            return dict(value or {})
+        return value
 
-    @property
-    def findings(self) -> Tuple[Finding, ...]:
-        """Tuple of live findings in stored traversal order; aggregate traversal
-        deduplicates Python identity.
-        """
+    def _prepare_update(self, values: Dict[str, Any]) -> Dict[str, Any]:
+        # A caller changing the owner chooses it explicitly; claim
+        # reconciliation passes _owner_explicit itself.
+        if "patient_id" in values and "_owner_explicit" not in values:
+            values["_owner_explicit"] = True
+        return values
 
-        return tuple(self._findings)
-
-    @property
-    def images(self) -> Tuple[MammogramImage, ...]:
-        """Tuple snapshot of live images in attachment order; no pixels are loaded."""
-
-        return tuple(self._images)
-
-    @property
-    def breast_sides(self) -> Mapping[Laterality, BreastSide]:
-        """Read-only snapshot mapping unilateral Laterality to live BreastSide projections."""
-
-        return readonly_mapping(self._breast_sides)
-
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, values: Mapping[str, Any]) -> None:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        self._metadata = dict(values)
-
-    @property
-    def attribute_observations(self) -> Tuple[ExamAttributeObservation, ...]:
-        """Tuple snapshot of live source-attributed observations in insertion order."""
-
-        return tuple(self._attribute_observations)
-
-    @property
-    def asserted_patient_ids(self) -> set[str]:
-        """Live set of source patient claims. Use graph.claim_patient to also reconcile
-        registered ownership.
-        """
-
-        return self._asserted_patient_ids
-
-    @asserted_patient_ids.setter
-    def asserted_patient_ids(self, values: Iterable[str]) -> None:
-        """Live set of source patient claims. Use graph.claim_patient to also reconcile
-        registered ownership.
-        """
-
-        self._asserted_patient_ids = _clean_id_set(values)
+    def _renamed_reference(self, field: str) -> Dict[str, Any]:
+        # A rekeyed patient keeps its exams even though the source claims
+        # still name the old ID.
+        return {"_owner_explicit": True} if field == "patient_id" else {}
 
     @property
     def owner_explicit(self) -> bool:
-        """Whether ownership was explicitly chosen and is protected from source-claim
-        reconciliation.
-        """
+        """Whether ``patient_id`` was chosen explicitly and survives source claims."""
 
-        return self._owner_explicit
+        return bool(self.__dict__.get("_owner_explicit", False))
 
-    @property
-    def linked_accessions(self) -> set[str]:
-        """Live set of supplied link claims. Use graph.set_linked_accessions to
-        maintain resolved graph links.
-        """
+    # -- related entities --------------------------------------------------
 
-        return self._linked_accessions
-
-    @linked_accessions.setter
-    def linked_accessions(self, values: Iterable[str]) -> None:
-        """Live set of supplied link claims. Use graph.set_linked_accessions to
-        maintain resolved graph links.
-        """
-
-        self._linked_accessions = _clean_id_set(values)
+    def _children(self, kind: str) -> Tuple[Any, ...]:
+        graph = self.graph
+        return graph.children(self, kind) if graph is not None else ()
 
     @property
-    def registry_references(self) -> set[Tuple[str, str]]:
-        """Live set of (patient_id, registry_id) claims. Use
-        graph.set_registry_assignments to maintain resolved associations.
-        """
+    def patient(self) -> Optional["Patient"]:
+        """The owning patient if registered, else None."""
 
-        return self._registry_references
-
-    @registry_references.setter
-    def registry_references(self, values: Iterable[Tuple[str, str]]) -> None:
-        """Live set of (patient_id, registry_id) claims. Use
-        graph.set_registry_assignments to maintain resolved associations.
-        """
-
-        self._registry_references = _clean_reference_set(values)
+        graph = self.graph
+        return graph.patient(self.patient_id) if graph is not None and self.patient_id else None
 
     @property
-    def linked_exams(self) -> Tuple["Exam", ...]:
-        """Resolved live linked exams. Association resolution order is not a clinical
-        or temporal ordering.
-        """
+    def findings(self) -> Tuple["Finding", ...]:
+        """Findings of this exam."""
 
-        return tuple(self._linked_exams.values())
+        return self._children("finding")
 
     @property
-    def registry_entries(self) -> Tuple["CancerRegistryEntry", ...]:
-        """Resolved live registry entries. Association resolution order is not a
-        clinical or temporal ordering.
-        """
+    def images(self) -> Tuple["MammogramImage", ...]:
+        """Images of this exam."""
 
-        return tuple(self._registry_entries.values())
-
-    @property
-    def registry_pathology(self) -> Tuple["CancerRegistryEntry", ...]:
-        """Live registry entries reachable through supplied exam assignments; not
-        contained pathology.
-        """
-
-        return self.registry_entries
-
-    @property
-    def finding_index(self) -> Mapping[Tuple[str, str], Finding]:
-        """Read-only snapshot mapping (accession, finding_number) to live findings."""
-
-        return readonly_mapping({finding.identity: finding for finding in self._findings})
+        return self._children("image")
 
     @property
     def procedures(self) -> Tuple["Procedure", ...]:
-        """Tuple of live performed procedures in stored traversal order, deduplicated
-        by Python identity where aggregated.
-        """
+        """Procedures attached to this exam or to any of its findings, once each."""
 
-        result: List["Procedure"] = []
-        seen = set()
-        for procedure in self._procedures:
-            if id(procedure) not in seen:
-                seen.add(id(procedure))
-                result.append(procedure)
-        for finding in self._findings:
-            for procedure in finding.procedures:
-                if id(procedure) not in seen:
-                    seen.add(id(procedure))
-                    result.append(procedure)
-        return tuple(result)
+        return _unique([*self._children("procedure"), *(p for f in self.findings for p in f.procedures)])
 
     @property
     def pathology(self) -> Tuple["Pathology", ...]:
-        """Tuple of live pathology bundles in stored traversal order, deduplicated by
-        Python identity where aggregated.
-        """
+        """Pathology attached to this exam, its procedures or its findings, once each."""
 
-        result: List["Pathology"] = []
-        seen = set()
-        for pathology in self._pathology:
-            if id(pathology) not in seen:
-                seen.add(id(pathology))
-                result.append(pathology)
-        for procedure in self.procedures:
-            for pathology in procedure.pathologies:
-                if id(pathology) not in seen:
-                    seen.add(id(pathology))
-                    result.append(pathology)
-        return tuple(result)
-
-    @property
-    def pathologies(self) -> Tuple["Pathology", ...]:
-        """Alias for pathology, preserving live objects and collection order."""
-
-        return self.pathology
-
-    def ensure_side(self, laterality: Laterality) -> BreastSide:
-        """Return the existing unilateral projection or create an empty one. laterality
-        must coerce to LEFT or RIGHT, otherwise ValueError is raised. Mutates the
-        exam when a side is absent.
-        """
-
-        side = Laterality.coerce(laterality)
-        if not side.is_unilateral:
-            raise ValueError("Exam breast sides require LEFT or RIGHT laterality")
-        existing = self._breast_sides.get(side)
-        if existing is not None:
-            return existing
-        created = BreastSide(self.accession_number, side)
-        self._breast_sides[side] = created
-        return created
-
-    def add_attribute_observation(
-        self,
-        observation: ExamAttributeObservation,
-    ) -> ExamAttributeObservation:
-        """Attach observation and return the retained live object.
-
-        Parameters
-        ----------
-        observation : ExamAttributeObservation
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        ExamAttributeObservation
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        if not isinstance(observation, ExamAttributeObservation):
-            raise TypeError("observation must be an ExamAttributeObservation")
-        if observation.accession_number != self.accession_number:
-            raise ValueError("ExamAttributeObservation accession_number must match Exam")
-        self._attribute_observations.append(observation)
-        return observation
-
-    def add_finding(self, finding: Finding) -> Finding:
-        """Attach finding and return the retained live object.
-
-        Parameters
-        ----------
-        finding : Finding
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        Finding
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        if self.graph is not None:
-            result = self.graph.attach(self, finding)
-            return finding if result is None else result
-        return self._attach_finding_local(finding)
-
-    def extend_findings(self, findings: Iterable[Finding]) -> None:
-        """Attach findings sequentially in iterable order using add_finding. Returns
-        None. A failure can leave earlier items attached.
-        """
-
-        for finding in findings:
-            self.add_finding(finding)
-
-    def _attach_finding_local(self, finding: Finding) -> Finding:
-        if not isinstance(finding, Finding):
-            raise TypeError("Exam children must be Finding or MammogramImage entities")
-        if finding.accession_number != self.accession_number:
-            raise ValueError("Finding accession_number must match Exam accession_number")
-        for existing in self._findings:
-            if existing.identity == finding.identity:
-                if existing is finding:
-                    return existing
-                raise ValueError(
-                    "Distinct Finding objects cannot share an identity in an Exam"
-                )
-        self._findings.append(finding)
-        for laterality in Laterality.coerce(finding.laterality).expand():
-            self.ensure_side(laterality).add_finding(finding)
-        return finding
-
-    def add_image(self, image: MammogramImage) -> MammogramImage:
-        """Attach image and return the retained live object.
-
-        Parameters
-        ----------
-        image : MammogramImage
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        MammogramImage
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        if self.graph is not None:
-            result = self.graph.attach(self, image)
-            return image if result is None else result
-        return self._attach_image_local(image)
-
-    def _attach_image_local(self, image: MammogramImage) -> MammogramImage:
-        if image.accession_number != self.accession_number:
-            raise ValueError("Image accession_number must match Exam accession_number")
-        for existing in self._images:
-            if existing.image_id == image.image_id:
-                if existing is image:
-                    return existing
-                raise ValueError(
-                    "Distinct MammogramImage objects cannot share image_id in an Exam"
-                )
-        self._images.append(image)
-        if image.laterality.is_unilateral:
-            self.ensure_side(image.laterality).add_image(image)
-        return image
-
-    def add_procedure(self, procedure: "Procedure") -> "Procedure":
-        """Attach procedure and return the retained live object.
-
-        Parameters
-        ----------
-        procedure : Procedure
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        Procedure
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        if self.graph is not None:
-            result = self.graph.attach(self, procedure)
-            return procedure if result is None else result
-        return self._attach_procedure_local(procedure)
-
-    def _attach_procedure_local(self, procedure: "Procedure") -> "Procedure":
-        from embed_data_model.clinical.procedures import Procedure
-
-        if not isinstance(procedure, Procedure):
-            raise TypeError("Exam children must be Procedure entities")
-        for existing in self._procedures:
-            if existing.identity == procedure.identity:
-                if existing is procedure:
-                    return existing
-                raise ValueError(
-                    "Distinct Procedure objects cannot share an identity in an Exam"
-                )
-        self._procedures.append(procedure)
-        return procedure
-
-    def add_pathology(self, pathology: "Pathology") -> "Pathology":
-        """Attach pathology and return the retained live object.
-
-        Parameters
-        ----------
-        pathology : Pathology
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        Pathology
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        if self.graph is not None:
-            result = self.graph.attach(self, pathology)
-            return pathology if result is None else result
-        return self._attach_pathology_local(pathology)
-
-    def _attach_pathology_local(self, pathology: "Pathology") -> "Pathology":
-        from embed_data_model.clinical.pathology import Pathology
-
-        if not isinstance(pathology, Pathology):
-            raise TypeError("Exam children must be Pathology entities")
-        for existing in self._pathology:
-            if existing.identity == pathology.identity:
-                if existing is pathology:
-                    return existing
-                raise ValueError(
-                    "Distinct Pathology objects cannot share an identity in an Exam"
-                )
-        self._pathology.append(pathology)
-        return pathology
-
-    def add_linked_accession(self, accession_number: str) -> str:
-        """Attach accession_number and return the retained live object.
-
-        Parameters
-        ----------
-        accession_number : str
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        str
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        value = _required_text(accession_number, "accession_number")
-        self._linked_accessions.add(value)
-        return value
-
-    def add_registry_reference(self, patient_id: str, registry_id: str) -> Tuple[str, str]:
-        """Attach patient_id and return the retained live object.
-
-        Parameters
-        ----------
-        patient_id : str
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        str
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        reference = (_required_text(patient_id, "patient_id"), _required_text(registry_id, "registry_id"))
-        self._registry_references.add(reference)
-        return reference
-
-    def set_linked_exam(self, exam: "Exam") -> "Exam":
-        """Set a local resolved link to exam and return the same object. Adds its
-        accession claim; does not register either endpoint or make the reverse link.
-        Wrong types raise TypeError; distinct objects at one accession raise
-        ValueError. For graph-managed relationships use graph.set_linked_accessions.
-        """
-
-        if not isinstance(exam, Exam):
-            raise TypeError("linked exam must be an Exam")
-        self.add_linked_accession(exam.accession_number)
-        existing = self._linked_exams.get(exam.accession_number)
-        if existing is not None and existing is not exam:
-            raise ValueError("Distinct linked Exam objects cannot share an accession")
-        self._linked_exams[exam.accession_number] = exam
-        return exam
-
-    def set_registry_entry(self, entry: "CancerRegistryEntry") -> "CancerRegistryEntry":
-        """Set a local registry association and return entry. Adds the semantic claim;
-        does not register the target. Wrong types raise TypeError; distinct entries
-        at one identity raise ValueError. For graph-managed assignments use
-        graph.set_registry_assignments.
-        """
-
-        from embed_data_model.clinical.pathology import CancerRegistryEntry
-
-        if not isinstance(entry, CancerRegistryEntry):
-            raise TypeError("registry entry must be a CancerRegistryEntry")
-        self.add_registry_reference(*entry.identity)
-        existing = self._registry_entries.get(entry.identity)
-        if existing is not None and existing is not entry:
-            raise ValueError("Distinct registry entries cannot share an identity")
-        self._registry_entries[entry.identity] = entry
-        return entry
-
-    def add_registry_entry(
-        self,
-        entry: "CancerRegistryEntry",
-    ) -> "CancerRegistryEntry":
-        """Attach entry and return the retained live object.
-
-        Parameters
-        ----------
-        entry : CancerRegistryEntry
-            Compatible object with matching parent context. Retained by reference.
-
-        Returns
-        -------
-        CancerRegistryEntry
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
-
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
-
-        if self.graph is not None:
-            result = self.graph.attach(self, entry)
-            return entry if result is None else result
-        return self.set_registry_entry(entry)
-
-    def _children(self) -> Tuple[MutableEntity, ...]:
-        children: List[MutableEntity] = []
-        for candidate in (
-            *self._findings,
-            *self._images,
-            *self._procedures,
-            *self._pathology,
-            *self._registry_entries.values(),
-        ):
-            if all(existing is not candidate for existing in children):
-                children.append(candidate)
-        return tuple(children)
-
-    def _attach_local(self, child: MutableEntity) -> MutableEntity:
-        if isinstance(child, Finding):
-            return self._attach_finding_local(child)
-        if isinstance(child, MammogramImage):
-            return self._attach_image_local(child)
-        from embed_data_model.clinical.pathology import CancerRegistryEntry, Pathology
-        from embed_data_model.clinical.procedures import Procedure
-
-        if isinstance(child, Procedure):
-            return self._attach_procedure_local(child)
-        if isinstance(child, Pathology):
-            return self._attach_pathology_local(child)
-        if isinstance(child, CancerRegistryEntry):
-            return self.set_registry_entry(child)
-        raise TypeError(
-            "Exam children must be Finding, MammogramImage, Procedure, "
-            "Pathology, or CancerRegistryEntry entities"
+        return _unique(
+            [
+                *self._children("pathology"),
+                *(item for procedure in self.procedures for item in procedure.pathology),
+                *(item for finding in self.findings for item in finding.pathology),
+            ]
         )
 
-    def _detach_local(self, child: MutableEntity) -> MutableEntity:
-        for collection in (
-            self._findings,
-            self._images,
-            self._procedures,
-            self._pathology,
-        ):
-            for index, existing in enumerate(collection):
-                if existing is child:
-                    removed = collection.pop(index)
-                    if isinstance(removed, Finding):
-                        for side in self._breast_sides.values():
-                            side._detach_local(removed)
-                    return removed
-        for identity, existing in tuple(self._registry_entries.items()):
-            if existing is child:
-                del self._registry_entries[identity]
-                return existing
-        return child
+    @property
+    def registry_entries(self) -> Tuple["CancerRegistryEntry", ...]:
+        """Registered cancer-registry entries assigned to this exam."""
 
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
+        return self._children("registry")
+
+    @property
+    def linked_exams(self) -> Tuple["Exam", ...]:
+        """Registered exams linked to this one from either side."""
+
+        graph = self.graph
+        return graph.linked_exams(self) if graph is not None else ()
+
+    @property
+    def breast_sides(self) -> Mapping[Laterality, BreastSide]:
+        """Left and right views that have at least one finding or image."""
+
+        sides: Dict[Laterality, Dict[str, list]] = {}
+        for finding in self.findings:
+            for side in finding.laterality.expand():
+                sides.setdefault(side, {"findings": [], "images": []})["findings"].append(finding)
+        for image in self.images:
+            if image.laterality.is_unilateral:
+                sides.setdefault(image.laterality, {"findings": [], "images": []})["images"].append(image)
+        return readonly_mapping(
+            {
+                side: BreastSide(self.accession_number, side, tuple(items["findings"]), tuple(items["images"]))
+                for side, items in sorted(sides.items(), key=lambda item: item[0].value)
+            }
+        )
+
+    # -- building ----------------------------------------------------------
+
+    def add_finding(self, finding: "Finding") -> "Finding":
+        """Attach a finding with this accession and return it.
+
+        Raises
+        ------
+        ValueError
+            The finding has another accession, or its key is already taken.
+        """
+
+        return ensure_graph(self).attach(self, finding)
+
+    def add_image(self, image: "MammogramImage") -> "MammogramImage":
+        """Attach an image to this exam and return it.
+
+        Raises
+        ------
+        ValueError
+            The image has another accession, or its key or SOP UID is taken.
+        """
+
+        return ensure_graph(self).attach(self, image)
+
+    def add_procedure(self, procedure: "Procedure") -> "Procedure":
+        """Attach a procedure directly to this exam and return it."""
+
+        return ensure_graph(self).attach(self, procedure)
+
+    def add_pathology(self, pathology: "Pathology") -> "Pathology":
+        """Attach a pathology bundle directly to this exam and return it."""
+
+        return ensure_graph(self).attach(self, pathology)
+
+    def add_registry_entry(self, entry: "CancerRegistryEntry") -> "CancerRegistryEntry":
+        """Assign a cancer-registry entry to this exam and return it."""
+
+        return ensure_graph(self).attach(self, entry)
+
+    def _to_dict_data(self) -> Dict[str, Any]:
         return {
             "accession_number": self.accession_number,
             "patient_id": self.patient_id,
+            "asserted_patient_ids": self.asserted_patient_ids,
+            "owner_explicit": self.owner_explicit,
             "exam_date": self.exam_date,
             "description": self.description,
-            "asserted_patient_ids": self.asserted_patient_ids,
-            "owner_explicit": self._owner_explicit,
-            "attribute_observations": self.attribute_observations,
-            "findings": self.findings,
-            "images": self.images,
-            "breast_sides": tuple(self._breast_sides.values()),
             "linked_accessions": self.linked_accessions,
             "registry_references": self.registry_references,
-            "linked_exams": [
-                {"$ref": entity_reference(exam)}
-                for exam in self._linked_exams.values()
-            ],
-            "registry_pathology": tuple(self._registry_entries.values()),
-            "metadata": self._metadata,
+            "metadata": self.metadata,
             "source": self.source,
         }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
 
 
 def _required_text(value: Any, name: str) -> str:
@@ -945,25 +317,11 @@ def _required_text(value: Any, name: str) -> str:
     return value.strip()
 
 
-def _items(value: Optional[Iterable[Any]]) -> Iterable[Any]:
-    if value is None:
-        return ()
-    if isinstance(value, MutableEntity):
-        return (value,)
-    return value
-
-
-def _clean_id_set(values: Optional[Iterable[str]]) -> set[str]:
-    return {
-        _required_text(value, "identifier")
-        for value in (values or ())
-    }
-
-
-def _clean_reference_set(
-    values: Optional[Iterable[Tuple[str, str]]],
-) -> set[Tuple[str, str]]:
-    return {
-        (_required_text(patient_id, "patient_id"), _required_text(registry_id, "registry_id"))
-        for patient_id, registry_id in (values or ())
-    }
+def _unique(items: Iterable[Any]) -> Tuple[Any, ...]:
+    seen: Set[int] = set()
+    result = []
+    for item in items:
+        if id(item) not in seen:
+            seen.add(id(item))
+            result.append(item)
+    return tuple(result)

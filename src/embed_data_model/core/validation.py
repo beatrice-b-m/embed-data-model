@@ -7,6 +7,7 @@ from math import isfinite
 from numbers import Real
 from typing import Any, Callable, Iterable, Tuple
 
+from embed_data_model.core.entity import MutableEntity
 from embed_data_model.core.primitives import ImageModality
 from embed_data_model.core.source import Issue, IssueSeverity
 
@@ -50,9 +51,10 @@ def validate(entity: Any, *, validators: Iterable[Validator] = (),
         Additional callbacks accepting one visited object and returning an
         iterable of Issue values. Default empty; each runs once per object.
     aggregate : bool, optional
-        Default True traverses containment children and embedded observations,
-        interpretations, history timing, anatomy and landmarks. False checks
-        only entity. Traversal deduplicates Python identity and excludes links.
+        Default True also checks everything the entity contains in its graph
+        and its embedded values: observations, interpretation, history timing,
+        anatomy and landmarks. False checks only ``entity``. Each object is
+        checked once; linked exams are not traversed.
     warnings_invalid : bool, optional
         Default False preserves severity. True copies warning issues as errors
         in this result, leaving the originals unchanged.
@@ -87,7 +89,9 @@ def validate(entity: Any, *, validators: Iterable[Validator] = (),
         for validator in custom:
             issues.extend(validator(obj))
         if aggregate:
-            pending.extend(getattr(obj, "_children", lambda: ())())
+            graph = getattr(obj, "graph", None)
+            if isinstance(obj, MutableEntity) and graph is not None:
+                pending.extend(graph.children(obj))
             for collection in ("history_observations", "attribute_observations", "landmarks"):
                 pending.extend(getattr(obj, collection, ()))
             for field in ("interpretation", "started", "stopped", "anatomical_position", "quadrant", "clock_position"):

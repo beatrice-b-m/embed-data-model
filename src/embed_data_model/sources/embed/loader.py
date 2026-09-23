@@ -58,8 +58,8 @@ class LoadReport:
 
     Notes
     -----
-    The report is frozen; its graph remains mutable. Issues are not automatically
-    copied into graph.issues. Run validate explicitly for quality checks.
+    The report is frozen; its graph remains mutable. Run validate explicitly
+    for quality checks.
     """
 
     graph: DatasetGraph
@@ -454,7 +454,7 @@ def _load_patients(
                     values.append(item.value)
             scalars[attribute] = values[0] if len(values) == 1 else None
         if scalars:
-            _update_entity(graph, patient, scalars)
+            graph.update(patient, **scalars)
 
 
 def _load_exams(
@@ -486,7 +486,7 @@ def _load_exams(
         if mode == "merge":
             reconcile_merge(_current(exam, updates), updates, grain="exam", key=key, issues=issues)
         if updates:
-            _update_entity(graph, exam, updates)
+            graph.update(exam, **updates)
         _claim_exam_from_rows(graph, exam, group, columns, claims)
 
 
@@ -620,13 +620,9 @@ def _load_findings(
                 record_type=updates.get("record_type", record_type),
                 source=source,
             )
-            finding = graph.register(finding)
+            graph.register(finding)
         elif updates:
-            _update_entity(graph, existing, updates)
-            finding = existing
-        else:
-            finding = existing
-        graph.reference("finding", key, "exam", accession, relation="parent")
+            graph.update(existing, **updates)
 
 
 def _load_history(
@@ -727,7 +723,7 @@ def _history_kind(item: Any, kind: str) -> bool:
 
 def _set_history_values(patient: Any, values: Sequence[Any]) -> None:
     patient.replace_history("medication", [item for item in values if isinstance(item, MedicationHistoryObservation)])
-    patient.replace_history("reported_procedure", [item for item in values if isinstance(item, ProcedureHistoryObservation)])
+    patient.replace_history("procedure", [item for item in values if isinstance(item, ProcedureHistoryObservation)])
 
 
 def _ensure_patient(graph: DatasetGraph, patient_id: str) -> Any:
@@ -885,30 +881,6 @@ def _current(entity: Any, updates: Mapping[str, Any]) -> dict[str, Any]:
     """Return the entity's current values for the fields an update addresses."""
 
     return {name: getattr(entity, name, None) for name in updates}
-
-
-def _update_entity(graph: DatasetGraph, entity: Any, updates: Mapping[str, Any]) -> None:
-    prepared: dict[str, Any] = {}
-    private_fields = {
-        "source_location_codes": "_source_location_codes",
-        "source_depth_codes": "_source_depth_codes",
-        "source_distance_codes": "_source_distance_codes",
-        "normalization_evidence": "_normalization_evidence",
-        "normalization_warnings": "_normalization_warnings",
-        "descriptors": "_descriptors",
-        "metadata": "_metadata",
-        "history_observations": "_history_observations",
-    }
-    for field, value in updates.items():
-        target = private_fields.get(field, field)
-        if target in {"_normalization_evidence", "_normalization_warnings"}:
-            value = list(value or ())
-        elif target == "_descriptors":
-            value = dict(value or {})
-        elif target == "_metadata":
-            value = dict(value or {})
-        prepared[target] = value
-    graph.update(entity, **prepared)
 
 
 def _finding_anatomy(

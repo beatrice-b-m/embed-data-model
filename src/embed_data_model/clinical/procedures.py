@@ -1,29 +1,18 @@
-"""Mutable performed procedures and immutable procedure identities."""
+"""Performed procedures and their identities."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Tuple,
-)
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from embed_data_model.core.entity import (
-    MutableEntity,
-    serialize_entity,
-)
+from embed_data_model.core.entity import MutableEntity, Reference
+from embed_data_model.core.graph import ensure_graph
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.source import SourceRef
+from embed_data_model.core.source import SourceRef, optional_source
 
 if TYPE_CHECKING:
+    from embed_data_model.clinical.findings import Finding
     from embed_data_model.clinical.pathology import Pathology
-
-
 
 
 @dataclass(frozen=True)
@@ -83,152 +72,108 @@ class ProcedureIdentity:
 
 
 class Procedure(MutableEntity):
-    """One mutable performed procedure that can own pathology bundles.
+    """One performed breast procedure, keyed by its ProcedureIdentity.
+
+    A procedure can be attached to several findings and exams, and pathology
+    attaches to it. Within a patient, the procedure date, type and biopsy side
+    identify one procedure.
 
     Parameters
     ----------
     identity : ProcedureIdentity
-        Semantic identity used for graph membership; use rekey for a registered
-        entity.
-    sources : Optional[Iterable[object]], optional
-        Source evidence in supplied order. None starts an empty collection;
-        source adds one item. Default: None.
-    metadata : Optional[Dict[str, Any]], optional
-        Consumer metadata, shallow-copied into a mutable dict. Nested values
-        remain shared. Default: None.
-    pathologies : Optional[Iterable[Pathology]], optional
-        Initial pathology bundles, retained by reference in supplied order.
-        Default: None.
-    source : Optional[object], optional
-        Optional SourceRef locating the source row; evidence, not a
-        clinical event. Default: None.
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
+        Patient, performed date, procedure type and known side; the key.
+    finding_references : iterable of (str, str), optional
+        Keys ``(accession, finding_number)`` of findings the procedure
+        addresses. Targets may be missing.
+    exam_references : iterable of str, optional
+        Accessions of exams the procedure is attached to directly.
+    sources : iterable of SourceRef, optional
+        Rows the procedure was read from, deduplicated in order.
+    metadata : mapping, optional
+        Consumer metadata, copied into a dict.
     """
 
+    kind = "procedure"
     __key_fields__ = ("identity",)
+    _references = (
+        Reference("finding_references", "finding", many=True),
+        Reference("exam_references", "exam", many=True),
+    )
+
+    identity: ProcedureIdentity
+    """Patient, performed date, procedure type and side; the key."""
+    finding_references: Set[Tuple[str, str]]
+    """Keys of findings the procedure addresses."""
+    exam_references: Set[str]
+    """Accessions of exams the procedure is attached to directly."""
+    sources: Tuple[SourceRef, ...]
+    """Rows the procedure was read from."""
+    metadata: Dict[str, Any]
+    """Consumer metadata."""
 
     def __init__(
         self,
         identity: ProcedureIdentity,
-        sources: Optional[Iterable[object]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        pathologies: Optional[Iterable["Pathology"]] = None,
-        source: Optional[object] = None,
+        finding_references: Optional[Iterable[Tuple[str, str]]] = None,
+        exam_references: Optional[Iterable[str]] = None,
+        sources: Optional[Iterable[SourceRef]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
     ) -> None:
         super().__init__()
-        self.identity = self._coerce_identity(identity)
-        self._sources: List[object] = []
-        self._metadata: Dict[str, Any] = dict(metadata or {})
-        self._pathologies: List["Pathology"] = []
-        for candidate in sources or ():
-            self.add_source(candidate)
-        if source is not None:
-            self.add_source(source)
-        for pathology in pathologies or ():
-            self._attach_local(pathology)
-        self._finish_initialization()
+        self.identity = identity
+        self.finding_references = set(finding_references or ())
+        self.exam_references = set(exam_references or ())
+        self.sources = tuple(sources or ())
+        self.metadata = dict(metadata or {})
 
-    @staticmethod
-    def _coerce_identity(identity: ProcedureIdentity) -> ProcedureIdentity:
-        if not isinstance(identity, ProcedureIdentity):
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "identity" and not isinstance(value, ProcedureIdentity):
             raise TypeError("identity must be a ProcedureIdentity")
-        return identity
-
-    @property
-    def sources(self) -> Tuple[object, ...]:
-        """Tuple of retained source evidence in insertion order."""
-
-        return tuple(self._sources)
-
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, values: Dict[str, Any]) -> None:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        self._metadata = dict(values)
-
-    @property
-    def pathologies(self) -> Tuple["Pathology", ...]:
-        """Alias for pathology, preserving live objects and collection order."""
-
-        return tuple(self._pathologies)
+        if name == "finding_references":
+            return {(str(accession), str(number)) for accession, number in value or ()}
+        if name == "exam_references":
+            return {str(accession) for accession in value or ()}
+        if name == "sources":
+            unique: List[SourceRef] = []
+            for item in value or ():
+                source = optional_source(item)
+                if source is not None and source not in unique:
+                    unique.append(source)
+            return tuple(unique)
+        if name == "metadata":
+            return dict(value or {})
+        return value
 
     @property
     def pathology(self) -> Tuple["Pathology", ...]:
-        """Tuple of live pathology bundles in stored traversal order, deduplicated by
-        Python identity where aggregated.
-        """
+        """Pathology bundles attached to this procedure."""
 
-        return self.pathologies
+        graph = self.graph
+        return graph.children(self, "pathology") if graph is not None else ()
 
-    def add_source(self, source: object) -> object:
-        """Attach optional source evidence without changing identity."""
+    @property
+    def findings(self) -> Tuple["Finding", ...]:
+        """Registered findings this procedure addresses."""
 
-        if not isinstance(source, SourceRef):
-            raise TypeError("source must be a SourceRef")
-        if source not in self._sources:
-            self._sources.append(source)
+        graph = self.graph
+        return graph.parents(self, "finding") if graph is not None else ()
+
+    def add_source(self, source: SourceRef) -> SourceRef:
+        """Record another source row, ignoring duplicates, and return it."""
+
+        self.sources = (*self.sources, source)
         return source
 
     def add_pathology(self, pathology: "Pathology") -> "Pathology":
-        """Attach pathology through the graph when this procedure is owned."""
+        """Attach a pathology bundle to this procedure and return it."""
 
-        if self.graph is not None:
-            result = self.graph.attach(self, pathology)
-            return pathology if result is None else result
-        return self._attach_local(pathology)
+        return ensure_graph(self).attach(self, pathology)
 
-    def _children(self) -> Tuple[MutableEntity, ...]:
-        return tuple(self._pathologies)
-
-    def _attach_local(self, child: MutableEntity) -> "Pathology":
-        from embed_data_model.clinical.pathology import Pathology
-
-        if not isinstance(child, Pathology):
-            raise TypeError("Procedure children must be Pathology entities")
-        for existing in self._pathologies:
-            if existing.identity == child.identity:
-                if existing is child:
-                    return existing
-                raise ValueError(
-                    "Distinct Pathology objects cannot share an identity in a Procedure"
-                )
-        self._pathologies.append(child)
-        return child
-
-    def _detach_local(self, child: MutableEntity) -> MutableEntity:
-        for index, existing in enumerate(self._pathologies):
-            if existing is child:
-                return self._pathologies.pop(index)
-        return child  # idempotent graph recomposition
-
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
+    def _to_dict_data(self) -> Dict[str, Any]:
         return {
             "identity": self.identity,
+            "finding_references": self.finding_references,
+            "exam_references": self.exam_references,
             "sources": self.sources,
-            "pathology": self.pathology,
-            "metadata": self._metadata,
+            "metadata": self.metadata,
         }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)

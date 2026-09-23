@@ -349,8 +349,15 @@ def _claim(
 def _link(
     graph: Any, kind: str, key: Any, attachment: Optional[tuple[str, Any]]
 ) -> None:
-    if attachment is not None:
-        graph.reference(attachment[0], attachment[1], kind, key)
+    """Add the attachment's key to the entity's reference set for that kind."""
+
+    entity = graph.get(kind, key)
+    if attachment is None or entity is None:
+        return
+    field = {"finding": "finding_references", "exam": "exam_references", "procedure": "procedure_references"}[attachment[0]]
+    current = getattr(entity, field)
+    if attachment[1] not in current:
+        graph.update(entity, **{field: {*current, attachment[1]}})
 
 
 def _combine(

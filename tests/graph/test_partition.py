@@ -1,3 +1,5 @@
+"""Independent copies of graph subsets."""
+
 import pytest
 
 from embed_data_model import DatasetGraph, Exam, Finding, Laterality, Patient, Pathology, Procedure, ProcedureIdentity
@@ -25,7 +27,7 @@ def test_partition_levels_copy_descendants_with_minimal_context(level, expected)
     assert first.patient("P") is not patient
     assert first.patient("P") is not second.patient("P")
     assert len(first.exam("A").findings) == expected
-    assert first.patient("P").context is (level != "patient")
+    assert first.is_context(first.patient("P")) is (level != "patient")
     first.patient("P").metadata["nested"]["list"].append(2)
     assert patient.metadata["nested"]["list"] == [1]
     assert second.patient("P").metadata["nested"]["list"] == [1]
@@ -37,7 +39,7 @@ def test_partition_levels_copy_descendants_with_minimal_context(level, expected)
 def test_selection_is_nonowning_and_empty_partition_has_no_outputs():
     graph, _, exam, *_ = populated()
     view = graph.select(level="exam", predicate=lambda obj: obj is exam)
-    assert not view.owning and tuple(view) == (exam,)
+    assert tuple(view) == (exam,)
     next(iter(view)).update(description="live")
     assert graph.exam("A").description == "live"
     assert graph.partition(level="exam", key=lambda obj: []) == {}
@@ -76,15 +78,16 @@ def test_consumer_copy_hook_and_uncopyable_state():
     assert output.patient("P").extension == {"copied": True}
 
 
-def test_partition_preserves_incoming_cross_boundary_reference():
+def test_partition_keeps_references_its_selected_entities_state():
     graph = DatasetGraph()
-    a, b = graph.register(Exam("A")), graph.register(Exam("B"))
+    a = graph.register(Exam("A"))
+    graph.register(Exam("B"))
     graph.set_linked_accessions(a, ["B"])
-    output = graph.partition(level="exam", key=lambda obj: ["target"] if obj is b else [])["target"]
-    assert output.exam("A") is None
+    output = graph.partition(level="exam", key=lambda obj: ["target"] if obj is a else [])["target"]
+    assert output.exam("B") is None
     assert output.unresolved_references
-    output.register(Exam("A"))
-    assert output.exam("A") in output.exam("B").linked_exams
+    output.register(Exam("B"))
+    assert output.exam("B") in output.exam("A").linked_exams
 
 
 def test_registry_shared_across_exams_copies_with_selected_exam():
@@ -96,4 +99,4 @@ def test_registry_shared_across_exams_copies_with_selected_exam():
     graph.set_registry_assignments(b, [("P", "1")])
     output = graph.partition(level="exam", key=lambda obj: obj.accession_number)["A"]
     assert output.exam("B") is None
-    assert output.exam("A").registry_pathology[0] is not entry
+    assert output.exam("A").registry_entries[0] is not entry

@@ -40,7 +40,7 @@ def test_registry_arrival_orders(order):
             assert graph.exam("A").registry_references == {("P", "7")}
         else:
             load(graph, registry=[{"empi_anon": "P", "cancer_registry_id": "7"}])
-    assert graph.exam("A").registry_pathology == (
+    assert graph.exam("A").registry_entries == (
         graph.registry_entry("P", "7"),
     )
 
@@ -62,7 +62,7 @@ def test_registry_patient_scope_sharing_and_source_disagreement():
     assert graph.exam("A").patient_id is None
     assert graph.exam("A").asserted_patient_ids == {"P", "Q"}
     assert len(graph.exam("A").registry_entries) == 2
-    assert graph.exam("B").registry_pathology == (
+    assert graph.exam("B").registry_entries == (
         graph.registry_entry("P", "7"),
     )
 
@@ -113,7 +113,7 @@ def test_repeated_narrow_wide_rows_share_descendants_and_preserve_parent():
         assert len(graph.procedures) == len(graph.pathology) == 1
         assert graph.exam("A").description == "preserve"
         assert len(graph.patient("P").procedures) == 1
-        assert len(graph.patient("P").pathologies) == 1
+        assert len(graph.patient("P").pathology) == 1
         assert (
             graph.finding("A", "1").procedures[0]
             is graph.finding("A", "2").procedures[0]
@@ -236,16 +236,13 @@ def test_scalar_conflict_is_unknown_and_unbound_pathology_fields_survive():
     assert "conflicting_clinical_values" in {i.code for i in issues}
 
 
-def test_confirmed_reference_resolves_when_both_endpoints_were_missing():
+def test_registry_assignment_resolves_when_the_entry_arrives_later():
     graph = DatasetGraph()
-    graph.reference("exam", "A", "registry", ("P", "7"), relation="registry")
+    exam = graph.register(Exam("A"))
+    graph.set_registry_assignments(exam, [("P", "7")])
     assert graph.unresolved_references
     load(graph, registry=[{"empi_anon": "P", "cancer_registry_id": "7"}])
-    assert graph.unresolved_references
-    graph.register(Exam("A"))
-    assert graph.exam("A").registry_pathology == (
-        graph.registry_entry("P", "7"),
-    )
+    assert exam.registry_entries == (graph.registry_entry("P", "7"),)
     assert not graph.unresolved_references
 
 

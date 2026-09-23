@@ -78,7 +78,7 @@ def test_finding_refresh_respects_unbound_fields_and_conflicting_merge_values():
     assert finding.laterality is Laterality.LEFT  # an absent side column is not supplied
     load_embed(findings=[{"acc_anon":"A", "numfind":1,"side":"L"},{"acc_anon":"A", "numfind":1,"side":"R"}], mode="merge", into=graph)
     assert finding.laterality is Laterality.UNKNOWN
-    assert not graph.exam("A").ensure_side(Laterality.LEFT).findings
+    assert Laterality.LEFT not in graph.exam("A").breast_sides
 
 
 def test_supplied_generators_are_consumed_once():

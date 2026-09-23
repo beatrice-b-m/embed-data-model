@@ -19,41 +19,64 @@ the entity constructor for ordinary fields and their types. ROI factory overload
 expose base constructor options and preserve arbitrary subclass forwarding.
 These annotations do not introduce runtime validation or new root exports.
 
-## Identity, ownership, and mutation
+## Identity, relationships, and mutation
 
-One accession has one `Exam`; its `asserted_patient_ids` retains all source claims. Conflicting claims leave
-`patient_id` unset until `graph.assign_patient(exam, patient_id)` explicitly
-chooses ownership. That choice persists on reload; source identities are unchanged.
+The graph holds eight entity kinds, each keyed by its source identity:
+patient (`patient_id`), exam (`accession_number`), finding
+(`(accession_number, finding_number)`), procedure (`ProcedureIdentity`),
+pathology (`identity`), registry entry (`(patient_id, registry_id)`), image
+(`image_id`) and ROI (`(image_id, roi_key)`).
 
-Each mutable entity has `graph` (zero or one owner), `update(**fields)`, and
-`rekey(**identifiers)`. Registered key fields must use rekey. Graph methods are
-`register(entity, boundary="copy_shared")`, `attach(parent, child)`,
-`detach(parent, child)`, `update(entity, **fields)`, `rekey(entity, **fields)`,
-and `pop(entity, boundary="copy_shared")`. Detach leaves the child registered.
-Child collections are read-only sequences; convenience add methods delegate to
-the graph. Distinct objects at occupied keys raise ValueError before movement.
+Entities store the *keys* of related entities, never object pointers: a
+finding stores its exam's accession, an ROI its image's ID, a procedure the
+keys of its findings and exams (`finding_references`, `exam_references`),
+pathology the keys of its procedures, findings and exams, and an exam its
+owner (`patient_id`), linked accessions and registry assignments. The graph
+resolves these keys through indexes, so entities can be registered in any order
+and a relationship appears once both ends are present. `unresolved_references`
+lists stored keys whose target is absent. Collections such as `exam.findings`,
+`finding.procedures` or `patient.exams` are resolved on access; an entity
+without a graph has none. Adding a child to an entity without a graph first
+registers it in a new graph.
 
-Standalone parent rekeys update dependent identities and embedded context within
-the reachable containment subtree, preserving the same Python objects. Local
-collision checks cover that subtree; standalone objects do not have a global
-registry of unrelated parents or siblings. Patient rekey changes assigned exam
-ownership and patient-owned observation context, while preserving asserted source
-patient IDs, image patient claims, and procedure/registry source identities.
+One accession has one `Exam`; its `asserted_patient_ids` retains all source
+claims. Conflicting claims leave `patient_id` unset until
+`graph.assign_patient(exam, patient_id)` chooses ownership explicitly. That choice
+persists on reload; source identities are unchanged.
 
-Linked exams are associations, never containment. Traversal deduplicates object identity;
-serialization emits semantic references for repeated objects and linked cycles.
+Each entity has `graph` (zero or one owner), `update(**fields)`, and
+`rekey(**key_fields)`. Changing a key, reference or source-alias field of a
+registered entity, by `update`, `rekey` or plain assignment, goes through the
+graph. A key change is propagated: every entity that stored the old key stores
+the new one, and entities whose own key includes it (findings of a rekeyed exam,
+ROIs of a rekeyed image) are rekeyed too. The whole change is checked for key
+and source-SOP collisions before anything is modified. A patient rekey keeps its
+exams (their owner becomes explicit) and leaves source claims, image patient
+claims and procedure or registry identities unchanged.
 
-Pop retains exclusive Python objects. Descendants needed outside the selected
-subtree remain original there and are independently copied into the popped tree.
-Source UID/path and ROI-position changes use `update` so prior aliases are removed;
-location sets supplied by metadata reload deliberately union old and new paths.
-Crossing associations retain semantic references, including incoming links whose
-source stays in the original graph. Registering a detached tree remaps stored
-internal references to members rekeyed while detached; standalone rekey alone
-does not visit sibling sources outside its reachable subtree. Partition independently copies
-once per output, adds labeled ancestor context, and includes only selected branches.
-`select(level=..., predicate=...)` is explicitly a non-owning view. Copy failures
-raise an informative error; consumer `__deepcopy__` hooks are supported.
+Graph methods: `register(entity)`, `attach(parent, child)`, `detach(parent,
+child)`, `update(entity, **fields)`, `rekey(entity, **fields)`, `pop(entity)`,
+`remove(entity)` and `replace_rois(image, rois)`. `detach` removes an optional or
+many-valued containment and refuses one that is part of the child's key.
+`children`, `parents`, `descendants` and `ancestors` expose the structure.
+
+`pop(entity)` moves the entity and everything it contains into a new graph and
+returns it (`entity.graph` is the new graph). Contained entities keep their Python
+identity. A contained entity that something staying behind also contains, such
+as a procedure attached to findings of two exams, stays and is deep-copied into
+the new graph. `register` moves an entity from another graph the same way, after
+checking every key first. Keys pointing across the boundary remain unresolved
+references until their targets are registered in the same graph.
+
+Linked exams are associations, never containment, and read symmetrically:
+`exam.linked_exams` includes exams this one lists and exams that list it.
+
+`select(level=..., predicate=...)` returns a non-owning view. `partition(level=...,
+key=...)` returns independent graphs holding deep copies of the grouped entities,
+everything they contain, and their ancestors, for which `graph.is_context(entity)`
+is True. Copies keep the keys they stored, so relationships to entities outside a
+group stay unresolved. Copy failures raise an informative error; consumer
+`__deepcopy__` hooks are supported.
 
 ## Semantic loading
 
@@ -162,7 +185,7 @@ or use `partition_by_validation` at the desired level.
 For direct `Pathology` construction, use an explicit hashable `identity` or
 `patient_id` plus `record_id`; anything else raises `TypeError`.
 
-ROI `resize`/`realign` return standalone **shallow**
+ROI `resize`/`realign` return graph-less **shallow**
 copies. They retain shared mutable metadata and other referenced values; use
 graph partitions when independent owning copies are needed. ROI `to_dict()`
 copies metadata without recursively encoding arbitrary consumer objects, so

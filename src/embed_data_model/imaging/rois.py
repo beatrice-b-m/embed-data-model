@@ -5,9 +5,9 @@ from __future__ import annotations
 import copy
 import math
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple, Union, Type, TypeVar, overload
+from typing import Any, Dict, Iterable, Mapping, Optional, Tuple, Type, TypeVar, Union, overload
 
-from embed_data_model.core.entity import MutableEntity
+from embed_data_model.core.entity import MutableEntity, Reference
 
 
 CoordinateBox = Tuple[float, float, float, float]
@@ -170,7 +170,10 @@ class RegionOfInterest(MutableEntity):
     shared. Default: None.
     """
 
+    kind = "roi"
     __key_fields__ = ("image_id", "roi_key")
+    _references = (Reference("image_id", "image"),)
+    _alias_fields = frozenset({"source_path", "collection_position"})
 
     def __init__(
         self,
@@ -191,78 +194,52 @@ class RegionOfInterest(MutableEntity):
         metadata: Optional[Mapping[str, Any]] = None,
     ) -> None:
         super().__init__()
-        _require_image_id(image_id)
-        _require_roi_key(roi_key)
-        object.__setattr__(self, "coordinates", _numeric_box(coordinates))
-        object.__setattr__(self, "image_id", image_id)
-        object.__setattr__(self, "roi_key", roi_key)
-        object.__setattr__(self, "source_path", source_path)
-        object.__setattr__(self, "collection_position", collection_position)
-        object.__setattr__(self, "annotation_source", annotation_source)
-        object.__setattr__(
-            self,
-            "confidence",
-            None if confidence is None else float(confidence),
-        )
-        object.__setattr__(self, "coordinate_frame_id", coordinate_frame_id)
-        object.__setattr__(
-            self,
-            "source_coordinates",
-            None
-            if source_coordinates is None
-            else _numeric_box(source_coordinates),
-        )
-        object.__setattr__(
-            self,
-            "source_coordinate_convention",
-            source_coordinate_convention,
-        )
-        object.__setattr__(
-            self,
-            "source_frame_indices",
-            tuple(source_frame_indices),
-        )
-        object.__setattr__(self, "frame_provenance", frame_provenance)
-        object.__setattr__(self, "frame_derivation_method", frame_derivation_method)
-        object.__setattr__(self, "metadata", dict(metadata or {}))
-        self._finish_initialization()
+        self.coordinates = _numeric_box(coordinates)
+        self.image_id = image_id
+        self.roi_key = roi_key
+        self.source_path = source_path
+        self.collection_position = collection_position
+        self.annotation_source = annotation_source
+        self.confidence = confidence
+        self.coordinate_frame_id = coordinate_frame_id
+        self.source_coordinates = source_coordinates
+        self.source_coordinate_convention = source_coordinate_convention
+        self.source_frame_indices = source_frame_indices
+        self.frame_provenance = frame_provenance
+        self.frame_derivation_method = frame_derivation_method
+        self.metadata = dict(metadata or {})
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name == "coordinates":
-            value = _numeric_box(value)
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "image_id":
+            _require_image_id(value)
+        elif name == "roi_key":
+            _require_roi_key(value)
+        elif name == "coordinates":
+            return _numeric_box(value)
         elif name == "source_coordinates" and value is not None:
-            value = _numeric_box(value)
-        elif name == "source_frame_indices" and value is not None:
-            value = tuple(value)
+            return _numeric_box(value)
+        elif name == "source_frame_indices":
+            return tuple(value or ())
         elif name == "confidence" and value is not None:
-            value = float(value)
-        super().__setattr__(name, value)
+            return float(value)
+        elif name == "metadata":
+            return dict(value or {})
+        return value
 
-    def _children(self) -> Tuple[MutableEntity, ...]:
-        return ()
+    def _source_aliases(self, overrides: Mapping[str, Any]) -> Iterable[Tuple[str, Any, bool]]:
+        """Yield the ``(source_path, collection_position)`` lookup when both are set."""
 
-    def _attach_local(self, child: MutableEntity) -> MutableEntity:
-        raise TypeError("RegionOfInterest does not contain domain children")
+        path = overrides.get("source_path", self.source_path)
+        position = overrides.get("collection_position", self.collection_position)
+        if path is not None and position is not None:
+            yield "roi_source", (path, position), False
 
-    def _detach_local(self, child: MutableEntity) -> MutableEntity:
-        raise TypeError("RegionOfInterest does not contain domain children")
+    @property
+    def image(self) -> Optional[Any]:
+        """The image with this ``image_id`` if registered, else None."""
 
-    def update(self: _RoiT, **fields: Any) -> _RoiT:
-        """Update this ROI while preserving graph delegation."""
-
-        prepared: Dict[str, Any] = dict(fields)
-        if "coordinates" in prepared:
-            prepared["coordinates"] = _numeric_box(prepared["coordinates"])
-        if "source_coordinates" in prepared and prepared["source_coordinates"] is not None:
-            prepared["source_coordinates"] = _numeric_box(
-                prepared["source_coordinates"]
-            )
-        if "source_frame_indices" in prepared and prepared["source_frame_indices"] is not None:
-            prepared["source_frame_indices"] = tuple(prepared["source_frame_indices"])
-        if "confidence" in prepared and prepared["confidence"] is not None:
-            prepared["confidence"] = float(prepared["confidence"])
-        super().update(**prepared)
-        return self
+        graph = self.graph
+        return graph.image(self.image_id) if graph is not None else None
 
     @classmethod
     @overload
@@ -558,7 +535,7 @@ class RegionOfInterest(MutableEntity):
         other_y, other_x = other.centroid
         return math.hypot(self_y - other_y, self_x - other_x)
 
-    def _to_dict_data(self, state: Any = None) -> Dict[str, Any]:
+    def _to_dict_data(self) -> Dict[str, Any]:
         return {
             "roi_key": self.roi_key,
             "image_id": self.image_id,
@@ -580,15 +557,6 @@ class RegionOfInterest(MutableEntity):
             "metadata": dict(self.metadata),
         }
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new flat ROI dictionary with coordinates and frames as lists.
-
-        metadata is shallow-copied without recursively converting arbitrary consumer
-        values, so the result is JSON-serializable only if those values already are.
-        The export omits graph ownership and consumer-added attributes.
-        """
-
-        return self._to_dict_data()
 
 
 def _numeric_box(value: Union[CoordinateBox, Box, Any]) -> CoordinateBox:

@@ -4,6 +4,15 @@
 
 ### Removed
 
+- Graph internals exposed as API: `reference`, `remove_reference`,
+  `clear_references`, `operation_counts`, `issues`, `identity_namespace`, and
+  the `core.selection.select`/`partition` functions (use the graph methods).
+- Aliases and duplicate methods: `pathologies`, `registry_pathology`,
+  `finding_index`, `finding_id`, `extend_findings`, `set_linked_exam`,
+  `set_registry_entry`, `add_linked_accession`, `add_registry_reference`,
+  `Finding.merge_observation`, `Selection.owning`.
+- `ExamAttributeObservation` and `Exam.attribute_observations`: exam fields are
+  invariant across rows and were never loaded as observations.
 - `PathologyDiagnosis`, an intermediate object the adapter copied field by
   field into `Pathology`. `normalize_pathology` returns a dictionary of
   supplied `Pathology` fields plus the descriptor slots.
@@ -28,6 +37,33 @@
 
 ### Changed
 
+- Relationships are stored as keys on the entities and resolved by
+  `DatasetGraph` indexes. A finding stores its exam's accession, a procedure the
+  keys of its findings and exams (`finding_references`, `exam_references`),
+  pathology the keys of its procedures, findings and exams, and an exam its
+  owner, links and registry assignments. Relationships form in any arrival
+  order, collections are resolved on access, and a changed key is propagated to
+  every entity that stored it.
+- Adding a child to an entity without a graph registers both in a new graph.
+  The standalone-tree rekey is gone; rekeying always goes through a graph.
+- `graph.pop(entity)` returns the entity inside a new graph that holds what it
+  contains, instead of a graph-less tree. `register` and `pop` no longer take a
+  `boundary` argument.
+- Assigning a key or reference field of a registered entity goes through the
+  graph instead of raising `AttributeError`.
+- `Exam.breast_sides` is computed on access, so it always matches finding and
+  image laterality. `BreastSide` is a frozen view and `Exam.ensure_side` is
+  removed.
+- Partition context is reported by `graph.is_context(entity)` instead of a
+  `context` attribute on copies. Copies keep the keys they stored, so
+  relationships to entities outside a group stay unresolved references.
+- `to_dict()` exports one entity's fields, with related entities as keys,
+  instead of nesting its descendants.
+- Constructors no longer accept child collections (`Patient(exams=...)`,
+  `Exam(findings=..., images=..., procedures=..., pathology=...,
+  registry_pathology=..., breast_sides=...)`, `Finding(procedures=...)`,
+  `Procedure(pathologies=...)`, `MammogramImage(rois=...)`); use the `add_*`
+  methods.
 - `PathologyObservation` is a frozen value `(descriptor, source_slot,
   source_ordinal, source)`.
 - `ImagingInterpretation(assessment=None, recommendation=None, sources=())` is

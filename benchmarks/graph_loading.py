@@ -44,7 +44,7 @@ def assert_cardinality(graph: Any, size: int) -> Dict[str, int]:
                     pathology=2 * size, images=size, rois=2 * size, registry_entries=size)
     assert counts == expected, (counts, expected)
     assert len(graph.patient("P0").procedures) == 2
-    assert len(graph.exam("A0").registry_pathology) == 1
+    assert len(graph.exam("A0").registry_entries) == 1
     return counts
 
 
@@ -87,7 +87,9 @@ def measure(size: int, repeats: int = 3) -> Dict[str, Any]:
         deferred.append(perf_counter() - started)
         assert_cardinality(late_graph, size)
     return {"patients": size, "rows": sum(map(len, tables.values())), "objects": counts,
-            "edges": sum(len(parents) for parents in graph._parents.values()) + sum(len(exam.linked_exams) for exam in graph.exams) // 2, "repeats": repeats,
+            "edges": sum(len(graph.parents(item)) for kind in ("exam", "finding", "procedure", "pathology", "registry", "image", "roi")
+                         for item in getattr(graph, {"registry": "registry_entries"}.get(kind, kind + "s" if kind != "pathology" else kind)))
+                     + sum(len(exam.linked_exams) for exam in graph.exams) // 2, "repeats": repeats,
             "median_seconds": statistics.median(elapsed),
             "median_peak_bytes": statistics.median(peaks),
             "median_retained_bytes": statistics.median(retained),

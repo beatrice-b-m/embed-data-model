@@ -56,9 +56,11 @@ validated before rows are consumed. The full reference is summarized below.
 
 ## Construct and extend objects
 
-Objects can be built without a graph. Once a graph owns them, their convenience
-methods delegate membership changes to that graph so indexes and reverse links
-stay coherent.
+Objects can be built without a graph. Each stores the keys of related objects
+(a finding stores its exam's accession) and a `DatasetGraph` resolves those keys,
+so relationships appear as soon as both ends are registered, in any order. Adding
+a child to an object that has no graph yet creates one; registering the patient
+into another graph moves the whole tree.
 
 ```python
 from embed_data_model import DatasetGraph, Exam, Finding, Laterality, Patient
@@ -89,18 +91,18 @@ registry entries. An image contains its ROIs. Findings and images grouped under
 the same exam or breast side are separate facts; the core does not infer a
 finding-to-image or finding-to-ROI association from shared scope.
 
-Child collections such as `patient.exams`, `exam.findings`, `image.rois`, and
-`exam.breast_sides` are read-only tuple or mapping views. Use `add_*`,
-`attach`, `detach`, `replace_rois`, or an explicit update instead of editing a
-collection in place. Ordinary attributes, `metadata`, and consumer-added
-attributes remain editable. Registered identity fields must change through
-`entity.rekey(...)` or `graph.rekey(...)`.
+Collections such as `patient.exams`, `exam.findings`, `image.rois`, and
+`exam.breast_sides` are computed on access from the graph's indexes. Use
+`add_*`, `attach`, `detach`, `replace_rois`, or an update of the stored keys to
+change them. Changing a key (with `rekey`, `update` or plain assignment) is
+propagated to every object that stored the old key, after checking the whole
+change for collisions. `metadata` and consumer-added attributes remain editable.
 
 Repeated registration of the same instance is idempotent. A distinct object at
-an occupied semantic key raises `ValueError`. Every entity belongs to zero or
-one graph. Registering a detached subtree moves its membership; a shared
-descendant that must remain in the original graph is copied at the movement
-boundary.
+an occupied key raises `ValueError`. Every entity belongs to zero or one graph.
+Registering an object owned by another graph moves it with everything it
+contains; a contained object that something staying behind also contains is
+copied instead.
 
 ## Load semantic snapshots
 
@@ -220,12 +222,11 @@ assert exam.description is None
 ```
 
 Assemble complete semantic groups before calling refresh on streamed chunks.
-Two refresh calls containing different columns for the same exam are two
-snapshots: the second call can clear fields that the first call supplied. A
-single generator is consumed once. `source_scope` and `source_keys` add
-diagnostic source references; they do not decide admission, identity, or
-replay. `graph.issues` is cumulative, while `report.issues` is local to the
-invocation.
+Two refresh calls for the same exam are two snapshots: the second replaces the
+fields whose columns it supplies and leaves the others. A single generator is
+consumed once. `source_scope` and `source_keys` add diagnostic source
+references; they do not decide admission, identity, or replay. `report.issues`
+holds the diagnostics of one invocation.
 
 ## DataFrames and column maps
 
@@ -323,7 +324,7 @@ graph = load_embed(
 exam = graph.exam("A-001")
 entry = graph.registry_entry("P-001", "7")
 assert exam is not None and entry is not None
-assert exam.registry_pathology == (entry,)
+assert exam.registry_entries == (entry,)
 assert graph.unresolved_references
 
 load_embed(exams=[{"acc_anon": "B-001"}], into=graph)
@@ -417,10 +418,10 @@ claim; an image row without clinical context remains image-local.
 
 `graph.select(level=..., predicate=...)` returns a live, non-owning selection.
 Editing a selected object edits the source graph. `graph.partition(level=...,
-key=...)` returns independent owning graph copies. A scalar key, including a
+key=...)` returns independent graphs of deep copies. A scalar key, including a
 tuple, selects one output; a list or set key places the object in several
-outputs. Lower-level partitions carry copied ancestor context and only the
-selected branches. Supported levels include patient, exam, finding, procedure,
+outputs. Each output holds the selected objects, everything they contain, and
+their ancestors, for which `output.is_context(obj)` is True. Supported levels include patient, exam, finding, procedure,
 pathology, image, ROI, and registry.
 
 Validation is separate from loading and selection:
@@ -454,18 +455,17 @@ make `ValidationResult.valid` false; warnings remain valid unless
 `warnings_invalid=True`. Missing optional tables are not errors. Custom
 validators can inspect consumer fields.
 
-`graph.pop(entity, boundary="copy_shared")` moves an owning subtree out of its
-graph. Exclusive descendants keep their Python identity. A shared descendant
-needed by the retained graph is independently copied into the moved subtree;
-linked exams remain semantic references. Register the returned subtree in
-another graph to complete the move. A foreign-owned subtree passed to
-`register` follows the same boundary policy.
+`graph.pop(entity)` moves an entity and everything it contains into a new graph
+and returns it. Exclusive descendants keep their Python identity; a descendant
+that something staying behind also contains is copied. Keys pointing back into
+the original graph, such as linked accessions, stay as unresolved references.
+Register the popped entity in another graph to complete a move; `register`
+applies the same rules to an entity owned by another graph.
 
 ## Serialization and diagnostics
 
-`entity.to_dict()` and `graph.to_dict()` return JSON-ready structures. Repeated
-objects and linked cycles are emitted as references instead of recursively
-duplicating the graph. `Issue` and `SourceRef` preserve optional source scope,
+`entity.to_dict()` returns one entity's fields as JSON-ready values, with
+related entities as their stored keys; `graph.to_dict()` lists every registry. `Issue` and `SourceRef` preserve optional source scope,
 table, and typed diagnostic key information. `graph.unresolved_references`
 reports association endpoints that have not arrived; `graph.unresolved_records`
 holds source records whose clinical identity is insufficient or ambiguous.
