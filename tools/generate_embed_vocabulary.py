@@ -41,6 +41,22 @@ FEATURES: List[Tuple[str, str, str]] = [
     ("IMPLANT_FINDING", "mammography.implant_finding", "Implant finding (implanfind); comma-separated, unordered"),
     ("PROCEDURE_TYPE", "pathology.biopsy_type", "Procedure type (type)"),
     ("PATHOLOGY_DESCRIPTOR", "pathology.diagnosis_code_slot", "Pathology descriptor slots (path1-path10)"),
+    ("EXPOSURE_CATEGORY", "internal-v2.hormone_history.exposure_category", "Hormone-history exposure category (type)"),
+    ("HORMONE", "internal-v2.hormone_history.hormone_code", "Hormone-history code when the category is H (code)"),
+    ("THERAPY", "internal-v2.hormone_history.therapy_code", "Hormone-history code when the category is T (code)"),
+    ("CONTRACEPTIVE", "internal-v2.hormone_history.contraceptive_code", "Hormone-history code when the category is O (code)"),
+    ("PROCEDURE_HISTORY_CATEGORY", "internal-v2.procedure_history.procedure_category", "Procedure-history category (type)"),
+    ("BREAST_PROCEDURE", "internal-v2.procedure_history.breast_procedure_code", "Procedure-history code when the category is B (pcode)"),
+    (
+        "GYNECOLOGICAL_PROCEDURE",
+        "internal-v2.procedure_history.gynecological_procedure_code",
+        "Procedure-history code when the category is G (pcode)",
+    ),
+    (
+        "PROCEDURE_HISTORY_RESULT",
+        "internal-v2.procedure_history.reported_result",
+        "Reported prior-procedure result (result); combined tokens such as FA,SF are not split",
+    ),
 ]
 
 HEADER = '''"""Meanings of EMBED MagView codes, for decoding source codes into ``Code`` values.

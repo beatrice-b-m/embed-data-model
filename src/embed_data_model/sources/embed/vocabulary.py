@@ -466,3 +466,104 @@ PATHOLOGY_DESCRIPTOR = Vocabulary(
      'VGH': 'Virginal hyperplasia'},
 )
 """Pathology descriptor slots (path1-path10)."""
+
+EXPOSURE_CATEGORY = Vocabulary(
+    "exposure_category",
+    {'H': 'Hormone', 'O': 'Contraceptive', 'T': 'Therapy'},
+)
+"""Hormone-history exposure category (type)."""
+
+HORMONE = Vocabulary(
+    "hormone",
+    {'C': 'Estrogen and progesterone; combined hormone-replacement therapy',
+     'ESTRO': 'Estrogen',
+     'O': 'Other hormone',
+     'PH': 'Premphase',
+     'PP': 'Prempro',
+     'PROGES': 'Progesterone',
+     'R': 'Premarin',
+     'RA': 'Raloxifene',
+     'TAMOX': 'Tamoxifen',
+     'V': 'Provera'},
+)
+"""Hormone-history code when the category is H (code)."""
+
+THERAPY = Vocabulary(
+    "therapy",
+    {'CH': 'Chemotherapy',
+     'ET': 'Endocrine therapy',
+     'H': 'Hormonal therapy',
+     'O': 'Other therapy',
+     'RT': 'Radiation therapy',
+     'RTC': 'Radiation therapy and chemotherapy',
+     'RTH': 'Radiation therapy and hormone therapy',
+     'TAXOL': 'Taxol',
+     'XRT': 'XRT/radiation therapy'},
+)
+"""Hormone-history code when the category is T (code)."""
+
+CONTRACEPTIVE = Vocabulary(
+    "contraceptive",
+    {'C': 'Combined oral contraceptive',
+     'O': 'Other contraceptive',
+     'ORAL': 'Oral contraceptive'},
+)
+"""Hormone-history code when the category is O (code)."""
+
+PROCEDURE_HISTORY_CATEGORY = Vocabulary(
+    "procedure_history_category",
+    {'B': 'Breast procedure', 'G': 'Gynecological procedure'},
+)
+"""Procedure-history category (type)."""
+
+BREAST_PROCEDURE = Vocabulary(
+    "breast_procedure",
+    {'1': 'Core biopsy',
+     'B': 'MRI-guided core biopsy',
+     'CA': 'Cyst aspiration',
+     'D': 'Breast reduction',
+     'E': 'Excisional biopsy',
+     'EXI': 'Implants removed',
+     'FNA': 'Fine-needle aspiration',
+     'L': 'Lumpectomy',
+     'M': 'Mastectomy',
+     'MP': 'Mammoplasty',
+     'NB': 'Needle biopsy',
+     'NO': 'Non-oncologic procedure',
+     'R': 'Reconstruction',
+     'SB': 'Stereotactic core biopsy',
+     'UCB': 'Ultrasound-guided core biopsy'},
+)
+"""Procedure-history code when the category is B (pcode)."""
+
+GYNECOLOGICAL_PROCEDURE = Vocabulary(
+    "gynecological_procedure",
+    {'H': 'Partial hysterectomy',
+     'HYST': 'Hysterectomy',
+     'O': 'One ovary removed',
+     'OS': 'Ovaries removed'},
+)
+"""Procedure-history code when the category is G (pcode)."""
+
+PROCEDURE_HISTORY_RESULT = Vocabulary(
+    "procedure_history_result",
+    {'ADH': 'Atypical ductal hyperplasia',
+     'ALH': 'Atypical lobular hyperplasia',
+     'BEN': 'Benign',
+     'BOT': 'Invasive ductal carcinoma and ductal carcinoma in situ',
+     'DE': 'Duct ectasia',
+     'DS': 'Ductal carcinoma in situ',
+     'FA': 'Fibroadenoma',
+     'FN': 'Fat necrosis',
+     'ID': 'Invasive ductal carcinoma',
+     'IF': 'Chronic inflammatory changes',
+     'IL': 'Invasive lobular carcinoma',
+     'LS': 'Lobular carcinoma in situ',
+     'LY': 'Lymphoma',
+     'MAL': 'Malignant',
+     'NONE': 'No reported result',
+     'PA': 'Papilloma',
+     'SA': 'Sclerosing adenosis',
+     'SF': 'Stromal fibrosis'},
+)
+"""Reported prior-procedure result (result); combined tokens such as FA,SF are not split."""
