@@ -282,7 +282,6 @@ _ENTITY_ROLES = {
     "ImagingInterpretation": "interpretation",
     "ExamAttributeObservation": "exam_attribute",
     "PatientHistoryObservation": "patient_history",
-    "ImageLandmark": "image_landmark",
 }
 
 
@@ -334,8 +333,6 @@ def _embedded_entities(entity: MutableEntity) -> Tuple[MutableEntity, ...]:
         interpretation = getattr(entity, "interpretation", None)
         if interpretation is not None:
             candidates.append(interpretation)
-    elif role == "image":
-        candidates.extend(getattr(entity, "landmarks", ()))
     return tuple(candidate for candidate in candidates if isinstance(candidate, MutableEntity))
 
 
@@ -452,7 +449,7 @@ def _standalone_rekey(entity: MutableEntity, identifiers: Mapping[str, Any]) -> 
         if old_image_id != new_image_id:
             for candidate in related:
                 candidate_role = _entity_role(candidate)
-                if candidate_role in {"roi", "image_landmark"}:
+                if candidate_role == "roi":
                     if getattr(candidate, "image_id", _MISSING) == old_image_id:
                         _add_standalone_change(
                             candidate, "image_id", new_image_id, changes

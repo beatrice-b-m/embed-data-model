@@ -95,27 +95,18 @@ def test_coordinate_arity_remains_a_representation_check() -> None:
     assert Box(10, 20, 5, 4).as_tuple() == (10.0, 20.0, 5.0, 4.0)
 
 
-def test_landmarks_are_mutable_embedded_values_and_geometry_math_survives() -> None:
+def test_landmarks_are_embedded_values_and_geometry_math_survives() -> None:
+    from dataclasses import replace
+
     image = MammogramImage("image", laterality=Laterality.LEFT, view_position=ViewPosition.MLO)
-    nipple = ImageLandmark(
-        20,
-        60,
-        LandmarkType.NIPPLE,
-        confidence=1.25,
-    )
+    nipple = image.add_landmark(ImageLandmark(20, 60, LandmarkType.NIPPLE, confidence=1.25))
+    moved = replace(nipple, y=25)
     posterior = ImageLandmark(20, 10, LandmarkType.POSTERIOR_NIPPLE_LINE_START)
     endpoint = ImageLandmark(20, 60, LandmarkType.POSTERIOR_NIPPLE_LINE_END)
 
-    owned = image.add_landmark(nipple)
-    owned.update(y=25, confidence=-1.0)
-    geometry = image.breast_geometry(
-        nipple=owned,
-        posterior_nipple_line=(posterior, endpoint),
-    )
+    geometry = image.breast_geometry(nipple=moved, posterior_nipple_line=(posterior, endpoint))
 
-    assert owned is image.landmarks[0]
-    assert owned.y == 25.0
-    assert owned.confidence == -1.0
+    assert image.landmarks == (nipple,)
     assert isinstance(geometry, BreastGeometry)
     assert geometry.posterior_distance == pytest.approx((50 ** 2 + 5 ** 2) ** 0.5)
     assert geometry.depth_value_for_point((22.5, 35)) == pytest.approx(1.0)

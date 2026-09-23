@@ -25,6 +25,11 @@
 
 ### Changed
 
+- `ImageLandmark` is a frozen value `(y, x, landmark_type, confidence,
+  source)` that no longer repeats its image's ID. Change one with
+  `dataclasses.replace`. `ImageLandmark.owned_by`, the `image_id` and
+  `provenance` fields, and `MammogramImage.with_landmark` (a shallow copy that
+  shared mutable state) are removed.
 - `PathologySeverity` members carry their EMBED meanings
   (`INVASIVE_BREAST_CANCER`=0 through `NON_BREAST_CANCER`=5) instead of
   `SEVERITY_0`–`SEVERITY_5`. The docstring records the inverse ordering and

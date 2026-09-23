@@ -1079,9 +1079,6 @@ class DatasetGraph:
             if kind_of(obj) == "finding" and obj.interpretation is not None:
                 object.__setattr__(obj.interpretation, "accession_number", obj.accession_number)
                 object.__setattr__(obj.interpretation, "finding_number", obj.finding_number)
-            if kind_of(obj) == "image" and "image_id" in changes:
-                for landmark in obj.landmarks:
-                    object.__setattr__(landmark, "image_id", obj.image_id)
         for obj, changes in embedded_context:
             for field, value in changes.items():
                 object.__setattr__(obj, field, value)

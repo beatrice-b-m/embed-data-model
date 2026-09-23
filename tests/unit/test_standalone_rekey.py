@@ -66,11 +66,10 @@ def test_standalone_exam_and_image_rekeys_preserve_tree_objects() -> None:
     assert image.rois == (roi,)
     assert roi.image_id == "image-2"
     assert image.landmarks == (landmark,)
-    assert landmark.image_id == "image-2"
     assert patient.research == {"labels": ["source"]}
     assert all(
         item.graph is None
-        for item in (patient, exam, finding, interpretation, image, roi, landmark)
+        for item in (patient, exam, finding, interpretation, image, roi)
     )
 
     graph = DatasetGraph()

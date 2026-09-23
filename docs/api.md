@@ -162,7 +162,7 @@ or use `partition_by_validation` at the desired level.
 For direct `Pathology` construction, use an explicit hashable `identity` or
 `patient_id` plus `record_id`; anything else raises `TypeError`.
 
-ROI `resize`/`realign` and image `with_landmark` return standalone **shallow**
+ROI `resize`/`realign` return standalone **shallow**
 copies. They retain shared mutable metadata and other referenced values; use
 graph partitions when independent owning copies are needed. ROI `to_dict()`
 copies metadata without recursively encoding arbitrary consumer objects, so

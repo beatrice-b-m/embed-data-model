@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 from typing import Any, Dict, Iterable, Mapping, Optional, Set, Tuple, TYPE_CHECKING
 
 from embed_data_model.core.entity import MutableEntity
@@ -78,8 +77,7 @@ class MammogramImage(MutableEntity):
         Caller-defined coordinate frame label; None means unspecified. Default:
         None.
     landmarks : Iterable[ImageLandmark], optional
-        Initial image-local landmarks; each is rebound by a shallow owned_by
-        copy. Default: ().
+        Initial landmarks in this image's pixel frame. Default: ().
     rois : Iterable[RegionOfInterest], optional
         Initial image-local ROIs; retained by reference, requiring matching
         image_id and unique keys. Default: ().
@@ -294,13 +292,12 @@ class MammogramImage(MutableEntity):
         raise ValueError("ROI is not attached to MammogramImage")
 
     def add_landmark(self, landmark: ImageLandmark) -> ImageLandmark:
-        """Embed a mutable landmark value on this image."""
+        """Append a landmark in this image's pixel frame and return it."""
 
         if not isinstance(landmark, ImageLandmark):
             raise TypeError("landmark must be an ImageLandmark")
-        owned = landmark.owned_by(self.image_id)
-        object.__setattr__(self, "_landmarks", (*self._landmarks, owned))
-        return owned
+        object.__setattr__(self, "_landmarks", (*self._landmarks, landmark))
+        return landmark
 
     def add_roi(self, roi: "RegionOfInterest") -> "RegionOfInterest":
         """Attach an ROI locally or delegate membership to the owning graph."""
@@ -317,22 +314,6 @@ class MammogramImage(MutableEntity):
             return roi if result is None else result
         self._attach_local(roi)
         return roi
-
-    def with_landmark(self, landmark: ImageLandmark) -> "MammogramImage":
-        """Return a standalone shallow image copy with one extra landmark.
-
-        landmark is rebound through owned_by. The returned image has graph=None and
-        new collection containers, but shares existing ROI objects, landmarks, metadata,
-        source_paths and other mutable attributes. It is not an independent graph
-        partition; registering it can conflict with the original identity.
-        """
-
-        copied = copy.copy(self)
-        object.__setattr__(copied, "_graph", None)
-        object.__setattr__(copied, "_rois", list(self._rois))
-        object.__setattr__(copied, "_landmarks", tuple(self._landmarks))
-        copied.add_landmark(landmark)
-        return copied
 
     @property
     def image_shape(self) -> Optional[Tuple[int, int]]:
@@ -367,8 +348,8 @@ class MammogramImage(MutableEntity):
         Returns
         -------
         BreastGeometry
-            Frozen geometry container. Supplied landmarks are shallow-copied with
-            this image_id. Does not search self.landmarks or infer missing geometry.
+            Frozen geometry container holding the supplied landmarks. Does not
+            search self.landmarks or infer missing geometry.
         """
 
         return BreastGeometry(
@@ -377,13 +358,8 @@ class MammogramImage(MutableEntity):
             view_position=self.view_position,
             image_shape=self.image_shape,
             coordinate_frame_id=self.coordinate_frame_id,
-            nipple=nipple.owned_by(self.image_id) if nipple is not None else None,
-            posterior_nipple_line=(
-                posterior_nipple_line[0].owned_by(self.image_id),
-                posterior_nipple_line[1].owned_by(self.image_id),
-            )
-            if posterior_nipple_line is not None
-            else None,
+            nipple=nipple,
+            posterior_nipple_line=posterior_nipple_line,
         )
 
     def _to_dict_data(self, state: Any = None) -> Dict[str, object]:
@@ -416,10 +392,8 @@ class MammogramImage(MutableEntity):
                     "y": landmark.y,
                     "x": landmark.x,
                     "landmark_type": landmark.landmark_type.value,
-                    "image_id": landmark.image_id,
-                    "source": landmark.source,
                     "confidence": landmark.confidence,
-                    "provenance": landmark.provenance,
+                    "source": landmark.source,
                 }
                 for landmark in self.landmarks
             ],
