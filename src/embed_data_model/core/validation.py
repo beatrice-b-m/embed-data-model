@@ -7,6 +7,7 @@ from math import isfinite
 from numbers import Real
 from typing import Any, Callable, Iterable, Tuple
 
+from embed_data_model.core.primitives import ImageModality
 from embed_data_model.core.source import Issue, IssueSeverity
 
 
@@ -117,9 +118,19 @@ def _quality(obj: Any) -> Iterable[Issue]:
         if value is not None and (not isinstance(value, Real) or not isfinite(float(value)) or float(value) <= 0):
             yield issue("positive_" + field, field + " should be positive", value=value)
     frame_count = getattr(obj, "frame_count", None)
-    modality = getattr(getattr(obj, "modality", None), "value", None)
-    if frame_count is not None and modality not in {None, "DBT", "dbt"}:
-        yield issue("frame_modality", "Frame count is supplied for a non-DBT image")
+    modality = getattr(obj, "modality", None)
+    if (
+        frame_count is not None
+        and isinstance(modality, ImageModality)
+        and modality not in {ImageModality.DBT, ImageModality.UNKNOWN}
+        and frame_count != 1
+    ):
+        yield Issue(
+            "frame_modality",
+            "Multiple frames are supplied for a non-DBT image",
+            IssueSeverity.WARNING,
+            context={"object_type": type(obj).__name__, "value": frame_count},
+        )
     coordinates = getattr(obj, "coordinates", None)
     if coordinates is not None:
         values = coordinates.as_tuple() if hasattr(coordinates, "as_tuple") else coordinates

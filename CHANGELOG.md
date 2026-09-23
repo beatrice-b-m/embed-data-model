@@ -16,6 +16,10 @@
   nipple. The raw code stays in `source_distance_codes` and the load reports
   `exceptional_finding_distance`. `validate` flags a negative or non-finite
   distance supplied directly.
+- `ImagesInAcquisition` is loaded as `frame_count` only for DBT images; on other
+  image types it is not a frame count. `validate` no longer rejects every DBT
+  image with a frame count (it compared against the wrong modality value), and
+  multiple frames on a non-DBT image is now a warning instead of an error.
 
 ## 0.1.0 — 2026-09-09
 

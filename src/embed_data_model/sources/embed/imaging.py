@@ -160,6 +160,10 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
         fields["source_modality"] = _identifier(raw_modality)
         if is_null_scalar(raw_modality) and is_null_scalar(raw_type):
             fields["modality"] = None
+    if "frame_count" in fields and fields.get("modality") is not ImageModality.DBT:
+        # ImagesInAcquisition is a frame count only for DBT images; on other
+        # image types it must not be interpreted as frames.
+        fields["frame_count"] = None
     if parsed:
         for field in ("study_instance_uid", "series_instance_uid"):
             if fields.get(field) is None:
