@@ -17,9 +17,8 @@ from embed_data_model.clinical.pathology import CancerRegistryEntry, Pathology
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.source import Issue
 from embed_data_model.sources.embed._values import reconcile_merge
+from embed_data_model.sources.embed._values import cell, identifier
 from embed_data_model.sources.embed.procedures_pathology import (
-    _identifier,
-    _value,
     normalize_pathology,
     normalize_procedure,
 )
@@ -75,10 +74,10 @@ def load_clinical(
     ):
         for row in rows:
             attachment = _attachment(row, cmap)
-            patient_id = _identifier(row, cmap.get("patient_id"))
+            patient_id = _id_at(row, cmap.get("patient_id"))
             if grain == "procedure":
                 if wide and not any(
-                    _value(row, cmap.get(k)) is not None
+                    cell(row, cmap.get(k)) is not None
                     for k in ("performed_date", "procedure_type")
                 ):
                     continue
@@ -93,7 +92,7 @@ def load_clinical(
                 )
             else:
                 diagnosis, descriptors = normalize_pathology(row, cmap)
-                record_id = _identifier(row, cmap.get("record_id"))
+                record_id = _id_at(row, cmap.get("record_id"))
                 if not diagnosis and not descriptors and record_id is None:
                     continue
                 _claim(graph, row, cmap, claims)
@@ -277,8 +276,8 @@ def load_clinical(
     groups: dict[Any, list] = defaultdict(list)
     for row in registry:
         key = (
-            _identifier(row, registry_map.get("patient_id")),
-            _identifier(row, registry_map.get("registry_id")),
+            _id_at(row, registry_map.get("patient_id")),
+            _id_at(row, registry_map.get("registry_id")),
         )
         if None in key:
             issues.append(
@@ -314,11 +313,17 @@ def load_clinical(
     _collections(magview, graph, columns, merge, issues, claims)
 
 
+def _id_at(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
+    """Return the normalized identifier in a bound column of a row, or None."""
+
+    return identifier(cell(row, column))
+
+
 def _attachment(
     row: Mapping[str, Any], cmap: Mapping[str, Optional[str]]
 ) -> Optional[tuple[str, Any]]:
-    accession = _identifier(row, cmap.get("accession"))
-    finding = _identifier(row, cmap.get("finding_number"))
+    accession = _id_at(row, cmap.get("accession"))
+    finding = _id_at(row, cmap.get("finding_number"))
     if accession is None:
         return None
     return (
@@ -334,8 +339,8 @@ def _claim(
     cmap: Mapping[str, Optional[str]],
     claims: dict[str, set[str]],
 ) -> None:
-    accession = _identifier(row, cmap.get("accession"))
-    patient = _identifier(row, cmap.get("patient_id"))
+    accession = _id_at(row, cmap.get("accession"))
+    patient = _id_at(row, cmap.get("patient_id"))
     if patient is not None and graph.patient(patient) is None:
         graph.register(Patient(patient))
     if accession is not None:
@@ -372,7 +377,7 @@ def _combine(
                 # Absent columns are outside this snapshot and stay unchanged.
                 continue
             values = grouped[field]
-            value = _value(row, physical)
+            value = cell(row, physical)
             if value is not None and value not in values:
                 values.append(value)
     result = {}
@@ -414,18 +419,18 @@ def _collections(
     assignments: dict[str, set] = defaultdict(set)
     links: dict[str, set] = defaultdict(set)
     for row in rows:
-        accession = _identifier(row, cmap.get("accession", "acc_anon"))
+        accession = _id_at(row, cmap.get("accession", "acc_anon"))
         if accession is None:
             continue
         _claim(graph, row, cmap, claims)
         if assignment is not None and assignment in row:
             values = assignments[accession]
-            patient = _identifier(row, cmap.get("patient_id", "empi_anon"))
-            raw_ids = _value(row, assignment)
+            patient = _id_at(row, cmap.get("patient_id", "empi_anon"))
+            raw_ids = cell(row, assignment)
             for value in (
                 raw_ids if isinstance(raw_ids, (list, tuple, set)) else [raw_ids]
             ):
-                rid = _identifier({"value": value}, "value")
+                rid = identifier(value)
                 if rid is not None and patient is not None:
                     values.add((patient, rid))
                 elif rid is not None:
@@ -438,9 +443,9 @@ def _collections(
                     )
         if linked is not None and linked in row:
             values = links[accession]
-            raw = _value(row, linked)
+            raw = cell(row, linked)
             for value in raw if isinstance(raw, (list, tuple, set)) else [raw]:
-                target = _identifier({"value": value}, "value")
+                target = identifier(value)
                 if target is not None:
                     values.add(target)
     for accession, values in assignments.items():

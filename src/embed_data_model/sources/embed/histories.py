@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from math import isfinite
-from numbers import Real
 from typing import Any, Mapping, Optional
 
 from embed_data_model.clinical.histories import (
@@ -13,6 +12,7 @@ from embed_data_model.clinical.histories import (
 )
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, IssueSeverity, SourceRef
+from embed_data_model.sources.embed._values import cell, code, text
 
 
 _MEDICATION_CATEGORIES = {"H": "hormone", "T": "therapy", "O": "contraceptive"}
@@ -267,23 +267,11 @@ def normalize_procedure_history(
 
 
 def _text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    if column is None:
-        return None
-    value = row.get(column)
-    if value is None or type(value).__name__ in {"NAType", "NaTType"}:
-        return None
-    if isinstance(value, Real) and not isinstance(value, bool):
-        try:
-            if not isfinite(float(value)):
-                return None
-        except (TypeError, ValueError, OverflowError):
-            return None
-    text = str(value).strip()
-    return text or None
+    return text(cell(row, column))
 
 
 def _upper(row: Mapping[str, Any], column: Optional[str]) -> str:
-    return (_text(row, column) or "").upper()
+    return code(cell(row, column)) or ""
 
 
 def _flag(

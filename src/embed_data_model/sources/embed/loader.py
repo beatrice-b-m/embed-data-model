@@ -29,7 +29,16 @@ from embed_data_model.core.graph import DatasetGraph
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, IssueSeverity, SourceRef
 from embed_data_model.core.tables import TableNormalizationError, TableRecord, _TableInput, iter_records
-from embed_data_model.sources.embed._values import reconcile_merge, same as _same
+from embed_data_model.sources.embed._values import (
+    cell,
+    code,
+    identifier,
+    is_missing,
+    reconcile_merge,
+    same as _same,
+    scalar,
+    text,
+)
 from embed_data_model.sources.embed.columns import resolve_columns
 from embed_data_model.sources.embed.histories import (
     normalize_medication_history,
@@ -418,7 +427,7 @@ def _load_patients(
     with ``Patient.attribute_as_of``.
     """
 
-    converters = {"sex": _text_value, "birth_year": _birth_year_value}
+    converters = {"sex": text, "birth_year": _birth_year_value}
     groups = _group_rows(rows, columns, ("patient_id",), "patient", issues)
     for key in sorted(groups, key=repr):
         patient = _ensure_patient(graph, key)
@@ -426,7 +435,7 @@ def _load_patients(
         contexts: dict[tuple[Optional[str], Optional[date]], list[_InputRow]] = {}
         for row in groups[key]:
             context = (
-                _mapped_identifier(row.mapping, columns.get("accession")),
+                _id_at(row.mapping, columns.get("accession")),
                 _date_value(row.mapping.get(date_column)) if date_column else None,
             )
             contexts.setdefault(context, []).append(row)
@@ -472,7 +481,7 @@ def _load_exams(
         fields, conflicts = _combine_fields(
             group,
             columns,
-            {"exam_date": _text_value, "exam_description": _text_value},
+            {"exam_date": text, "exam_description": text},
             "exam",
             key,
             issues,
@@ -516,10 +525,10 @@ def _load_findings(
             columns,
             {
                 "laterality": lambda value: Laterality.coerce(value),
-                "finding_type": _text_value,
-                "assessment": _code_value,
-                "recommendation": _code_value,
-                "record_type": _text_value,
+                "finding_type": text,
+                "assessment": code,
+                "recommendation": code,
+                "record_type": text,
                 "location": _raw_value,
                 "depth": _raw_value,
                 "distance": _raw_value,
@@ -650,7 +659,7 @@ def _load_history(
         observations: list[Any] = []
         for row in groups[patient_id]:
             source = row.source
-            record_id = _mapped_identifier(row.mapping, columns.get("record_id"))
+            record_id = _id_at(row.mapping, columns.get("record_id"))
             observation, row_issues = normalizer(row.mapping, columns, source, record_id=record_id)
             issues.extend(row_issues)
             if observation is not None and isinstance(observation, observation_type):
@@ -748,11 +757,7 @@ def _claim_exam_from_rows(
     claims_by_exam: dict[str, set[str]],
 ) -> None:
     patient_column = columns.get("patient_id")
-    claims = {
-        identifier
-        for row in rows
-        if (identifier := _mapped_identifier(row.mapping, patient_column)) is not None
-    }
+    claims = {pid for pid in (_id_at(row.mapping, patient_column) for row in rows) if pid is not None}
     for patient_id in claims:
         _ensure_patient(graph, patient_id)
     claims_by_exam.setdefault(exam.accession_number, set()).update(claims)
@@ -810,7 +815,7 @@ def _semantic_key(
     columns: Mapping[str, Optional[str]],
     identity: Sequence[str],
 ) -> Any:
-    values = tuple(_mapped_identifier(row, columns.get(field)) for field in identity)
+    values = tuple(_id_at(row, columns.get(field)) for field in identity)
     if any(value is None for value in values):
         return None
     return values[0] if len(values) == 1 else values
@@ -836,8 +841,8 @@ def _combine_fields(
         for row in rows:
             if physical not in row.mapping:
                 continue
-            raw = _plain_scalar(row.mapping.get(physical))
-            if _is_missing(raw):
+            raw = scalar(row.mapping.get(physical))
+            if is_missing(raw):
                 continue
             try:
                 candidate = converter(raw)
@@ -1082,32 +1087,14 @@ def _semantic_source(rows: Sequence[_InputRow]) -> Optional[SourceRef]:
     return None
 
 
-def _mapped_identifier(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    if column is None:
-        return None
-    return _normalize_identifier(row.get(column))
+def _id_at(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
+    """Return the normalized identifier in a bound column of a row, or None."""
 
-
-def _text_value(value: Any) -> Optional[str]:
-    if _is_missing(value):
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _code_value(value: Any) -> Optional[str]:
-    """Normalize a MagView code for comparison: trim whitespace and uppercase.
-
-    EMBED supports comparing alphabetic codes after this normalization; it does
-    not assign a meaning to otherwise unexplained tokens.
-    """
-
-    text = _text_value(value)
-    return None if text is None else text.upper()
+    return identifier(cell(row, column))
 
 
 def _raw_value(value: Any) -> Any:
-    return None if _is_missing(value) else _plain_scalar(value)
+    return None if is_missing(value) else scalar(value)
 
 
 def _literal_value(value: Any) -> Any:
@@ -1121,7 +1108,7 @@ def _literal_value(value: Any) -> Any:
 
 
 def _birth_year_value(value: Any) -> Optional[int]:
-    value = _plain_scalar(value)
+    value = scalar(value)
     if isinstance(value, bool):
         return None
     if isinstance(value, Integral):
@@ -1139,7 +1126,7 @@ def _birth_year_value(value: Any) -> Optional[int]:
 
 
 def _date_value(value: Any) -> Optional[date]:
-    value = _plain_scalar(value)
+    value = scalar(value)
     if isinstance(value, datetime):
         return value.date()
     if type(value) is date:
@@ -1156,51 +1143,6 @@ def _date_value(value: Any) -> Optional[date]:
         return date.fromisoformat(text)
     except ValueError:
         return None
-
-
-def _is_missing(value: Any) -> bool:
-    if value is None or type(value).__name__ in {"NAType", "NaTType"}:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    try:
-        unequal = value != value
-        if type(unequal) is bool:
-            return unequal
-        item = getattr(unequal, "item", None)
-        if callable(item):
-            scalar = item()
-            return type(scalar) is bool and scalar
-    except (TypeError, ValueError):
-        return False
-    return False
-
-
-def _plain_scalar(value: Any) -> Any:
-    item = getattr(value, "item", None)
-    if callable(item) and not isinstance(value, (str, bytes)):
-        try:
-            return item()
-        except (TypeError, ValueError, OverflowError):
-            return value
-    return value
-
-
-def _normalize_identifier(value: Any) -> Optional[str]:
-    value = _plain_scalar(value)
-    if _is_missing(value) or isinstance(value, bool):
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    if isinstance(value, Integral):
-        return str(int(value))
-    if isinstance(value, Real):
-        numeric = float(value)
-        if not isfinite(numeric):
-            return None
-        return str(int(numeric)) if numeric.is_integer() else str(value)
-    return None
 
 
 __all__ = ["LoadReport", "load_embed"]

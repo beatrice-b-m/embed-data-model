@@ -10,10 +10,10 @@ from typing import Any, Iterable, Mapping, Optional
 from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.primitives import ImageModality, Laterality, ViewPosition
-from embed_data_model.core.source import Issue, is_null_scalar
+from embed_data_model.core.source import Issue
 from embed_data_model.imaging.images import MammogramImage
 from embed_data_model.imaging.rois import RegionOfInterest
-from embed_data_model.sources.embed._values import reconcile_merge
+from embed_data_model.sources.embed._values import cell, identifier, is_missing, reconcile_merge, whole_number
 
 
 def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping[str, Any]]],
@@ -95,7 +95,7 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
         invalid = False
         for row, _ in roi_rows:
             raw = _mapped(row, roi_columns, "coordinates")
-            if is_null_scalar(raw):
+            if is_missing(raw):
                 continue
             try:
                 collection = _collection(row, roi_columns, image)
@@ -114,17 +114,17 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
 
 
 def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], issues: list[Issue]) -> Optional[dict[str, Any]]:
-    path = _identifier(_mapped(row, columns, "source_path"))
+    path = identifier(_mapped(row, columns, "source_path"))
     parsed = _parse_embed_path(path)
-    explicit_uid = _identifier(_mapped(row, columns, "source_sop_instance_uid"))
+    explicit_uid = identifier(_mapped(row, columns, "source_sop_instance_uid"))
     if explicit_uid and parsed and explicit_uid != parsed["source_sop_instance_uid"]:
         _issue(issues, "source_sop_path_mismatch", "Explicit SOP wins over path-derived SOP", explicit_uid=explicit_uid, path_uid=parsed["source_sop_instance_uid"], path=path)
     if path and parsed is None:
         _issue(issues, "unparseable_image_path", "Path does not match cohort/patient/study/series/SOP.dcm", path=path)
     uid = explicit_uid or (parsed["source_sop_instance_uid"] if parsed else None)
-    explicit_id = _identifier(_mapped(row, columns, "image_id"))
+    explicit_id = identifier(_mapped(row, columns, "image_id"))
     derived = _mapped(row, columns, "derived_from")
-    if is_null_scalar(derived):
+    if is_missing(derived):
         derived = None
     if derived is not None and explicit_id is None:
         _issue(issues, "derivative_requires_image_id", "A derivative requires an explicit toolkit ID")
@@ -140,13 +140,13 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
     for semantic, field in scalar_map.items():
         if _supplied(row, columns, semantic):
             raw = _mapped(row, columns, semantic)
-            if not is_null_scalar(raw):
+            if not is_missing(raw):
                 if semantic == "laterality":
                     raw = Laterality.coerce(raw)
                 elif semantic == "view_position":
                     raw = ViewPosition.coerce(raw)
                 elif semantic in {"height", "width", "frame_count"}:
-                    count = _count(raw)
+                    count = whole_number(raw)
                     if count is None:
                         _issue(issues, "image_numeric_parse", "Image dimension/frame fact is not a whole number", field=semantic, value=raw)
                     raw = count
@@ -159,8 +159,8 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
         inferred = ImageModality.coerce(raw_type)
         fields["modality"] = inferred if inferred is not ImageModality.UNKNOWN else ImageModality.coerce(raw_modality)
         if _supplied(row, columns, "modality"):
-            fields["source_modality"] = _identifier(raw_modality)
-        if is_null_scalar(raw_modality) and is_null_scalar(raw_type):
+            fields["source_modality"] = identifier(raw_modality)
+        if is_missing(raw_modality) and is_missing(raw_type):
             fields["modality"] = None
     if "frame_count" in fields and fields.get("modality") is not ImageModality.DBT:
         # ImagesInAcquisition is a frame count only for DBT images; on other
@@ -172,14 +172,14 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
                 fields[field] = parsed[field]
     return {"group": image_id if derived is not None else uid or image_id, "image_id": image_id,
             "source_sop_instance_uid": uid, "source_paths": {path} if path else set(), "derived_from": derived,
-            "patient": _identifier(_mapped(row, columns, "patient_id")) or (parsed["patient_id"] if parsed else None),
-            "accession": _identifier(_mapped(row, columns, "accession")), "managed": set(fields), "fields": fields}
+            "patient": identifier(_mapped(row, columns, "patient_id")) or (parsed["patient_id"] if parsed else None),
+            "accession": identifier(_mapped(row, columns, "accession")), "managed": set(fields), "fields": fields}
 
 
 def _roi_image(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], image_columns: Mapping[str, Optional[str]], graph: Any, issues: list[Issue]) -> Any:
-    path = _identifier(_mapped(row, columns, "source_path"))
-    explicit_id = _identifier(_mapped(row, columns, "image_id"))
-    uid = _identifier(_mapped(row, image_columns, "source_sop_instance_uid"))
+    path = identifier(_mapped(row, columns, "source_path"))
+    explicit_id = identifier(_mapped(row, columns, "image_id"))
+    uid = identifier(_mapped(row, image_columns, "source_sop_instance_uid"))
     if explicit_id:
         image = graph.image(explicit_id)
         if image is not None:
@@ -195,7 +195,7 @@ def _roi_image(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], ima
         if path:
             graph.update(image, source_paths=set(image.source_paths) | {path})
         return image
-    if is_null_scalar(_mapped(row, columns, "coordinates")):
+    if is_missing(_mapped(row, columns, "coordinates")):
         return None
     image_id = explicit_id or uid
     if not image_id:
@@ -222,15 +222,15 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
     if len(flags) != len(value):
         raise ValueError("Depth flags must align with ROI collection slots")
     confidence = _mapped(row, columns, "confidence")
-    if not is_null_scalar(confidence):
+    if not is_missing(confidence):
         confidence = float(confidence)
     else:
         confidence = None
-    source_path = _identifier(_mapped(row, columns, "source_path"))
+    source_path = identifier(_mapped(row, columns, "source_path"))
     result = []
     for position, box in enumerate(value):
         flag = flags[position]
-        if is_null_scalar(flag):
+        if is_missing(flag):
             derived = False
         elif str(flag).strip().lower() in {"1", "1.0", "true", "yes"}:
             derived = True
@@ -256,8 +256,8 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
             source_coordinate_convention="inclusive_maxima", source_frame_indices=indices,
             frame_provenance="source_derived" if derived else "source_supplied" if indices else None,
             frame_derivation_method="ROI_depth_derived" if derived else None,
-            annotation_source=_identifier(_mapped(row, columns, "annotation_source")), confidence=confidence,
-            coordinate_frame_id=_identifier(_mapped(row, columns, "coordinate_frame_id"))))
+            annotation_source=identifier(_mapped(row, columns, "annotation_source")), confidence=confidence,
+            coordinate_frame_id=identifier(_mapped(row, columns, "coordinate_frame_id"))))
     return tuple(result)
 
 
@@ -273,35 +273,15 @@ def _supplied(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], sema
 
 
 def _mapped(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], semantic: str) -> Any:
-    physical = columns.get(semantic)
-    return row.get(physical) if physical is not None else None
+    """Return the row's value for a semantic field, or None when unbound or missing."""
 
-
-def _identifier(value: Any) -> Optional[str]:
-    if is_null_scalar(value):
-        return None
-    if isinstance(value, Real) and not isinstance(value, bool) and float(value).is_integer():
-        return str(int(float(value)))
-    text = str(value).strip()
-    return text or None
-
-
-def _count(value: Any) -> Optional[int]:
-    """Return a pixel or frame count as int, or None when it is not whole."""
-
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if isinstance(value, bool) or not number.is_integer():
-        return None
-    return int(number)
+    return cell(row, columns.get(semantic))
 
 
 def _distinct(values: Iterable[Any]) -> list[Any]:
     result: list[Any] = []
     for value in values:
-        if not is_null_scalar(value) and value not in result:
+        if not is_missing(value) and value not in result:
             result.append(value)
     return result
 
@@ -311,7 +291,7 @@ def _unknown(field: str) -> Any:
 
 
 def _literal(value: Any) -> Any:
-    return ast.literal_eval(value) if isinstance(value, str) else None if is_null_scalar(value) else value
+    return ast.literal_eval(value) if isinstance(value, str) else None if is_missing(value) else value
 
 
 def _parse_embed_path(path: Optional[str]) -> Optional[dict[str, str]]:

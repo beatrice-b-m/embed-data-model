@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from math import isfinite
-from numbers import Integral, Real
 from typing import Any, Mapping, Optional
 
 from embed_data_model.clinical.pathology import (
@@ -13,6 +11,7 @@ from embed_data_model.clinical.pathology import (
 from embed_data_model.clinical.procedures import Procedure, ProcedureIdentity
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, SourceRef
+from embed_data_model.sources.embed._values import cell, code, identifier, text
 
 
 def normalize_procedure(
@@ -43,12 +42,10 @@ def normalize_procedure(
     No graph is mutated, no files are read and no scientific validity is inferred.
     """
 
-    patient_id = _identifier(row, columns.get("patient_id"))
-    performed_date = _text(
-        row, columns.get("performed_date", columns.get("procedure_date"))
-    )
-    procedure_type = _code(row, columns.get("procedure_type"))
-    laterality = Laterality.coerce(_text(row, columns.get("laterality")))
+    patient_id = identifier(cell(row, columns.get("patient_id")))
+    performed_date = text(cell(row, columns.get("performed_date", columns.get("procedure_date"))))
+    procedure_type = code(cell(row, columns.get("procedure_type")))
+    laterality = Laterality.coerce(text(cell(row, columns.get("laterality"))))
     missing = tuple(
         name
         for name, value in (
@@ -124,16 +121,16 @@ def normalize_pathology(
         )
         for index in range(1, 11)
         if (column := columns.get(f"descriptor_{index}")) is not None
-        if (descriptor := _code(row, column)) is not None
+        if (descriptor := code(cell(row, column))) is not None
     )
-    raw_severity = _value(row, columns.get("severity"))
+    raw_severity = cell(row, columns.get("severity"))
     values = {
-        "diagnosis": _text(row, columns.get("diagnosis")),
-        "result_category": _text(row, columns.get("result_category")),
-        "malignant": _optional_bool(_value(row, columns.get("malignant"))),
+        "diagnosis": text(cell(row, columns.get("diagnosis"))),
+        "result_category": text(cell(row, columns.get("result_category"))),
+        "malignant": _optional_bool(cell(row, columns.get("malignant"))),
         "severity": _severity(raw_severity),
         "raw_severity": raw_severity,
-        "report_documented_date": _text(row, columns.get("report_documented_date")),
+        "report_documented_date": text(cell(row, columns.get("report_documented_date"))),
     }
     return {name: value for name, value in values.items() if value is not None}, observations
 
@@ -150,56 +147,6 @@ def _severity(raw: Any) -> Optional[PathologySeverity]:
     if not numeric.is_integer() or int(numeric) not in PathologySeverity._value2member_map_:
         return None
     return PathologySeverity(int(numeric))
-
-
-def _value(row: Mapping[str, Any], column: Optional[str]) -> Any:
-    if column is None:
-        return None
-    value = row.get(column)
-    if value is None or type(value).__name__ in {"NAType", "NaTType"}:
-        return None
-    try:
-        unequal = value != value
-        if isinstance(unequal, bool) and unequal:
-            return None
-    except (TypeError, ValueError):
-        return None
-    item = getattr(value, "item", None)
-    if callable(item) and not isinstance(value, (str, bytes)):
-        try:
-            value = item()
-        except (TypeError, ValueError, OverflowError):
-            pass
-    return value
-
-
-def _text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    value = _value(row, column)
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _code(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    """Return a MagView code trimmed and uppercased for comparison."""
-
-    text = _text(row, column)
-    return None if text is None else text.upper()
-
-
-def _identifier(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    value = _value(row, column)
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, Integral):
-        return str(int(value))
-    if isinstance(value, Real):
-        number = float(value)
-        if not isfinite(number):
-            return None
-        return str(int(number)) if number.is_integer() else str(value)
-    return _text(row, column)
 
 
 def _optional_bool(value: Any) -> Optional[bool]:
