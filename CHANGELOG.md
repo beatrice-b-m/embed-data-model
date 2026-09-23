@@ -18,8 +18,9 @@
 - Patient `race` and `ethnicity`, recorded per exam context like `sex`.
 - Finding descriptors from the MagView mass, asymmetry, architectural
   distortion, calcification, other-finding and implant columns, stored in
-  `finding.descriptors` as source codes under semantic names. Each descriptor
-  follows refresh and merge on its own. Comma-separated codes are kept whole.
+  `finding.descriptors` as `Code` values under semantic names. Each descriptor
+  follows refresh and merge on its own. Comma-separated codes are kept whole,
+  with the meaning of each part.
   The unbound free-form `descriptors` binding is removed.
 
 ### Removed
