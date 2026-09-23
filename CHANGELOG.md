@@ -25,6 +25,9 @@
 
 ### Changed
 
+- `ImagingInterpretation(assessment=None, recommendation=None, sources=())` is
+  a mutable value stored on its finding; it no longer takes or repeats
+  `accession_number` and `finding_number`.
 - Patient history observations and `HistoryTimeEstimate` are values stored
   on their `Patient` and no longer carry `patient_id`; construct them without
   it. Observations stay mutable through `update`, which re-checks fields.

@@ -185,8 +185,6 @@ def test_finding_and_exam_rekeys_preserve_interpretation_identity_and_reference(
     finding = graph.finding("A", "1")
     interpretation = finding.interpretation
     finding.rekey(finding_number="2")
-    assert interpretation.identity == ("A", "2")
     graph.exam("A").rekey(accession_number="B")
     assert graph.finding("B", "2") is finding
     assert finding.interpretation is interpretation
-    assert interpretation.identity == ("B", "2")

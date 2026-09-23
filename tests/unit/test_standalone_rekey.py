@@ -32,7 +32,7 @@ def test_standalone_exam_and_image_rekeys_preserve_tree_objects() -> None:
     patient = ResearchPatient("P-1")
     patient.research = {"labels": ["source"]}
     exam = patient.add_exam(Exam("A-1"))
-    interpretation = ImagingInterpretation("A-1", "1")
+    interpretation = ImagingInterpretation(assessment="N")
     finding = exam.add_finding(
         Finding("A-1", Laterality.LEFT, "1", interpretation=interpretation)
     )
@@ -54,7 +54,6 @@ def test_standalone_exam_and_image_rekeys_preserve_tree_objects() -> None:
     assert exam.accession_number == "B-1"
     assert finding.accession_number == "B-1"
     assert finding.interpretation is interpretation
-    assert interpretation.identity == ("B-1", "1")
     assert exam_observation.accession_number == "B-1"
     assert exam.breast_sides[Laterality.LEFT].accession_number == "B-1"
     assert image.accession_number == "B-1"
@@ -68,7 +67,7 @@ def test_standalone_exam_and_image_rekeys_preserve_tree_objects() -> None:
     assert patient.research == {"labels": ["source"]}
     assert all(
         item.graph is None
-        for item in (patient, exam, finding, interpretation, image, roi)
+        for item in (patient, exam, finding, image, roi)
     )
 
     graph = DatasetGraph()

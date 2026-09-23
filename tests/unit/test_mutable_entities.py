@@ -35,7 +35,7 @@ def test_optional_source_observations_are_mutable_standalone() -> None:
     assert exam_observation.source is None
     assert exam_observation.to_dict()["value"] == "screening"
 
-    interpretation = ImagingInterpretation("ACC-1", "1")
+    interpretation = ImagingInterpretation()
     interpretation.update(assessment="4")
     assert interpretation.sources == ()
     assert interpretation.to_dict()["assessment"] == "4"

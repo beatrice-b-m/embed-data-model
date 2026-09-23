@@ -1070,9 +1070,6 @@ class DatasetGraph:
             if kind_of(obj) == "exam" and "accession_number" in changes:
                 for side in obj.breast_sides.values():
                     object.__setattr__(side, "accession_number", obj.accession_number)
-            if kind_of(obj) == "finding" and obj.interpretation is not None:
-                object.__setattr__(obj.interpretation, "accession_number", obj.accession_number)
-                object.__setattr__(obj.interpretation, "finding_number", obj.finding_number)
         for obj, changes in embedded_context:
             for field, value in changes.items():
                 object.__setattr__(obj, field, value)

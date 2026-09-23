@@ -536,8 +536,6 @@ def _load_findings(
             fields["laterality"] = laterality
         record_type = _finding_record_type(fields.get("record_type"), finding_number)
         interpretation = _interpretation(
-            accession,
-            finding_number,
             fields.get("assessment"),
             fields.get("recommendation"),
             _semantic_source(group),
@@ -1034,8 +1032,6 @@ def _finding_anatomy(
 
 
 def _interpretation(
-    accession: str,
-    finding_number: str,
     assessment: Any,
     recommendation: Any,
     source: Optional[SourceRef],
@@ -1043,11 +1039,9 @@ def _interpretation(
     if assessment is None and recommendation is None:
         return None
     return ImagingInterpretation(
-        accession_number=accession,
-        finding_number=finding_number,
-        sources=(source,) if source is not None else (),
         assessment=assessment,
         recommendation=recommendation,
+        sources=(source,) if source is not None else (),
     )
 
 

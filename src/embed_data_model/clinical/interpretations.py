@@ -2,107 +2,75 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
 
-from embed_data_model.core.entity import MutableEntity, serialize_entity
+from embed_data_model.core.entity import plain_value
 from embed_data_model.core.source import SourceRef, optional_source
 
 
-def _required_text(value: str, name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be a non-empty string")
-    return value.strip()
-
-
-class ImagingInterpretation(MutableEntity):
+@dataclass(eq=False)
+class ImagingInterpretation:
     """Assessment and recommendation documented for one finding.
 
-    Parameters
+    The interpretation is stored on its Finding and does not repeat the
+    finding's identity. It is mutable so the loader can refresh it in place,
+    keeping a consumer's reference and extra attributes.
+
+    Attributes
     ----------
-    accession_number : str
-        Non-empty exam accession identifying the clinical examination.
-    finding_number : str
-        Non-empty finding identifier scoped to its accession; not a row ordinal.
-    sources : Optional[Iterable[SourceRef]], optional
-        Distinct source rows supporting the interpretation, in supplied order.
-        Default: None (no sources).
-    assessment : Optional[str], optional
-        Reported assessment code; None means missing and no category is
-        inferred. Default: None.
-    recommendation : Optional[str], optional
-        Reported recommendation code string; None means missing. Default: None.
+    assessment : str or None, optional
+        Reported assessment code, such as a BI-RADS category; None means
+        missing and no category is inferred. Default None.
+    recommendation : str or None, optional
+        Reported recommendation code string; None means missing. Default None.
+    sources : tuple of SourceRef, optional
+        Distinct source rows supporting the interpretation. Default ().
 
     Notes
     -----
-    An assessment or recommendation is never a tissue diagnosis. Scalar fields
-    are mutable; the loader refreshes them in place so consumer attributes on
-    the object survive reloads.
+    An assessment or recommendation is never a tissue diagnosis.
+
+    Examples
+    --------
+    >>> ImagingInterpretation(assessment="S", recommendation="B").assessment
+    'S'
     """
 
-    __key_fields__ = ("accession_number", "finding_number")
-
-    assessment: Optional[str]
-    """Reported assessment code; None means missing and no category is inferred."""
-    recommendation: Optional[str]
+    assessment: Optional[str] = None
+    """Reported assessment code; None means missing."""
+    recommendation: Optional[str] = None
     """Reported recommendation code string; None means missing."""
+    sources: Tuple[SourceRef, ...] = field(default=())
+    """Distinct source rows supporting the interpretation."""
 
-    def __init__(
-        self,
-        accession_number: str,
-        finding_number: str,
-        sources: Optional[Iterable[SourceRef]] = None,
-        assessment: Optional[str] = None,
-        recommendation: Optional[str] = None,
-    ) -> None:
-        super().__init__()
-        self.accession_number = _required_text(accession_number, "accession_number")
-        self.finding_number = _required_text(finding_number, "finding_number")
-        self._sources = self._validate_sources(sources or ())
-        self.assessment = assessment
-        self.recommendation = recommendation
-        self._finish_initialization()
-
-    @staticmethod
-    def _validate_sources(values: Iterable[Optional[object]]) -> Tuple[SourceRef, ...]:
-        sources = tuple(value for value in (optional_source(item) for item in values) if value is not None)
+    def __post_init__(self) -> None:
+        sources = tuple(
+            value for value in (optional_source(item) for item in self.sources) if value is not None
+        )
         if len(set(sources)) != len(sources):
             raise ValueError("sources must be distinct")
-        return sources
-
-    @property
-    def identity(self) -> Tuple[str, str]:
-        """Finding identity ``(accession_number, finding_number)``."""
-
-        return self.accession_number, self.finding_number
-
-    @property
-    def sources(self) -> Tuple[SourceRef, ...]:
-        """Source rows supporting the interpretation, in insertion order."""
-
-        return self._sources
-
-    @sources.setter
-    def sources(self, values: Iterable[SourceRef]) -> None:
-        self._sources = self._validate_sources(values)
+        self.sources = sources
 
     @property
     def source(self) -> Optional[SourceRef]:
         """The first source row, or None when there is none."""
 
-        return self._sources[0] if self._sources else None
+        return self.sources[0] if self.sources else None
 
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
-        return {
-            "finding": {
-                "accession_number": self.accession_number,
-                "finding_number": self.finding_number,
-            },
-            "sources": self.sources,
-            "assessment": self.assessment,
-            "recommendation": self.recommendation,
-        }
+    def update(self, **values: Any) -> "ImagingInterpretation":
+        """Set fields in place, re-check them, and return this interpretation."""
+
+        for name, value in values.items():
+            setattr(self, name, value)
+        self.__post_init__()
+        return self
 
     def to_dict(self) -> Dict[str, Any]:
-        """Return a JSON-compatible dictionary of the interpretation fields."""
+        """Return ``{"assessment", "recommendation", "sources"}`` as JSON values."""
 
-        return serialize_entity(self)
+        return {
+            "assessment": self.assessment,
+            "recommendation": self.recommendation,
+            "sources": plain_value(self.sources),
+        }

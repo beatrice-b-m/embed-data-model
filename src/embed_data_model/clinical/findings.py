@@ -262,8 +262,6 @@ class Finding(MutableEntity):
         self.finding_number = _identifier_text(finding_number, "finding_number")
         self.finding_type = finding_type
         self.interpretation = interpretation
-        if interpretation is not None and interpretation.identity != self.identity:
-            raise ValueError("Finding interpretation identity must match Finding")
         self.anatomical_position = anatomical_position
         self._source_location_codes = dict(source_location_codes or {})
         self._source_depth_codes = dict(source_depth_codes or {})

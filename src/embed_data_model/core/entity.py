@@ -279,7 +279,6 @@ _ENTITY_ROLES = {
     "MammogramImage": "image",
     "RegionOfInterest": "roi",
     "BreastSide": "breast_side",
-    "ImagingInterpretation": "interpretation",
     "ExamAttributeObservation": "exam_attribute",
 }
 
@@ -326,10 +325,6 @@ def _embedded_entities(entity: MutableEntity) -> Tuple[MutableEntity, ...]:
         candidates.extend(getattr(entity, "attribute_observations", ()))
         sides = getattr(entity, "breast_sides", {})
         candidates.extend(getattr(sides, "values", lambda: ())())
-    elif role == "finding":
-        interpretation = getattr(entity, "interpretation", None)
-        if interpretation is not None:
-            candidates.append(interpretation)
     return tuple(candidate for candidate in candidates if isinstance(candidate, MutableEntity))
 
 
@@ -410,30 +405,11 @@ def _standalone_rekey(entity: MutableEntity, identifiers: Mapping[str, Any]) -> 
                     "finding",
                     "image",
                     "breast_side",
-                    "interpretation",
                     "exam_attribute",
                 } and getattr(candidate, "accession_number", _MISSING) == old_accession:
                     _add_standalone_change(
                         candidate, "accession_number", new_accession, changes
                     )
-
-    elif role == "finding":
-        interpretation = getattr(entity, "interpretation", None)
-        if isinstance(interpretation, MutableEntity):
-            if "accession_number" in identifiers:
-                _add_standalone_change(
-                    interpretation,
-                    "accession_number",
-                    identifiers["accession_number"],
-                    changes,
-                )
-            if "finding_number" in identifiers:
-                _add_standalone_change(
-                    interpretation,
-                    "finding_number",
-                    identifiers["finding_number"],
-                    changes,
-                )
 
     elif role == "image" and "image_id" in identifiers:
         old_image_id = getattr(entity, "image_id", _MISSING)
