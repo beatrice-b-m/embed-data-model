@@ -157,9 +157,10 @@ def _quality(obj: Any) -> Iterable[Issue]:
         frames = getattr(obj, "source_frame_indices", ())
         if any(frame < 0 for frame in frames) or len(set(frames)) != len(frames):
             yield issue("roi_frame_indices", "ROI frame indices should be distinct and non-negative")
-    for field in ("age", "birth_year", "year", "month", "hour"):
+    for field in ("age", "patient_age", "birth_year", "year", "month", "hour"):
         value = getattr(obj, field, None)
-        limits = {"age": (0, 130), "birth_year": (1800, date.today().year),
+        # EMBED exam ages are top-coded to 89, and zero is a data-quality error.
+        limits = {"age": (0, 130), "patient_age": (1, 89), "birth_year": (1800, date.today().year),
                   "year": (1, 9999), "month": (1, 12), "hour": (1, 12)}
         if value is not None:
             lower, upper = limits[field]

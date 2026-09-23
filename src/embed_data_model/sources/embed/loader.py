@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -427,7 +426,7 @@ def _load_patients(
     with ``Patient.attribute_as_of``.
     """
 
-    converters = {"sex": text, "birth_year": _birth_year_value}
+    converters = {"sex": text, "race": text, "ethnicity": text, "birth_year": _birth_year_value}
     groups = _group_rows(rows, columns, ("patient_id",), "patient", issues)
     for key in sorted(groups, key=repr):
         patient = _ensure_patient(graph, key)
@@ -481,15 +480,23 @@ def _load_exams(
         fields, conflicts = _combine_fields(
             group,
             columns,
-            {"exam_date": text, "exam_description": text},
+            {
+                "exam_date": text,
+                "exam_description": text,
+                "density": _descriptor_code,
+                "exam_type": text,
+                "visit_type": text,
+                "modality": text,
+                "patient_age": _number,
+            },
             "exam",
             key,
             issues,
         )
-        renamed = {"exam_date": "exam_date", "exam_description": "description"}
+        renamed = {"exam_description": "description"}
         updates = _updates_for_mode(
-            {renamed[name]: value for name, value in fields.items()},
-            {renamed[name]: value for name, value in conflicts.items()},
+            {renamed.get(name, name): value for name, value in fields.items()},
+            {renamed.get(name, name): value for name, value in conflicts.items()},
             mode,
         )
         if mode == "merge":
@@ -532,7 +539,7 @@ def _load_findings(
                 "location": _raw_value,
                 "depth": _raw_value,
                 "distance": _raw_value,
-                "descriptors": _literal_value,
+                **{name: _descriptor_code for name in FINDING_DESCRIPTORS},
             },
             "finding",
             key,
@@ -560,13 +567,6 @@ def _load_findings(
         source = _semantic_source(group)
         evidence = anatomy["evidence"]
         warnings = anatomy["warnings"]
-        descriptors = fields.get("descriptors")
-        if descriptors is None:
-            descriptor_map: dict[str, Any] = {}
-        elif isinstance(descriptors, Mapping):
-            descriptor_map = dict(descriptors)
-        else:
-            descriptor_map = {"value": descriptors}
         updates = {
             "laterality": laterality,
             "finding_type": fields.get("finding_type"),
@@ -577,7 +577,6 @@ def _load_findings(
             "source_distance_codes": anatomy["distance_codes"],
             "normalization_evidence": evidence,
             "normalization_warnings": warnings,
-            "descriptors": descriptor_map,
             "record_type": record_type,
         }
         dependencies = {
@@ -595,6 +594,9 @@ def _load_findings(
                 managed_updates[name] = value
         updates = managed_updates
         existing = graph.get("finding", key)
+        descriptors = _finding_descriptors(existing, fields, conflicts, mode, key, issues)
+        if descriptors is not None:
+            updates["descriptors"] = descriptors
         if existing is not None and mode == "merge":
             scalars = {name: updates[name] for name in ("laterality", "finding_type") if name in updates}
             reconcile_merge(_current(existing, scalars), scalars, grain="finding", key=key, issues=issues)
@@ -1022,6 +1024,66 @@ def _interpretation(
     )
 
 
+FINDING_DESCRIPTORS = (
+    "mass",
+    "asymmetry",
+    "architectural_distortion",
+    "calcification",
+    "mass_shape",
+    "mass_margin",
+    "mass_density",
+    "calcification_morphology",
+    "calcification_distribution",
+    "calcification_number",
+    "other_finding",
+    "implant_finding",
+)
+"""Finding descriptor fields loaded into ``Finding.descriptors`` as source codes."""
+
+
+def _descriptor_code(value: Any) -> Optional[str]:
+    """Return a descriptor source code: whole numbers as ``"2"``, text trimmed and uppercased.
+
+    Comma-separated code strings are kept whole; their composition is not
+    documented, so no splitting or reordering is applied.
+    """
+
+    number = scalar(value)
+    if isinstance(number, Real) and not isinstance(number, bool) and float(number).is_integer():
+        return str(int(number))
+    return code(number)
+
+
+def _finding_descriptors(
+    existing: Any,
+    fields: Mapping[str, Any],
+    conflicts: Mapping[str, bool],
+    mode: str,
+    key: Any,
+    issues: list[Issue],
+) -> Optional[dict[str, Any]]:
+    """Return the finding's descriptor dict after applying supplied descriptor columns.
+
+    Each supplied descriptor follows the refresh and merge rules separately;
+    descriptors whose columns are absent stay as they are. Returns None when
+    no descriptor column was supplied.
+    """
+
+    supplied = [name for name in FINDING_DESCRIPTORS if name in fields]
+    if not supplied:
+        return None
+    current = dict(existing.descriptors) if existing is not None else {}
+    incoming = _updates_for_mode({name: fields[name] for name in supplied}, conflicts, mode)
+    if mode == "merge":
+        reconcile_merge({name: current.get(name) for name in incoming}, incoming, grain="finding", key=key, issues=issues)
+    for name, value in incoming.items():
+        if value is None:
+            current.pop(name, None)
+        else:
+            current[name] = value
+    return current
+
+
 def _finding_laterality(
     fields: Mapping[str, Any],
     conflicts: Mapping[str, bool],
@@ -1073,7 +1135,6 @@ def _finding_field(name: str) -> str:
         "source_distance_codes": "distance",
         "normalization_evidence": "location",
         "normalization_warnings": "location",
-        "descriptors": "descriptors",
         "record_type": "record_type",
     }.get(name, name)
 
@@ -1097,14 +1158,19 @@ def _raw_value(value: Any) -> Any:
     return None if is_missing(value) else scalar(value)
 
 
-def _literal_value(value: Any) -> Any:
-    value = _raw_value(value)
-    if isinstance(value, str):
-        try:
-            return ast.literal_eval(value)
-        except (SyntaxError, ValueError):
-            return value
-    return value
+def _number(value: Any) -> Optional[float]:
+    """Return a finite number (whole numbers as int), or None when not numeric."""
+
+    value = scalar(value)
+    if is_missing(value) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(number):
+        return None
+    return int(number) if number.is_integer() else number
 
 
 def _birth_year_value(value: Any) -> Optional[int]:

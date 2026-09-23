@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- Exam fields `density` (`tissueden`), `exam_type` (`mg_exam_type`),
+  `visit_type` (`vtype`), `modality` (`modality_desc`) and `patient_age`
+  (`age_at_study_anon`), loaded by default. `validate` flags a patient age
+  outside 1-89 (EMBED top-codes ages at 89; zero is a data-quality error).
+- Patient `race` and `ethnicity`, recorded per exam context like `sex`.
+- Finding descriptors from the MagView mass, asymmetry, architectural
+  distortion, calcification, other-finding and implant columns, stored in
+  `finding.descriptors` as source codes under semantic names. Each descriptor
+  follows refresh and merge on its own. Comma-separated codes are kept whole.
+  The unbound free-form `descriptors` binding is removed.
+
 ### Removed
 
 - `core.birads` and its lexicon normalizers. They were never used by the loader

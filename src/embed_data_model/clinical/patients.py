@@ -31,6 +31,9 @@ class Patient(MutableEntity):
     sex : str or None, optional
         Reported sex when every attribute observation agrees; None when absent
         or varying over time (see ``attribute_as_of``). Default None.
+    race, ethnicity : str or None, optional
+        Reported race and ethnicity when every observation agrees; None when
+        absent or varying. Default None.
     birth_year : int or None, optional
         Reported birth year; validate checks plausibility. Default None.
     attribute_observations : iterable of PatientAttributeObservation, optional
@@ -55,6 +58,10 @@ class Patient(MutableEntity):
     """Patient identifier; the key."""
     sex: Optional[str]
     """Reported sex when all observations agree; None if absent or varying."""
+    race: Optional[str]
+    """Reported race when all observations agree; None if absent or varying."""
+    ethnicity: Optional[str]
+    """Reported ethnicity when all observations agree; None if absent or varying."""
     birth_year: Optional[int]
     """Reported birth year; validate checks plausibility."""
     metadata: Dict[str, Any]
@@ -67,6 +74,8 @@ class Patient(MutableEntity):
         patient_id: str,
         sex: Optional[str] = None,
         birth_year: Optional[int] = None,
+        race: Optional[str] = None,
+        ethnicity: Optional[str] = None,
         attribute_observations: Optional[Iterable[PatientAttributeObservation]] = None,
         history_observations: Optional[Iterable[PatientHistoryObservation]] = None,
         metadata: Optional[Mapping[str, Any]] = None,
@@ -76,6 +85,8 @@ class Patient(MutableEntity):
         self.patient_id = patient_id
         self.sex = sex
         self.birth_year = birth_year
+        self.race = race
+        self.ethnicity = ethnicity
         self.metadata = dict(metadata or {})
         self.source = source
         self._attribute_observations: List[PatientAttributeObservation] = []
@@ -365,6 +376,8 @@ class Patient(MutableEntity):
             "patient_id": self.patient_id,
             "sex": self.sex,
             "birth_year": self.birth_year,
+            "race": self.race,
+            "ethnicity": self.ethnicity,
             "attribute_observations": self.attribute_observations,
             "history_observations": self.history_observations,
             "metadata": self.metadata,

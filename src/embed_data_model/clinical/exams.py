@@ -61,6 +61,17 @@ class Exam(MutableEntity):
         Exam date as supplied, conventionally ISO ``YYYY-MM-DD``. Default None.
     description : str or None, optional
         Source exam (procedure) description. Default None.
+    density : str or None, optional
+        Breast tissue density source code (EMBED ``1``-``4``, ``5`` normal
+        male); not an ordinal scale. Default None.
+    exam_type : str or None, optional
+        Exam type derived from the description, such as ``"screening"``.
+    visit_type : str or None, optional
+        Source visit type. Default None.
+    modality : str or None, optional
+        Source exam modality description. Default None.
+    patient_age : float or None, optional
+        Patient age in years at the exam, top-coded to 89 in EMBED. Default None.
     asserted_patient_ids : iterable of str, optional
         Source patient claims. A single claim with no ``patient_id`` makes
         that patient the owner; conflicting claims leave the exam unowned.
@@ -108,6 +119,16 @@ class Exam(MutableEntity):
     """Exam date as supplied."""
     description: Optional[str]
     """Source exam description."""
+    density: Optional[str]
+    """Breast tissue density source code; not an ordinal scale."""
+    exam_type: Optional[str]
+    """Exam type derived from the description, such as ``"screening"``."""
+    visit_type: Optional[str]
+    """Source visit type."""
+    modality: Optional[str]
+    """Source exam modality description."""
+    patient_age: Optional[float]
+    """Patient age in years at the exam; EMBED top-codes ages of 90 or more to 89."""
     asserted_patient_ids: Set[str]
     """Source patient claims; not a choice of owner."""
     linked_accessions: Set[str]
@@ -125,6 +146,11 @@ class Exam(MutableEntity):
         patient_id: Optional[str] = None,
         exam_date: Optional[str] = None,
         description: Optional[str] = None,
+        density: Optional[str] = None,
+        exam_type: Optional[str] = None,
+        visit_type: Optional[str] = None,
+        modality: Optional[str] = None,
+        patient_age: Optional[float] = None,
         asserted_patient_ids: Optional[Iterable[str]] = None,
         linked_accessions: Optional[Iterable[str]] = None,
         registry_references: Optional[Iterable[Tuple[str, str]]] = None,
@@ -143,6 +169,11 @@ class Exam(MutableEntity):
         self.asserted_patient_ids = claims
         self.exam_date = exam_date
         self.description = description
+        self.density = density
+        self.exam_type = exam_type
+        self.visit_type = visit_type
+        self.modality = modality
+        self.patient_age = patient_age
         self.linked_accessions = set(linked_accessions or ())
         self.registry_references = set(registry_references or ())
         self._owner_explicit = bool(owner_explicit)
@@ -304,6 +335,11 @@ class Exam(MutableEntity):
             "owner_explicit": self.owner_explicit,
             "exam_date": self.exam_date,
             "description": self.description,
+            "density": self.density,
+            "exam_type": self.exam_type,
+            "visit_type": self.visit_type,
+            "modality": self.modality,
+            "patient_age": self.patient_age,
             "linked_accessions": self.linked_accessions,
             "registry_references": self.registry_references,
             "metadata": self.metadata,
