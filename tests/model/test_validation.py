@@ -44,9 +44,11 @@ def test_validation_partition_copies_selected_descendants():
     bad = patient.add_exam(Exam("bad"))
     image = bad.add_image(MammogramImage("I", accession_number="bad", height=-2))
     valid, invalid = graph.partition_by_validation(level="exam")
+
+    assert [exam.accession_number for exam in valid.exams] == ["good"]
+    assert [exam.accession_number for exam in invalid.exams] == ["bad"]
+    assert invalid.image("I") is not None and invalid.image("I") is not image
     assert valid.exam("good") is not good
-    assert invalid.exam("bad") is not bad
-    assert invalid.image("I") is not image
     assert graph.exam("good") is good and graph.exam("bad") is bad
 
 

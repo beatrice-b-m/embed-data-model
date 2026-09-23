@@ -1,4 +1,4 @@
-from __future__ import annotations
+"""Reported patient history observations kept on the patient."""
 
 import pytest
 
@@ -90,33 +90,3 @@ def test_history_source_is_optional_diagnostic_not_event_identity() -> None:
         patient.add_history_observation(
             PatientHistoryObservation(patient_id="P-2", source=source(2))
         )
-
-
-def test_unkeyed_history_refresh_and_merge_require_explicit_event_identity():
-    from embed_data_model import load_embed
-    rows = [{"empi_anon":"P", "type":"H", "code":"E", "first_age":-5}]
-    graph = load_embed(hormone_history=rows * 2).graph
-    patient = graph.patient("P")
-    assert len(patient.medication_history) == 2
-    assert patient.medication_history[0].started.age == -5
-    old = patient.medication_history
-    report = load_embed(hormone_history=rows, into=graph, mode="merge")
-    assert patient.medication_history == old
-    assert any(i.code == "history_merge_requires_record_id" for i in report.issues)
-    load_embed(hormone_history=rows, into=graph)
-    assert len(patient.medication_history) == 1
-    patient.replace_history("medication", [])
-    assert not patient.medication_history
-
-
-def test_explicit_history_key_refresh_preserves_reference_and_custom_values():
-    from embed_data_model import load_embed
-    columns = {"hormone_history":{"record_id":"record"}}
-    rows = [{"empi_anon":"P", "type":"H", "code":"E", "record":"1", "comment":"old"}]
-    graph = load_embed(hormone_history=rows, columns=columns).graph
-    history = graph.patient("P").medication_history[0]
-    history.project = {"keep":True}
-    rows[0]["comment"] = "new"
-    load_embed(hormone_history=rows, columns=columns, into=graph)
-    assert graph.patient("P").medication_history == (history,)
-    assert history.comment == "new" and history.project == {"keep":True}

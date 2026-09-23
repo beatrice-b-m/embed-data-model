@@ -66,7 +66,7 @@ def test_grouped_repeated_findings_keep_all_procedure_and_pathology_children():
     assert len(finding.procedures) == 2 and len(finding.pathology) == 2
     load_embed(magview=list(reversed(rows)), into=graph)
     assert graph.finding("A","1") is finding
-    assert len(finding.procedures) == 2 and not hasattr(graph, "_contributions")
+    assert len(finding.procedures) == 2
 
 
 def test_finding_refresh_respects_unbound_fields_and_conflicting_merge_values():

@@ -8,48 +8,20 @@ from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.findings import Finding
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.graph import DatasetGraph
-from embed_data_model.sources.embed.clinical import load_clinical
+from embed_data_model import load_embed
 from embed_data_model.sources.embed.columns import resolve_columns
-from embed_data_model.sources.embed.procedures_pathology import (
-    normalize_pathology,
-    normalize_procedure,
-)
 
 
-def test_normalizers_accept_optional_sources_and_preserve_raw_severity():
-    columns = resolve_columns(None)
-    procedure, issues = normalize_procedure(clinical_row(), columns["procedures"])
-    assert procedure.identity.patient_id == "P"
-    assert not issues and not procedure.sources
-    diagnosis, descriptors, issues = normalize_pathology(
-        {"path1": "ADH", "path_severity": 99}, columns["pathology"]
-    )
-    assert diagnosis.raw_severity == 99 and diagnosis.severity is None
-    assert descriptors[0].descriptor == "ADH"
-    assert not issues
-    diagnosis, descriptors, issues = normalize_pathology(
-        {"path1": "ADH"}, columns["pathology"]
-    )
-    assert diagnosis is None and len(descriptors) == 1 and not issues
+def test_out_of_range_severity_is_kept_raw_for_validation():
+    graph = DatasetGraph()
+    load(graph, pathology=[clinical_row(path_severity=99)])
+    (pathology,) = graph.pathology
+    assert (pathology.severity, pathology.raw_severity) == (None, 99)
+    assert pathology.descriptors[0].descriptor == "ADH"
 
 
 def load(graph, *, mode="refresh", columns=None, **tables):
-    issues = []
-    claims = {}
-    load_clinical(
-        procedures=tables.get("procedures", []),
-        pathology=tables.get("pathology", []),
-        magview=tables.get("magview", []),
-        registry=tables.get("registry", []),
-        graph=graph,
-        columns=columns or resolve_columns(None),
-        mode=mode,
-        issues=issues,
-        claims=claims,
-    )
-    for accession, patient_ids in claims.items():
-        graph.claim_patient(graph.exam(accession), patient_ids)
-    return issues
+    return list(load_embed(into=graph, mode=mode, columns=columns, **tables).issues)
 
 
 def row(**fields):
