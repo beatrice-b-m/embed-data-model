@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-09-23
+
+Source release `v0.2.0`. This release aligns the model with the EMBED
+clinical-semantic catalog and simplifies the public API. It contains breaking
+changes: coded fields load as `Code` values, several unused types and aliases
+are removed, and relationships are resolved through the graph. The Removed and
+Changed sections list each change and how to migrate. Python 3.9–3.13 support
+and the absence of mandatory runtime dependencies are unchanged.
 
 ### Added
 
