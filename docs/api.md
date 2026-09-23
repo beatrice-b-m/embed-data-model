@@ -109,28 +109,33 @@ record IDs rather than guessing event equality.
 
 ## Pathology and reported facts
 
-Prefer a supplied patient-scoped `record_id`. The fallback bundle key is the
-supported attachment identity plus supplied report_documented_date: a complete
-ProcedureIdentity when available, otherwise (accession, finding_number) or
-accession. A documentation date is not a diagnosis/event date. Ordered descriptor
-slots belong inside the bundle; duplicate values and order are preserved.
-Absent discriminators produce accessible unresolved records with their payload
-and supported attachment, not row ordinals or payload-derived event IDs.
-Conflicting descriptor slots at a fallback key make the candidate bundles unresolved;
-an explicit key is needed to distinguish them. Narrow and wide rows use the same
-logical namespace. Within an addressed attachment's refresh these unresolved snapshots replace prior
-unresolved snapshots; no replay ledger accumulates. Explicit record keys are
-required to distinguish multiple reports at the same fallback grain.
+A pathology bundle is keyed by a supplied patient-scoped record ID,
+`(patient_id, record_id)`, or, for MagView procedure rows without one, by the
+procedure it was reported for, `("procedure", ProcedureIdentity)`. The
+provisional report date (`pdate_anon`) is an attribute, never part of the key,
+and is not a diagnosis or event date. Descriptor slots belong to the bundle;
+duplicate values and order are preserved. Pathology without a complete
+procedure or record ID is kept as an unresolved record with its payload and the
+attachment the adapter could establish, never keyed by a row position. When rows
+of one procedure disagree on a descriptor slot, the bundle is unresolved because
+only a record ID could tell the reports apart. Within an addressed attachment's
+refresh, unresolved snapshots replace earlier ones; no replay ledger accumulates.
 
-History records with explicit record IDs are patient-scoped mutable entities.
-Without IDs they are patient-scoped reported-fact snapshots, never performed
-procedures and never inferred distinct clinical events. Interpretations, histories,
-attribute observations, pathology observations/diagnoses, and landmarks are mutable.
-Patient, Exam, BreastSide, Finding, Procedure, MammogramImage and RegionOfInterest
-are mutable entities. Box, ProcedureIdentity, enums, coordinate/anatomy values,
-semantic references, SourceRef, Issue and optional normalization diagnostics are
-replaceable values. Frozen value types do not exempt their owning entities from
-updates.
+`path_severity` loads as `PathologySeverity`, an inverse scale on which 0 is
+invasive breast cancer and 5 non-breast cancer; code 6 is invalid and kept only
+as `raw_severity`. A missing severity means no pathology is attached, not a
+benign result.
+
+History observations with an explicit record ID are updated in place on reload.
+Without one they are snapshots of reported facts: never performed procedures and
+never inferred distinct events. Patient attribute observations record one value
+per exam context; choose among them with `Patient.attribute_as_of`.
+
+The eight graph entities are Patient, Exam, Finding, Procedure, Pathology,
+CancerRegistryEntry, MammogramImage and RegionOfInterest. Interpretations and
+history observations are mutable values stored on their entity. BreastSide,
+ProcedureIdentity, PatientAttributeObservation, PathologyObservation,
+ImageLandmark, Box, anatomy values, enums, SourceRef and Issue are frozen values.
 
 ## Imaging and supplied association collections
 

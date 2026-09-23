@@ -109,10 +109,9 @@ class RegionOfInterest(MutableEntity):
 
     Notes
     -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
+    Geometry is stored as supplied; ordering, bounds and confidence range are
+    checked by ``validate``. Changing ``image_id`` or ``roi_key`` of a
+    registered ROI goes through its graph.
 
     Raises
     ------
