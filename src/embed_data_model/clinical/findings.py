@@ -17,10 +17,10 @@ from typing import (
 )
 
 from embed_data_model.clinical.interpretations import ImagingInterpretation
-from embed_data_model.clinical.procedures import _to_plain
 from embed_data_model.core.anatomy import AnatomicalPosition
 from embed_data_model.core.entity import (
     MutableEntity,
+    plain_value,
     readonly_mapping,
     serialize_entity,
 )
@@ -97,9 +97,9 @@ class FindingNormalizationEvidence:
         return {
             "source": None if self.source is None else self.source.to_dict(),
             "source_field": self.source_field,
-            "raw_value": _to_plain(self.raw_value),
+            "raw_value": plain_value(self.raw_value),
             "normalized_kind": self.normalized_kind,
-            "normalized_value": _to_plain(self.normalized_value),
+            "normalized_value": plain_value(self.normalized_value),
         }
 
 
@@ -157,7 +157,7 @@ class FindingNormalizationWarning:
         return {
             "source": None if self.source is None else self.source.to_dict(),
             "source_field": self.source_field,
-            "raw_value": _to_plain(self.raw_value),
+            "raw_value": plain_value(self.raw_value),
             "code": self.code,
             "message": self.message,
         }

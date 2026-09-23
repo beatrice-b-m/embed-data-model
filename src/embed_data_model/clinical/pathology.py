@@ -1,18 +1,12 @@
-"""Mutable pathology bundles, registry entries, and value references."""
+"""Mutable pathology bundles and cancer-registry entries."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum, IntEnum
+from enum import IntEnum
 from typing import Any, Dict, Hashable, Iterable, Mapping, Optional, Tuple, Union
 
-from embed_data_model.clinical.associations import (
-    AttributionStatus,
-    ClinicalObjectReference,
-)
 from embed_data_model.core.entity import (
     MutableEntity,
-    plain_value,
     serialize_entity,
 )
 from embed_data_model.core.provenance import SourceLocator
@@ -50,18 +44,6 @@ class PathologySeverity(IntEnum):
     BORDERLINE_LESION = 3
     BENIGN = 4
     NON_BREAST_CANCER = 5
-
-
-class PathologyRecordKind(str, Enum):
-    """Addressable pathology grains represented by attribution links.
-
-    Members
-    -------
-    OBSERVATION='observation', DIAGNOSIS='diagnosis'.
-    """
-
-    OBSERVATION = "observation"
-    DIAGNOSIS = "diagnosis"
 
 
 class PathologyObservation(MutableEntity):
@@ -200,7 +182,7 @@ class PathologyDiagnosis(MutableEntity):
         self.diagnosis = diagnosis
         self.result_category = result_category
         self.malignant = malignant
-        self.severity = _severity_value(severity)
+        self.severity = severity
         self.raw_severity = raw_severity
         self.report_documented_date = report_documented_date
         self.validation_issues = tuple(validation_issues)
@@ -355,7 +337,7 @@ class Pathology(MutableEntity):
         self.diagnosis = diagnosis
         self.result_category = result_category
         self.malignant = malignant
-        self.severity = _severity_value(severity)
+        self.severity = severity
         self.raw_severity = raw_severity
         self.report_documented_date = report_documented_date
         self._descriptors = list(descriptors)
@@ -552,117 +534,7 @@ class CancerRegistryEntry(MutableEntity):
         return serialize_entity(self)
 
 
-@dataclass(frozen=True)
-class PathologyReference:
-    """Non-recursive reference to one pathology diagnosis or observation.
-
-    Attributes
-    ----------
-    kind : PathologyRecordKind
-        Governed kind of referenced object; identity shape depends on the kind.
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
-    source_slot : Optional[str]
-        Non-empty source descriptor slot name; preserves ordered source
-        evidence. Default: None.
-    """
-
-    kind: PathologyRecordKind
-    """Governed kind of referenced object; identity shape depends on the kind."""
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
-    source_slot: Optional[str] = None
-    """Non-empty source descriptor slot name; preserves ordered source evidence. Default: None."""
-
-    def __post_init__(self) -> None:
-        kind = PathologyRecordKind(self.kind)
-        object.__setattr__(self, "kind", kind)
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
-        if kind is PathologyRecordKind.OBSERVATION:
-            if not isinstance(self.source_slot, str) or not self.source_slot.strip():
-                raise ValueError("Observation references require source_slot")
-        elif self.source_slot is not None:
-            raise ValueError("Diagnosis references do not use source_slot")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
-
-        return {
-            "kind": self.kind.value,
-            "source": self.source.to_dict(),
-            "source_slot": self.source_slot,
-        }
-
-
-@dataclass(frozen=True)
-class PathologyAttributionLink:
-    """Attributed edge from pathology evidence to a clinical object.
-
-    Attributes
-    ----------
-    pathology : PathologyReference
-        Non-recursive reference to the pathology evidence being attributed.
-    target : ClinicalObjectReference
-        Non-recursive clinical target reference; does not own the target object.
-    status : AttributionStatus
-        Attribution strength/origin; unresolved statuses cannot establish
-        resolved links.
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
-    """
-
-    pathology: PathologyReference
-    """Non-recursive reference to the pathology evidence being attributed."""
-    target: ClinicalObjectReference
-    """Non-recursive clinical target reference; does not own the target object."""
-    status: AttributionStatus
-    """Attribution strength/origin; unresolved statuses cannot establish resolved links."""
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
-
-    def __post_init__(self) -> None:
-        status = AttributionStatus(self.status)
-        if not status.is_resolved_attribution:
-            raise ValueError("A resolved pathology link requires attribution status")
-        object.__setattr__(self, "status", status)
-        if self.source != self.pathology.source:
-            raise ValueError("Pathology link provenance must match pathology source")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
-
-        return {
-            "pathology": self.pathology.to_dict(),
-            "target": self.target.to_dict(),
-            "status": self.status.value,
-            "source": self.source.to_dict(),
-        }
-
-
 def _required_text(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
     return value.strip()
-
-
-def _severity_value(value: Any) -> Any:
-    """Keep representable severity values for optional validation."""
-
-    if isinstance(value, PathologySeverity):
-        return value
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    return value
-
-
-def _json_value(value: Any) -> Any:
-    return plain_value(value)

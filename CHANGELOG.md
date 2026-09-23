@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Removed
+
+- Unused association and attribution types that the library never produced:
+  the `clinical.associations` module (`AttributionStatus`,
+  `ClinicalObjectReference`, `FindingProcedureLink`, `AssociationLink`),
+  `PathologyReference`, `PathologyAttributionLink`, `PathologyRecordKind` and
+  `UnresolvedProcedureOccurrence`. Relationships are represented by the graph
+  and unresolved records keep their source payload.
+
 ### Changed
 
 - `PathologySeverity` members carry their EMBED meanings

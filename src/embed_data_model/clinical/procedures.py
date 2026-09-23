@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
-    ClassVar,
     Dict,
     Iterable,
     List,
@@ -17,7 +16,6 @@ from typing import (
 
 from embed_data_model.core.entity import (
     MutableEntity,
-    plain_value,
     serialize_entity,
 )
 from embed_data_model.core.primitives import Laterality
@@ -29,12 +27,6 @@ if TYPE_CHECKING:
 
 
 SourceValue = Union[SourceLocator, SourceRef]
-
-
-def _to_plain(value: Any) -> Any:
-    """Convert nested domain values to JSON-ready Python primitives."""
-
-    return plain_value(value)
 
 
 @dataclass(frozen=True)
@@ -86,108 +78,6 @@ class ProcedureIdentity:
         """
 
         return {
-            "patient_id": self.patient_id,
-            "performed_date": self.performed_date,
-            "procedure_type": self.procedure_type,
-            "laterality": self.laterality.value,
-        }
-
-
-@dataclass(frozen=True)
-class UnresolvedProcedureOccurrence:
-    """Normalized procedure evidence that cannot establish clinical identity.
-
-    Attributes
-    ----------
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
-    missing_identity_fields : Tuple[str, ...]
-        Distinct non-empty names of missing identity fields, consistent with
-        supplied facts.
-    patient_id : Optional[str]
-        Patient identifier. Non-empty text; source patient claims and assigned
-        exam ownership are separate facts. Default: None.
-    performed_date : Optional[str]
-        Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
-        Construction checks text, validate checks dates. Default: None.
-    procedure_type : Optional[str]
-        Non-empty reported procedure kind; part of semantic identity. Default:
-        None.
-    laterality : Laterality
-        Breast side. Coercible values are normalized; unknown values become
-        UNKNOWN where coercion is supported. Default: Laterality.UNKNOWN.
-    """
-
-    IDENTITY_FIELDS: ClassVar[Tuple[str, ...]] = (
-        "patient_id",
-        "performed_date",
-        "procedure_type",
-        "laterality",
-    )
-
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
-    missing_identity_fields: Tuple[str, ...]
-    """Distinct non-empty names of missing identity fields, consistent with supplied facts."""
-    patient_id: Optional[str] = None
-    """Patient identifier. Non-empty text; source patient claims and assigned exam
-    ownership are separate facts. Default: None.
-    """
-    performed_date: Optional[str] = None
-    """Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
-    Construction checks text, validate checks dates. Default: None.
-    """
-    procedure_type: Optional[str] = None
-    """Non-empty reported procedure kind; part of semantic identity. Default: None."""
-    laterality: Laterality = Laterality.UNKNOWN
-    """Breast side. Coercible values are normalized; unknown values become UNKNOWN
-    where coercion is supported. Default: Laterality.UNKNOWN.
-    """
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
-        missing = tuple(self.missing_identity_fields)
-        if not missing or any(
-            not isinstance(value, str) or not value.strip() for value in missing
-        ):
-            raise ValueError("missing_identity_fields must identify incomplete fields")
-        if len(set(missing)) != len(missing):
-            raise ValueError("missing_identity_fields must not contain duplicates")
-        unknown = set(missing) - set(self.IDENTITY_FIELDS)
-        if unknown:
-            raise ValueError(
-                f"Unknown procedure identity fields: {tuple(sorted(unknown))}"
-            )
-        object.__setattr__(self, "missing_identity_fields", missing)
-        laterality = Laterality.coerce(self.laterality)
-        object.__setattr__(self, "laterality", laterality)
-        candidate_missing = {
-            field_name
-            for field_name, value in (
-                ("patient_id", self.patient_id),
-                ("performed_date", self.performed_date),
-                ("procedure_type", self.procedure_type),
-            )
-            if value is None or not isinstance(value, str) or not value.strip()
-        }
-        if laterality is Laterality.UNKNOWN:
-            candidate_missing.add("laterality")
-        if set(missing) != candidate_missing:
-            raise ValueError(
-                "missing_identity_fields must match absent or unknown candidate values"
-            )
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
-
-        return {
-            "source": self.source.to_dict(),
-            "missing_identity_fields": list(self.missing_identity_fields),
             "patient_id": self.patient_id,
             "performed_date": self.performed_date,
             "procedure_type": self.procedure_type,

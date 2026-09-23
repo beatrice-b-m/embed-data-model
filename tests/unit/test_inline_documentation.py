@@ -16,7 +16,7 @@ import embed_data_model
 # Public domain types and returned records; helper functions without an explicit
 # entry below remain implementation details even if they lack a leading '_'.
 DOMAIN_MODULES = (
-    "clinical.associations", "clinical.attributes", "clinical.exams",
+    "clinical.attributes", "clinical.exams",
     "clinical.findings", "clinical.histories", "clinical.interpretations",
     "clinical.pathology", "clinical.patients", "clinical.procedures",
     "core.anatomy", "core.birads", "core.primitives", "core.provenance",
