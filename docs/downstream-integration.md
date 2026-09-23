@@ -129,13 +129,14 @@ Treat each call to `load_embed` as one complete grouped snapshot for every
 semantic grain that it addresses.
 
 `mode="refresh"` is the default. For bound adapter-managed scalar fields it
-resets values that are absent or explicitly null in the incoming snapshot. It
+replaces the values whose columns the incoming rows supply, including explicit
+nulls; a column absent from the rows leaves its field unchanged. It
 updates the existing object in place, keeps consumer attributes/metadata and
 subclasses, and leaves unbound fields and unspecified child grains alone.
 
-`mode="merge"` applies supplied non-null scalar values. Complementary rows in
-one invocation combine; conflicting populated values become unknown and add an
-issue. It does not infer whether two unkeyed history rows or two revised ROI
+`mode="merge"` applies supplied non-null scalar values. Complementary rows
+combine; a populated value that conflicts with another supplied value or with
+the value already in the graph becomes unknown and adds an issue. It does not infer whether two unkeyed history rows or two revised ROI
 collections represent the same event.
 
 These rules make the following results intentional:
@@ -207,7 +208,7 @@ rows = [
         "numfind": 1,
         "side": "L",
         "bside": "L",
-        "type": "biopsy",
+        "type": "B",
         "procdate_anon": "2024-01-10",
         "pdate_anon": "2024-01-11",
         "path1": "ADH",
@@ -218,7 +219,7 @@ rows = [
         "numfind": 1,
         "side": "L",
         "bside": "L",
-        "type": "biopsy",
+        "type": "B",
         "procdate_anon": "2024-02-10",
         "pdate_anon": "2024-02-11",
         "path1": "ADH",

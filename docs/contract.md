@@ -31,11 +31,20 @@ extraction, visualization, and scientific interpretation belong to consumers.
 Clinical identity comes from mapped source identifiers, never DataFrame indexes
 or row order. One accession identifies one exam. Conflicting source patient claims
 remain in `asserted_patient_ids`; ownership stays unset until explicitly assigned
-with `graph.assign_patient`. Explicit ownership persists across reloads.
+with `graph.assign_patient`. Explicit ownership persists across reloads. Refresh
+replaces an exam's claims with the claims its snapshot supplies, so a corrected
+source patient ID replaces the earlier one; merge adds claims.
+
+A finding's side is an attribute, not part of its identity. In EMBED a supplied
+null finding side means bilateral (code `B`) and projects to both breast sides;
+a side column absent from every row leaves the side unknown.
 
 Procedure identity requires patient, performed date, procedure type, and laterality.
-Pathology uses an explicit patient-scoped record ID or a supported attachment and
-report-date key. Insufficient or ambiguous identities remain unresolved records.
+Pathology uses an explicit patient-scoped record ID or, for MagView rows, the
+identity of the procedure it belongs to. The provisional pathology report date is
+an attribute, never identity. Pathology without a complete procedure or record ID,
+and procedure pathology whose descriptor slots disagree across rows, remain
+unresolved records.
 Unkeyed histories are patient-scoped reported facts, without inferred event identity.
 
 An image's mutable `image_id` is separate from its source SOP UID and path aliases.
@@ -53,12 +62,15 @@ Every supported table input is optional. One `load_embed` invocation groups rows
 into a complete snapshot per addressed semantic grain and returns its graph and
 issues. Callers assemble complete groups before applying streamed refreshes.
 
-Default refresh updates existing objects in place and resets bound adapter-managed
-scalar fields, including absent and explicitly null values. It preserves Python
+Default refresh updates existing objects in place and replaces bound
+adapter-managed scalar fields whose columns the rows supply, including explicitly
+null values. A column absent from every row of a grain leaves its field
+unchanged, so partial tables and extracts can be loaded progressively. It preserves Python
 references, subclasses, consumer attributes and metadata, unbound fields, and
 unsupplied child grains. Child-only loads ensure parent objects without resetting
 their scalar fields. Explicit merge applies non-null values. Complementary rows
-combine; conflicting populated values become unknown with a diagnostic.
+combine; a populated value that conflicts with another supplied value or with the
+populated value already in the graph becomes unknown with a diagnostic.
 
 Image metadata projects ROI collections by default. Valid supplied ROI collections
 replace the addressed image collection in either load mode, including manual ROIs.
@@ -72,20 +84,24 @@ Clearing an association does not delete its target object.
 
 ## Mutation and graph membership
 
-Domain entities are mutable and can be constructed independently of a graph.
-`update` changes fields and `rekey` changes identifiers while maintaining indexes
-and dependent context. Child collections are read-only views; supported membership
-methods keep traversal and reverse links coherent. Source claims remain source facts.
+Entities are mutable and can be constructed independently of a graph. Each stores
+the keys of related entities rather than object pointers, and a graph resolves
+those keys through its indexes; a relationship exists whenever both ends are
+registered, in any arrival order. `update` changes fields and `rekey` changes
+keys; a key change is propagated to every entity that stored the old key, after
+a collision check covering the whole change. Collections are resolved views.
+Source claims remain source facts.
 
 An entity belongs to at most one graph. Registration rejects distinct objects at
-occupied keys. Popping a patient or exam carries its containment subtree. Exclusive
-descendants retain Python identity; shared descendants needed by the retained graph
-are independently copied at the movement boundary. Linked exams are associations,
-not containment children; crossing links retain semantic references.
+occupied keys. Popping an entity moves it and what it contains into a new graph.
+Exclusive descendants retain Python identity; descendants also contained by
+something that stays are deep-copied at the boundary. Linked exams are
+associations, not containment; keys crossing the boundary stay unresolved until
+their targets are present.
 
-Selections are live, non-owning views. Partitions are independent owning copies,
-with copied ancestor context for lower-level selections and only the selected
-branches. Consumer metadata is copied; unsupported copy operations raise an error.
+Selections are live, non-owning views. Partitions are independent graphs of deep
+copies: the selected entities, what they contain, and their ancestors as context.
+Consumer metadata is copied; unsupported copy operations raise an error.
 
 ## Validation and evidence
 
@@ -100,5 +116,5 @@ Consumers can inspect results, partition by validation, or select with independe
 predicates without imposing a study-specific rejection policy on the library.
 
 Synthetic tests establish software behavior. Private-data, real-pixel, and downstream
-scientific qualification require their own evidence. See [qualification](qualification.md)
-and [loading measurements](../benchmarks/README.md) for dated local results.
+scientific qualification require their own evidence. See
+[loading measurements](../benchmarks/README.md) for synthetic scale results.

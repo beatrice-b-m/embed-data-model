@@ -56,9 +56,11 @@ validated before rows are consumed. The full reference is summarized below.
 
 ## Construct and extend objects
 
-Objects can be built without a graph. Once a graph owns them, their convenience
-methods delegate membership changes to that graph so indexes and reverse links
-stay coherent.
+Objects can be built without a graph. Each stores the keys of related objects
+(a finding stores its exam's accession) and a `DatasetGraph` resolves those keys,
+so relationships appear as soon as both ends are registered, in any order. Adding
+a child to an object that has no graph yet creates one; registering the patient
+into another graph moves the whole tree.
 
 ```python
 from embed_data_model import DatasetGraph, Exam, Finding, Laterality, Patient
@@ -89,25 +91,24 @@ registry entries. An image contains its ROIs. Findings and images grouped under
 the same exam or breast side are separate facts; the core does not infer a
 finding-to-image or finding-to-ROI association from shared scope.
 
-Child collections such as `patient.exams`, `exam.findings`, `image.rois`, and
-`exam.breast_sides` are read-only tuple or mapping views. Use `add_*`,
-`attach`, `detach`, `replace_rois`, or an explicit update instead of editing a
-collection in place. Ordinary attributes, `metadata`, and consumer-added
-attributes remain editable. Registered identity fields must change through
-`entity.rekey(...)` or `graph.rekey(...)`.
+Collections such as `patient.exams`, `exam.findings`, `image.rois`, and
+`exam.breast_sides` are computed on access from the graph's indexes. Use
+`add_*`, `attach`, `detach`, `replace_rois`, or an update of the stored keys to
+change them. Changing a key (with `rekey`, `update` or plain assignment) is
+propagated to every object that stored the old key, after checking the whole
+change for collisions. `metadata` and consumer-added attributes remain editable.
 
 Repeated registration of the same instance is idempotent. A distinct object at
-an occupied semantic key raises `ValueError`. Every entity belongs to zero or
-one graph. Registering a detached subtree moves its membership; a shared
-descendant that must remain in the original graph is copied at the movement
-boundary.
+an occupied key raises `ValueError`. Every entity belongs to zero or one graph.
+Registering an object owned by another graph moves it with everything it
+contains; a contained object that something staying behind also contains is
+copied instead.
 
 ## Load semantic snapshots
 
 `load_embed` accepts any combination of these optional inputs: `patients`,
 `exams`, `findings`, `images`, `rois`, `hormone_history`, `procedure_history`,
-`procedures`, `pathology`, `magview`, and `registry` (with `registry_rows` as an
-alias when `registry` is omitted). It accepts iterables of mappings, one-shot
+`procedures`, `pathology`, `magview`, and `registry`. It accepts iterables of mappings, one-shot
 generators, and DataFrame-like values. It returns a `LoadReport` with:
 
 - `report.graph`, the target `DatasetGraph`;
@@ -129,8 +130,8 @@ report = load_embed(
             "numfind": 1,
             "side": "L",
             "desc": "screening",
-            "asses": "4",
-            "recc": "biopsy",
+            "asses": "S",
+            "recc": "B",
             "location": "W",
             "depth": "P",
         }
@@ -143,32 +144,92 @@ finding = graph.finding("A-001", "1")
 assert exam is not None and finding is not None
 assert graph.patient("P-001") is not None
 assert finding.laterality is Laterality.LEFT
-assert finding.interpretation.assessment == "4"
+assert finding.interpretation.assessment.code == "S"
+assert finding.interpretation.assessment.meaning == "Suspicious"
 assert not finding.normalization_warnings
-assert finding.interpretation.recommendation == "biopsy"
+assert finding.interpretation.recommendation.meaning == "Biopsy"
 assert not report.issues
 ```
 
 The loader groups rows by semantic identity before updating an object. A
 patient is keyed by `patient_id`, an exam by accession, and a finding by
 `(accession, finding_number)`. Numeric identifiers normalize to stable strings;
-blank identifiers do not manufacture shared objects. A `magview` row projects
+blank identifiers do not manufacture shared objects. Coded values such as
+assessment, recommendation, procedure type, and pathology descriptors are
+trimmed and uppercased, so `"b"` and `" B"` are the same code; no meaning
+is assigned to unexplained tokens. A `magview` row projects
 supported patient, exam, and finding grains while its procedure, pathology,
 registry, and linked-accession columns are handled by their corresponding
 adapters.
 
+## Coded values and their meanings
+
+Coded MagView fields load as `Code` values that carry both the source code and
+its human-readable meaning from the EMBED data dictionary, so analyses do not
+need to look codes up. This covers assessment and recommendation, exam density,
+type, visit type and modality, the finding descriptors, procedure type and the
+pathology descriptor slots:
+
+```python
+from embed_data_model import load_embed
+
+row = {"empi_anon": "P-1", "acc_anon": "A-1", "numfind": 1, "side": "L", "asses": "S",
+       "recc": "B,U", "massshape": "O", "tissueden": 3}
+graph = load_embed(magview=[row]).graph
+finding = graph.finding("A-1", "1")
+
+assert finding.interpretation.assessment.meaning == "Suspicious"
+assert finding.interpretation.recommendation.meaning == "Biopsy; An ultrasound exam"
+assert finding.descriptors["mass_shape"].code == "O"
+assert str(finding.descriptors["mass_shape"]) == "Oval"
+assert graph.exam("A-1").density.meaning == "Heterogeneously dense"
+```
+
+A `Code` compares by its code, never by meaning, and never equals a plain
+string: compare `.code` or `.meaning`. Comma-separated codes list their parts in
+`tokens` and compare regardless of order. A code the dictionary does not explain
+keeps its `code` with `meaning` None, and `is_known` is False. The tables live in
+`embed_data_model.sources.embed.vocabulary` and are generated from the EMBED
+catalog by `tools/generate_embed_vocabulary.py`.
+
+## Patient attributes over time
+
+Patient attributes such as sex repeat on every exam row and can change over
+time or disagree. The loader records one `PatientAttributeObservation` per
+exam context (accession and exam date). `patient.sex` holds a value only when
+every observation agrees; otherwise choose a value as of an explicit date so
+later information does not leak into an earlier analysis:
+
+```python
+from datetime import date
+
+from embed_data_model import load_embed
+
+rows = [
+    {"empi_anon": "P-9", "acc_anon": "A-1", "numfind": 1, "studydate_anon": "2020-01-01", "GENDER_DESC": "F"},
+    {"empi_anon": "P-9", "acc_anon": "A-2", "numfind": 1, "studydate_anon": "2022-01-01", "GENDER_DESC": "U"},
+]
+patient = load_embed(magview=rows).graph.patient("P-9")
+assert patient.sex is None
+assert patient.attribute_as_of("sex", date(2021, 1, 1)) == "F"
+assert [item.value for item in patient.attribute_history("sex")] == ["F", "U"]
+```
+
 ## Refresh and merge
 
 One invocation is one complete grouped snapshot for each grain it addresses.
-The default `mode="refresh"` resets bound adapter-managed scalar fields,
-including fields that are absent or explicitly null in that snapshot. It keeps
+The default `mode="refresh"` replaces bound adapter-managed scalar fields whose
+columns the rows supply, including explicitly null values. A column absent from
+every row leaves its field unchanged, so a findings-only extract does not erase
+exam or patient fields loaded earlier. It keeps
 the same Python object, subclass, consumer attributes and metadata, unbound
 fields, and child grains that were not supplied. A child-only load ensures
 missing parent shells but does not refresh the parent's fields.
 
 `mode="merge"` applies supplied non-null scalar values. Complementary rows
-combine. When one snapshot supplies conflicting populated values for a field,
-the field becomes unknown and the load report contains an issue. Merge does not
+combine. When supplied values conflict with each other, or with a populated
+value already in the graph, the field becomes unknown and the load report
+contains an issue. Merge does not
 guess equality for unkeyed history facts or for revised ROI collections.
 
 ```python
@@ -192,12 +253,11 @@ assert exam.description is None
 ```
 
 Assemble complete semantic groups before calling refresh on streamed chunks.
-Two refresh calls containing different columns for the same exam are two
-snapshots: the second call can clear fields that the first call supplied. A
-single generator is consumed once. `source_scope` and `source_keys` add
-diagnostic source references; they do not decide admission, identity, or
-replay. `graph.issues` is cumulative, while `report.issues` is local to the
-invocation.
+Two refresh calls for the same exam are two snapshots: the second replaces the
+fields whose columns it supplies and leaves the others. A single generator is
+consumed once. `source_scope` and `source_keys` add diagnostic source
+references; they do not decide admission, identity, or replay. `report.issues`
+holds the diagnostics of one invocation.
 
 ## DataFrames and column maps
 
@@ -246,13 +306,13 @@ The supported default map is:
 
 | Input | Identity and default bindings |
 | --- | --- |
-| `patients` | `patient_id <- empi_anon`; `sex <- GENDER_DESC`; `birth_year <- birth_year`; `context_date <- studydate_anon` |
-| `exams` | `accession <- acc_anon`; `patient_id <- empi_anon`; `exam_date <- studydate_anon`; `exam_description <- desc` |
-| `findings` | `(accession, finding_number) <- (acc_anon, numfind)`; `patient_id <- empi_anon`; `laterality <- side`; `assessment <- asses`; `recommendation <- recc`; `location <- location`; `depth <- depth`; `distance <- distance` |
-| `images` | source path `anon_dicom_path`; patient/accession `empi_anon`/`acc_anon`; laterality/view `ImageLateralityFinal`/`ViewPosition`; modality `Modality`; derived type `FinalImageType`; dimensions `Rows`/`Columns`; frames `ImagesInAcquisition`; series UID `SeriesInstanceUID` |
+| `patients` | `patient_id <- empi_anon`; exam context `acc_anon`/`studydate_anon`; `sex <- GENDER_DESC`; `race <- race`; `ethnicity <- ethnicity`; `birth_year` unbound |
+| `exams` | `accession <- acc_anon`; `patient_id <- empi_anon`; `exam_date <- studydate_anon`; `exam_description <- desc`; `density <- tissueden`; `exam_type <- mg_exam_type`; `visit_type <- vtype`; `modality <- modality_desc`; `patient_age <- age_at_study_anon` |
+| `findings` | `(accession, finding_number) <- (acc_anon, numfind)`; `patient_id <- empi_anon`; `laterality <- side` (a supplied null side is bilateral, like `B`); `assessment <- asses`; `recommendation <- recc`; `location <- location`; `depth <- depth`; `distance <- distance` (negative values are exceptional codes, kept raw only); descriptors `mass`, `asymmetry`, `arch_distortion`, `calc`, `massshape`, `massmargin`, `massdens`, `calcfind`, `calcdistri`, `calcnumber`, `otherfind`, `implanfind` into `finding.descriptors` as source codes |
+| `images` | source path `anon_dicom_path`; patient/accession `empi_anon`/`acc_anon`; laterality/view `ImageLateralityFinal`/`ViewPosition`; modality `Modality`; derived type `FinalImageType`; dimensions `Rows`/`Columns`; frames `ImagesInAcquisition` (DBT images only); study/series UIDs from the path |
 | `rois` | source path `anon_dicom_path`; coordinates `ROI_coords`; frame facts `ROI_frames`; depth flag `ROI_depth_derived` |
 | `procedures` | identity `(empi_anon, procdate_anon, type, bside)`; optional accession/finding `(acc_anon, numfind)` |
-| `pathology` | optional record ID; attachment `(empi_anon, acc_anon, numfind, bside)`; procedure date `procdate_anon`; report date `pdate_anon`; descriptors `path1` through `path10` |
+| `pathology` | optional record ID, otherwise the procedure `(empi_anon, procdate_anon, type, bside)`; attachment `(acc_anon, numfind)`; procedure date `procdate_anon`; report date `pdate_anon`; severity `path_severity`; descriptors `path1` through `path10`; `diagnosis`, `result_category` and `malignant` unbound |
 | `hormone_history` | patient `empi_anon`; category/code `type`/`code`; accession `acc_anon`; timing `first_age`, `mfirst`, `yfirst`, `last_age`, `mlast`, `ylast` |
 | `procedure_history` | patient `empi_anon`; category/procedure `type`/`pcode`; accession `acc_anon`; laterality `side`; result `result` |
 | `registry` | required patient/entry identity `empi_anon`/`cancer_registry_id`; payload is unbound by default |
@@ -295,7 +355,7 @@ graph = load_embed(
 exam = graph.exam("A-001")
 entry = graph.registry_entry("P-001", "7")
 assert exam is not None and entry is not None
-assert exam.registry_pathology == (entry,)
+assert exam.registry_entries == (entry,)
 assert graph.unresolved_references
 
 load_embed(exams=[{"acc_anon": "B-001"}], into=graph)
@@ -319,7 +379,10 @@ order and duplicate values. A report date is not substituted for the procedure
 date or a diagnosis event date.
 
 `hormone_history` and `procedure_history` are patient-owned reported facts.
-They are distinct from performed procedures. Identified history rows refresh
+They are distinct from performed procedures. Their category, code and result
+are `Code` values, and a code is decoded within its category, so `O` under
+hormone `H` reads "Other hormone" but under contraceptive `O` reads "Other
+contraceptive". Identified history rows refresh
 their existing object in place. Without an event ID, refresh replaces that
 history kind as a patient snapshot; merge requires explicit record IDs and
 preserves existing unkeyed facts while reporting the limitation.
@@ -389,10 +452,10 @@ claim; an image row without clinical context remains image-local.
 
 `graph.select(level=..., predicate=...)` returns a live, non-owning selection.
 Editing a selected object edits the source graph. `graph.partition(level=...,
-key=...)` returns independent owning graph copies. A scalar key, including a
+key=...)` returns independent graphs of deep copies. A scalar key, including a
 tuple, selects one output; a list or set key places the object in several
-outputs. Lower-level partitions carry copied ancestor context and only the
-selected branches. Supported levels include patient, exam, finding, procedure,
+outputs. Each output holds the selected objects, everything they contain, and
+their ancestors, for which `output.is_context(obj)` is True. Supported levels include patient, exam, finding, procedure,
 pathology, image, ROI, and registry.
 
 Validation is separate from loading and selection:
@@ -426,18 +489,17 @@ make `ValidationResult.valid` false; warnings remain valid unless
 `warnings_invalid=True`. Missing optional tables are not errors. Custom
 validators can inspect consumer fields.
 
-`graph.pop(entity, boundary="copy_shared")` moves an owning subtree out of its
-graph. Exclusive descendants keep their Python identity. A shared descendant
-needed by the retained graph is independently copied into the moved subtree;
-linked exams remain semantic references. Register the returned subtree in
-another graph to complete the move. A foreign-owned subtree passed to
-`register` follows the same boundary policy.
+`graph.pop(entity)` moves an entity and everything it contains into a new graph
+and returns it. Exclusive descendants keep their Python identity; a descendant
+that something staying behind also contains is copied. Keys pointing back into
+the original graph, such as linked accessions, stay as unresolved references.
+Register the popped entity in another graph to complete a move; `register`
+applies the same rules to an entity owned by another graph.
 
 ## Serialization and diagnostics
 
-`entity.to_dict()` and `graph.to_dict()` return JSON-ready structures. Repeated
-objects and linked cycles are emitted as references instead of recursively
-duplicating the graph. `Issue` and `SourceRef` preserve optional source scope,
+`entity.to_dict()` returns one entity's fields as JSON-ready values, with
+related entities as their stored keys; `graph.to_dict()` lists every registry. `Issue` and `SourceRef` preserve optional source scope,
 table, and typed diagnostic key information. `graph.unresolved_references`
 reports association endpoints that have not arrived; `graph.unresolved_records`
 holds source records whose clinical identity is insufficient or ambiguous.
@@ -453,7 +515,7 @@ Run from the repository root:
 ```bash
 uv sync --frozen
 uv run --frozen pytest
-uv run --frozen ruff check src/embed_data_model tests examples benchmarks
+uv run --frozen ruff check src/embed_data_model tests examples benchmarks tools
 uv run --frozen mypy
 uv run --frozen python -m examples.researcher_journeys
 ```

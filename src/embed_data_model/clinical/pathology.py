@@ -1,329 +1,168 @@
-"""Mutable pathology bundles, registry entries, and value references."""
+"""Mutable pathology bundles and cancer-registry entries."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum, IntEnum
-from typing import Any, Dict, Hashable, Iterable, Mapping, Optional, Tuple, Union
+from enum import IntEnum
+from typing import Any, Dict, Hashable, Iterable, Mapping, Optional, Set, Tuple
 
-from embed_data_model.clinical.associations import (
-    AttributionStatus,
-    ClinicalObjectReference,
-)
-from embed_data_model.core.entity import (
-    MutableEntity,
-    plain_value,
-    serialize_entity,
-)
-from embed_data_model.core.provenance import SourceLocator
-from embed_data_model.core.source import SourceRef
+from embed_data_model.core.codes import Code
+from embed_data_model.core.entity import MutableEntity, Reference
+from embed_data_model.core.source import SourceRef, optional_source
 
 
-SourceValue = Union[SourceLocator, SourceRef]
-
-
-def _optional_source(source: Optional[object]) -> Optional[SourceValue]:
-    if source is not None and not isinstance(source, (SourceLocator, SourceRef)):
-        raise TypeError("source must be a SourceRef or SourceLocator")
-    return source
 
 
 class PathologySeverity(IntEnum):
-    """Governed EMBED pathology severities without inferred labels.
+    """EMBED ``path_severity`` groups; lower values are more severe.
+
+    The scale is inverse: 0 is the most severe group. Never select the numeric
+    maximum as the most severe result. Code 5 is non-breast cancer, which is
+    not benign or cancer-free (older public documentation used 5 for normal
+    tissue). Code 6 is invalid and has no member; it is kept only as
+    ``raw_severity`` and flagged by ``validate``. A missing severity means no
+    pathology is attached, not a benign or negative result.
 
     Members
     -------
-    SEVERITY_0=0, SEVERITY_1=1, SEVERITY_2=2, SEVERITY_3=3, SEVERITY_4=4,
-    SEVERITY_5=5.
+    INVASIVE_BREAST_CANCER=0, IN_SITU_BREAST_CANCER=1, HIGH_RISK_LESION=2,
+    BORDERLINE_LESION=3, BENIGN=4, NON_BREAST_CANCER=5.
     """
 
-    SEVERITY_0 = 0
-    SEVERITY_1 = 1
-    SEVERITY_2 = 2
-    SEVERITY_3 = 3
-    SEVERITY_4 = 4
-    SEVERITY_5 = 5
+    INVASIVE_BREAST_CANCER = 0
+    IN_SITU_BREAST_CANCER = 1
+    HIGH_RISK_LESION = 2
+    BORDERLINE_LESION = 3
+    BENIGN = 4
+    NON_BREAST_CANCER = 5
 
 
-class PathologyRecordKind(str, Enum):
-    """Addressable pathology grains represented by attribution links.
+@dataclass(frozen=True)
+class PathologyObservation:
+    """One pathology descriptor code reported in a numbered source slot.
 
-    Members
-    -------
-    OBSERVATION='observation', DIAGNOSIS='diagnosis'.
-    """
+    Slot position and repeated values are kept as reported; neither implies
+    weight or chronology.
 
-    OBSERVATION = "observation"
-    DIAGNOSIS = "diagnosis"
-
-
-class PathologyObservation(MutableEntity):
-    """One mutable descriptor occurrence in an ordered source slot.
-
-    Parameters
+    Attributes
     ----------
-    descriptor : str
-        One non-empty reported pathology descriptor.
+    descriptor : Code
+        Reported descriptor code with its meaning. Text is accepted as a code
+        without meaning.
     source_slot : str
-        Non-empty source descriptor slot name; preserves ordered source
-        evidence.
+        Non-empty source slot name, such as ``"path1"``.
     source_ordinal : int
-        One-based occurrence within a descriptor slot; must be a positive
-        integer.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
+        One-based slot number.
+    source : SourceRef or None, optional
+        Row the descriptor was read from. Default None.
     """
 
+    descriptor: Code
+    """Reported descriptor code and its meaning."""
+    source_slot: str
+    """Source slot name, such as ``path1``."""
     source_ordinal: int
-    """One-based occurrence within a descriptor slot; must be a positive integer."""
+    """One-based slot number."""
+    source: Optional[SourceRef] = None
+    """Row the descriptor was read from."""
 
-    def __init__(
-        self,
-        descriptor: str,
-        source_slot: str,
-        source_ordinal: int,
-        source: Optional[SourceValue] = None,
-    ) -> None:
-        super().__init__()
-        self.descriptor = _required_text(descriptor, "descriptor")
-        self.source_slot = _required_text(source_slot, "source_slot")
+    def __post_init__(self) -> None:
+        descriptor = Code.coerce(self.descriptor)
+        if descriptor is None:
+            raise ValueError("descriptor must be a non-empty code")
+        object.__setattr__(self, "descriptor", descriptor)
+        object.__setattr__(self, "source_slot", _required_text(self.source_slot, "source_slot"))
         if (
-            isinstance(source_ordinal, bool)
-            or not isinstance(source_ordinal, int)
-            or source_ordinal < 1
+            isinstance(self.source_ordinal, bool)
+            or not isinstance(self.source_ordinal, int)
+            or self.source_ordinal < 1
         ):
             raise ValueError("source_ordinal must be a positive integer")
-        self.source_ordinal = source_ordinal
-        self.source = _optional_source(source)
-        self._finish_initialization()
+        object.__setattr__(self, "source", optional_source(self.source))
 
     @property
     def identity(self) -> Tuple[str, int]:
-        """Semantic identity used for equality of addresses, independent of Python object identity."""
+        """Return ``(source_slot, source_ordinal)``."""
 
         return self.source_slot, self.source_ordinal
 
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
-        return {
-            "descriptor": self.descriptor,
-            "source_slot": self.source_slot,
-            "source_ordinal": self.source_ordinal,
-            "source": self.source,
-        }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
-
-
-class PathologyDiagnosis(MutableEntity):
-    """Mutable diagnosis evidence with an explicit documentation date.
-
-    Parameters
-    ----------
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
-    diagnosis : Optional[str], optional
-        Reported diagnosis text; None means absent. No diagnosis is inferred.
-        Default: None.
-    result_category : Optional[str], optional
-        Reported result category; None means absent. Default: None.
-    malignant : Optional[bool], optional
-        Reported malignancy flag; None means unknown, not False. Default: None.
-    severity : Optional[PathologySeverity], optional
-        Reported EMBED severity on the 0–5 scale; invalid numeric facts are
-        retained for validate. Default: None.
-    raw_severity : Any, optional
-        Unnormalized source severity retained for comparison; None means absent.
-        Default: None.
-    report_documented_date : Optional[str], optional
-        Date the report was documented, conventionally ISO YYYY-MM-DD; not a
-        diagnosis/event date. Default: None.
-    validation_issues : Tuple[object, ...], optional
-        Supplied diagnostics retained in order; does not run validation.
-        Default: ().
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
-    """
-
-    diagnosis: Optional[str]
-    """Reported diagnosis text; None means absent. No diagnosis is inferred."""
-    result_category: Optional[str]
-    """Reported result category; None means absent."""
-    malignant: Optional[bool]
-    """Reported malignancy flag; None means unknown, not False."""
-    raw_severity: Any
-    """Unnormalized source severity retained for comparison; None means absent."""
-    report_documented_date: Optional[str]
-    """Date the report was documented, conventionally ISO YYYY-MM-DD; not a
-    diagnosis/event date.
-    """
-
-    def __init__(
-        self,
-        source: Optional[SourceValue] = None,
-        diagnosis: Optional[str] = None,
-        result_category: Optional[str] = None,
-        malignant: Optional[bool] = None,
-        severity: Optional[PathologySeverity] = None,
-        raw_severity: Any = None,
-        report_documented_date: Optional[str] = None,
-        validation_issues: Tuple[object, ...] = (),
-    ) -> None:
-        super().__init__()
-        self.source = _optional_source(source)
-        self.diagnosis = diagnosis
-        self.result_category = result_category
-        self.malignant = malignant
-        self.severity = _severity_value(severity)
-        self.raw_severity = raw_severity
-        self.report_documented_date = report_documented_date
-        self.validation_issues = tuple(validation_issues)
-        if any(
-            getattr(issue, "source", self.source) != self.source
-            for issue in self.validation_issues
-        ):
-            raise ValueError("Pathology diagnosis issues must reference its source")
-        represented_values = (
-            self.diagnosis,
-            self.result_category,
-            self.malignant,
-            self.severity,
-            self.raw_severity,
-            self.report_documented_date,
-        )
-        if all(value is None for value in represented_values) and not self.validation_issues:
-            raise ValueError("PathologyDiagnosis requires represented diagnosis evidence")
-        self._finish_initialization()
-
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
-        return {
-            "source": self.source,
-            "diagnosis": self.diagnosis,
-            "result_category": self.result_category,
-            "malignant": self.malignant,
-            "severity": self.severity,
-            "raw_severity": self.raw_severity,
-            "report_documented_date": self.report_documented_date,
-            "validation_issues": self.validation_issues,
-        }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
-
 
 class Pathology(MutableEntity):
-    """A mutable pathology report bundle at one semantic attachment grain.
+    """A pathology bundle: reported diagnosis fields and descriptor slots.
 
-    ``identity`` is deliberately supplied by the adapter.  It should be a
-    hashable patient-scoped record ID or the documented attachment/date
-    fallback; this class never invents an identity from a physical row or
-    diagnosis payload.  Descriptor order and duplicate values are retained.
+    MagView pathology belongs to the procedure it was reported for and is
+    keyed ``("procedure", ProcedureIdentity)``; an explicitly keyed record is
+    keyed ``(patient_id, record_id)``. The identity is never derived from a
+    row position, report date or diagnosis text.
 
     Parameters
     ----------
-    identity : Optional[Hashable], optional
-        Explicit hashable semantic key; prefer (patient_id, record_id) or an
-        explicit (attachment_identity, report_date) tuple. Default: None.
-    diagnosis : Optional[str], optional
-        Reported diagnosis text; None means absent. No diagnosis is inferred.
-        Default: None.
-    result_category : Optional[str], optional
-        Reported result category; None means absent. Default: None.
-    malignant : Optional[bool], optional
-        Reported malignancy flag; None means unknown, not False. Default: None.
-    severity : Optional[PathologySeverity], optional
-        Reported EMBED severity on the 0–5 scale; invalid numeric facts are
-        retained for validate. Default: None.
+    identity : hashable or None, optional
+        Explicit key. When None, ``patient_id`` and ``record_id`` must both be
+        supplied and form ``(patient_id, record_id)``.
+    diagnosis, result_category : str or None, optional
+        Reported diagnosis text and result category. No diagnosis is inferred.
+    malignant : bool or None, optional
+        Reported malignancy flag; None means unknown, not False.
+    severity : PathologySeverity or None, optional
+        EMBED severity group (inverse scale). None means no severity attached.
     raw_severity : Any, optional
-        Unnormalized source severity retained for comparison; None means absent.
-        Default: None.
-    report_documented_date : Optional[str], optional
-        Date the report was documented, conventionally ISO YYYY-MM-DD; not a
-        diagnosis/event date. Default: None.
-    descriptors : Iterable[Any], optional
-        Ordered descriptor occurrences, copied into a list. Duplicates and order
-        are preserved; no event IDs are inferred. Default: ().
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
-    metadata : Optional[Mapping[str, Any]], optional
-        Consumer metadata, shallow-copied into a mutable dict. Nested values
-        remain shared. Default: None.
-    payload : Optional[Mapping[str, Any]], optional
-        Additional supplied payload, shallow-copied into a dict; no inferred
-        clinical meaning. Default: None.
-    **identity_parts : Any
-        Additional identity inputs; use patient_id and record_id when identity is None.
-        attachment_identity/report_documented_date is not usable through this
-        forwarding path; pass that pair as an explicit identity tuple instead.
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
-
-    Notes on identity keywords
-    --------------------------
-    patient_id and record_id are optional keyword-only inputs, both default None.
-    When identity is None and both are supplied, the key is their pair. An explicit
-    identity takes precedence. Additional identity_parts remain accepted for
-    compatibility, but the historical attachment_identity/report_documented_date
-    fallback cannot receive report_documented_date through this constructor.
-    Supply that pair explicitly as identity instead. No fallback infers event IDs.
-
-    Examples
-    --------
-    >>> from embed_data_model import Pathology
-    >>> Pathology(patient_id="P1", record_id="report1").identity
-    ('P1', 'report1')
+        Severity as supplied, kept even when invalid (such as code 6).
+    report_documented_date : str or None, optional
+        Provisional pathology report date; never a diagnosis or event date.
+    descriptors : iterable of PathologyObservation, optional
+        Descriptor slots in source order, duplicates kept.
+    procedure_references, finding_references, exam_references : iterable, optional
+        Keys of the procedures, findings ``(accession, finding_number)`` and
+        exams (accessions) the bundle is attached to. Targets may be missing.
+    source : SourceRef or None, optional
+        Row the bundle was read from.
+    metadata, payload : mapping, optional
+        Consumer metadata and uninterpreted source payload, copied into dicts.
+    patient_id, record_id : optional, keyword-only
+        Explicit record key used when ``identity`` is None.
 
     Raises
     ------
     TypeError
-        No usable identity, an unhashable identity or unsupported source value."""
+        No usable identity, or the identity is unhashable.
 
+    Examples
+    --------
+    >>> Pathology(patient_id="P1", record_id="report1").identity
+    ('P1', 'report1')
+    """
+
+    kind = "pathology"
     __key_fields__ = ("identity",)
+    _references = (
+        Reference("procedure_references", "procedure", many=True),
+        Reference("finding_references", "finding", many=True),
+        Reference("exam_references", "exam", many=True),
+    )
 
     identity: Hashable
-    """Semantic identity used for graph membership; use rekey for a registered entity."""
+    """Key of the bundle."""
     diagnosis: Optional[str]
     """Reported diagnosis text; None means absent. No diagnosis is inferred."""
     result_category: Optional[str]
-    """Reported result category; None means absent."""
+    """Reported result category."""
     malignant: Optional[bool]
     """Reported malignancy flag; None means unknown, not False."""
+    severity: Optional[PathologySeverity]
+    """EMBED severity group; None means no severity attached, not negative."""
     raw_severity: Any
-    """Unnormalized source severity retained for comparison; None means absent."""
+    """Severity as supplied, kept even when invalid."""
     report_documented_date: Optional[str]
-    """Date the report was documented, conventionally ISO YYYY-MM-DD; not a
-    diagnosis/event date.
-    """
+    """Provisional report date; never a diagnosis or event date."""
+    descriptors: Tuple[PathologyObservation, ...]
+    """Descriptor slots in source order."""
+    procedure_references: Set[Hashable]
+    """Keys of procedures the bundle is attached to."""
+    finding_references: Set[Tuple[str, str]]
+    """Keys of findings the bundle is attached to."""
+    exam_references: Set[str]
+    """Accessions of exams the bundle is attached to."""
 
     def __init__(
         self,
@@ -334,94 +173,64 @@ class Pathology(MutableEntity):
         severity: Optional[PathologySeverity] = None,
         raw_severity: Any = None,
         report_documented_date: Optional[str] = None,
-        descriptors: Iterable[Any] = (),
-        source: Optional[SourceValue] = None,
+        descriptors: Iterable[PathologyObservation] = (),
+        procedure_references: Optional[Iterable[Hashable]] = None,
+        finding_references: Optional[Iterable[Tuple[str, str]]] = None,
+        exam_references: Optional[Iterable[str]] = None,
+        source: Optional[SourceRef] = None,
         metadata: Optional[Mapping[str, Any]] = None,
         payload: Optional[Mapping[str, Any]] = None,
         *,
         patient_id: Optional[str] = None,
         record_id: Optional[Hashable] = None,
-        **identity_parts: Any,
     ) -> None:
         super().__init__()
         if identity is None:
-            identity = _fallback_pathology_identity(
-                {**identity_parts, "patient_id": patient_id, "record_id": record_id}
-            )
-        try:
-            hash(identity)
-        except TypeError as exc:
-            raise TypeError("Pathology identity must be hashable") from exc
+            if patient_id is None or record_id is None:
+                raise TypeError("Pathology requires an identity or both patient_id and record_id")
+            identity = (patient_id, record_id)
         self.identity = identity
         self.diagnosis = diagnosis
         self.result_category = result_category
         self.malignant = malignant
-        self.severity = _severity_value(severity)
+        self.severity = severity
         self.raw_severity = raw_severity
         self.report_documented_date = report_documented_date
-        self._descriptors = list(descriptors)
-        self.source = _optional_source(source)
-        self._metadata = dict(metadata or {})
-        self._payload = dict(payload or {})
-        self._finish_initialization()
+        self.descriptors = tuple(descriptors)
+        self.procedure_references = set(procedure_references or ())
+        self.finding_references = set(finding_references or ())
+        self.exam_references = set(exam_references or ())
+        self.source = source
+        self.metadata = dict(metadata or {})
+        self.payload = dict(payload or {})
 
-    @property
-    def descriptors(self) -> Tuple[Any, ...]:
-        """Reported descriptors in stored order; container behavior follows the return
-        type and values are not deep-copied.
-        """
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "identity":
+            try:
+                hash(value)
+            except TypeError as exc:
+                raise TypeError("Pathology identity must be hashable") from exc
+        elif name == "descriptors":
+            return tuple(value or ())
+        elif name == "procedure_references":
+            return set(value or ())
+        elif name == "finding_references":
+            return {(str(accession), str(number)) for accession, number in value or ()}
+        elif name == "exam_references":
+            return {str(accession) for accession in value or ()}
+        elif name == "source":
+            return optional_source(value)
+        elif name in {"metadata", "payload"}:
+            return dict(value or {})
+        return value
 
-        return tuple(self._descriptors)
+    def add_descriptor(self, descriptor: PathologyObservation) -> PathologyObservation:
+        """Append a descriptor slot without deduplicating and return it."""
 
-    @descriptors.setter
-    def descriptors(self, values: Iterable[Any]) -> None:
-        """Reported descriptors in stored order; container behavior follows the return
-        type and values are not deep-copied.
-        """
-
-        self._descriptors = list(values)
-
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, values: Mapping[str, Any]) -> None:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        self._metadata = dict(values)
-
-    @property
-    def payload(self) -> Dict[str, Any]:
-        """Supplied payload mapping; assignment shallow-copies the mapping and does not
-        interpret its contents.
-        """
-
-        return self._payload
-
-    @payload.setter
-    def payload(self, values: Mapping[str, Any]) -> None:
-        """Supplied payload mapping; assignment shallow-copies the mapping and does not
-        interpret its contents.
-        """
-
-        self._payload = dict(values)
-
-    def add_descriptor(self, descriptor: Any) -> Any:
-        """Append descriptor without deduplicating and return the same value.
-        Descriptor order represents source slots, not clinical chronology.
-        """
-
-        self._descriptors.append(descriptor)
+        self.descriptors = (*self.descriptors, descriptor)
         return descriptor
 
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
+    def _to_dict_data(self) -> Dict[str, Any]:
         return {
             "identity": self.identity,
             "diagnosis": self.diagnosis,
@@ -431,55 +240,47 @@ class Pathology(MutableEntity):
             "raw_severity": self.raw_severity,
             "report_documented_date": self.report_documented_date,
             "descriptors": self.descriptors,
+            "procedure_references": self.procedure_references,
+            "finding_references": self.finding_references,
+            "exam_references": self.exam_references,
             "source": self.source,
-            "metadata": self._metadata,
-            "payload": self._payload,
+            "metadata": self.metadata,
+            "payload": self.payload,
         }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
 
 
 class CancerRegistryEntry(MutableEntity):
-    """Patient-scoped registry data that may be assigned to several exams.
+    """A patient-scoped cancer-registry record that exams can be assigned to.
+
+    The registry ID is meaningful only together with the patient ID. It is a
+    reference to a registry record, not itself a diagnosis or outcome.
 
     Parameters
     ----------
     patient_id : str
-        Patient identifier. Non-empty text; source patient claims and assigned
-        exam ownership are separate facts.
+        Patient the registry record belongs to; part of the key.
     registry_id : str
-        Non-empty registry identifier scoped to patient_id.
-    payload : Optional[Mapping[str, Any]], optional
-        Additional supplied payload, shallow-copied into a dict; no inferred
-        clinical meaning. Default: None.
-    metadata : Optional[Mapping[str, Any]], optional
-        Consumer metadata, shallow-copied into a mutable dict. Nested values
-        remain shared. Default: None.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        Registry record ID within that patient; part of the key.
+    payload : mapping, optional
+        Explicitly mapped registry fields, copied into a dict. None bound by
+        default.
+    metadata : mapping, optional
+        Consumer metadata, copied into a dict.
+    source : SourceRef or None, optional
+        Row the entry was read from.
+    """
 
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
-
-    Raises
-    ------
-    ValueError
-        Blank patient or registry ID.
-    TypeError
-        Unsupported source value or non-mapping payload/metadata."""
-
+    kind = "registry"
     __key_fields__ = ("patient_id", "registry_id")
+
+    patient_id: str
+    """Patient the record belongs to; part of the key."""
+    registry_id: str
+    """Registry record ID within the patient; part of the key."""
+    payload: Dict[str, Any]
+    """Explicitly mapped registry fields."""
+    metadata: Dict[str, Any]
+    """Consumer metadata."""
 
     def __init__(
         self,
@@ -487,165 +288,44 @@ class CancerRegistryEntry(MutableEntity):
         registry_id: str,
         payload: Optional[Mapping[str, Any]] = None,
         metadata: Optional[Mapping[str, Any]] = None,
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
     ) -> None:
         super().__init__()
-        self.patient_id = _required_text(patient_id, "patient_id")
-        self.registry_id = _required_text(registry_id, "registry_id")
-        self._payload = dict(payload or {})
-        self._metadata = dict(metadata or {})
-        self.source = _optional_source(source)
-        self._finish_initialization()
+        self.patient_id = patient_id
+        self.registry_id = registry_id
+        self.payload = dict(payload or {})
+        self.metadata = dict(metadata or {})
+        self.source = source
+
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name in {"patient_id", "registry_id"}:
+            return _required_text(value, name)
+        if name in {"payload", "metadata"}:
+            return dict(value or {})
+        if name == "source":
+            return optional_source(value)
+        return value
 
     @property
     def identity(self) -> Tuple[str, str]:
-        """Semantic identity used for equality of addresses, independent of Python object identity."""
+        """Return ``(patient_id, registry_id)``."""
 
         return self.patient_id, self.registry_id
 
     @property
-    def payload(self) -> Mapping[str, Any]:
-        """Supplied payload mapping; assignment shallow-copies the mapping and does not
-        interpret its contents.
-        """
+    def exams(self) -> Tuple[Any, ...]:
+        """Registered exams assigned to this entry."""
 
-        return self._payload
+        graph = self.graph
+        return graph.parents(self, "exam") if graph is not None else ()
 
-    @payload.setter
-    def payload(self, values: Mapping[str, Any]) -> None:
-        """Supplied payload mapping; assignment shallow-copies the mapping and does not
-        interpret its contents.
-        """
-
-        self._payload = dict(values)
-
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, values: Mapping[str, Any]) -> None:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        self._metadata = dict(values)
-
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
+    def _to_dict_data(self) -> Dict[str, Any]:
         return {
             "patient_id": self.patient_id,
             "registry_id": self.registry_id,
-            "payload": self._payload,
-            "metadata": self._metadata,
+            "payload": self.payload,
+            "metadata": self.metadata,
             "source": self.source,
-        }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
-
-
-@dataclass(frozen=True)
-class PathologyReference:
-    """Non-recursive reference to one pathology diagnosis or observation.
-
-    Attributes
-    ----------
-    kind : PathologyRecordKind
-        Governed kind of referenced object; identity shape depends on the kind.
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
-    source_slot : Optional[str]
-        Non-empty source descriptor slot name; preserves ordered source
-        evidence. Default: None.
-    """
-
-    kind: PathologyRecordKind
-    """Governed kind of referenced object; identity shape depends on the kind."""
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
-    source_slot: Optional[str] = None
-    """Non-empty source descriptor slot name; preserves ordered source evidence. Default: None."""
-
-    def __post_init__(self) -> None:
-        kind = PathologyRecordKind(self.kind)
-        object.__setattr__(self, "kind", kind)
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
-        if kind is PathologyRecordKind.OBSERVATION:
-            if not isinstance(self.source_slot, str) or not self.source_slot.strip():
-                raise ValueError("Observation references require source_slot")
-        elif self.source_slot is not None:
-            raise ValueError("Diagnosis references do not use source_slot")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
-
-        return {
-            "kind": self.kind.value,
-            "source": self.source.to_dict(),
-            "source_slot": self.source_slot,
-        }
-
-
-@dataclass(frozen=True)
-class PathologyAttributionLink:
-    """Attributed edge from pathology evidence to a clinical object.
-
-    Attributes
-    ----------
-    pathology : PathologyReference
-        Non-recursive reference to the pathology evidence being attributed.
-    target : ClinicalObjectReference
-        Non-recursive clinical target reference; does not own the target object.
-    status : AttributionStatus
-        Attribution strength/origin; unresolved statuses cannot establish
-        resolved links.
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
-    """
-
-    pathology: PathologyReference
-    """Non-recursive reference to the pathology evidence being attributed."""
-    target: ClinicalObjectReference
-    """Non-recursive clinical target reference; does not own the target object."""
-    status: AttributionStatus
-    """Attribution strength/origin; unresolved statuses cannot establish resolved links."""
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
-
-    def __post_init__(self) -> None:
-        status = AttributionStatus(self.status)
-        if not status.is_resolved_attribution:
-            raise ValueError("A resolved pathology link requires attribution status")
-        object.__setattr__(self, "status", status)
-        if self.source != self.pathology.source:
-            raise ValueError("Pathology link provenance must match pathology source")
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
-
-        return {
-            "pathology": self.pathology.to_dict(),
-            "target": self.target.to_dict(),
-            "status": self.status.value,
-            "source": self.source.to_dict(),
         }
 
 
@@ -653,38 +333,3 @@ def _required_text(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
     return value.strip()
-
-
-def _severity_value(value: Any) -> Any:
-    """Keep representable severity values for optional validation."""
-
-    if isinstance(value, PathologySeverity):
-        return value
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    return value
-
-
-def _fallback_pathology_identity(parts: Mapping[str, Any]) -> Hashable:
-    """Build only documented fallback identities supplied by an adapter."""
-
-    record_id = parts.get("record_id")
-    patient_id = parts.get("patient_id")
-    if record_id is not None and patient_id is not None:
-        return patient_id, record_id
-    attachment = parts.get("attachment_identity")
-    report_date = parts.get("report_documented_date")
-    if attachment is not None and report_date is not None:
-        try:
-            hash(attachment)
-        except TypeError as exc:
-            raise TypeError("attachment_identity must be hashable") from exc
-        return attachment, report_date
-    raise TypeError(
-        "Pathology requires a hashable identity or patient_id/record_id "
-        "or attachment_identity/report_documented_date"
-    )
-
-
-def _json_value(value: Any) -> Any:
-    return plain_value(value)

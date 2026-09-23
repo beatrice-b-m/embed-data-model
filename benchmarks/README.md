@@ -1,6 +1,6 @@
 # EMBED Data Model loading measurements
 
-Measured 2026-09-09 against `664b4e2` (wheel version `0.1.0`).
+Measured 2026-09-23 against `b180feb` on branch `refactor/catalog-alignment`.
 Python 3.13.11, macOS-26.5.1-arm64-arm-64bit-Mach-O.
 
 ```bash
@@ -16,15 +16,15 @@ each reciprocal linked-exam pair once. The last exam has no linked successor.
 
 | Patients | Rows | Objects | Edges | Full load (s) | Peak bytes | Retained bytes |
 |---:|---:|---:|---:|---:|---:|---:|
-| 100 | 600 | 1200 | 1399 | 0.1796 | 3,406,817 | 2,803,382 |
-| 200 | 1200 | 2400 | 2799 | 0.3623 | 6,610,118 | 5,411,090 |
-| 400 | 2400 | 4800 | 5599 | 0.7265 | 13,188,366 | 10,602,426 |
+| 100 | 600 | 1200 | 1399 | 0.1417 | 2,911,270 | 1,799,046 |
+| 200 | 1200 | 2400 | 2799 | 0.2830 | 5,671,470 | 3,368,498 |
+| 400 | 2400 | 4800 | 5599 | 0.5725 | 11,298,958 | 6,506,690 |
 
 | Patients | Fixed-patient update (µs) | One-patient subset (ms) | Batched load (s) | Late registry resolution (ms) |
 |---:|---:|---:|---:|---:|
-| 100 | 15.65 | 0.451 | 0.0317 | 0.900 |
-| 200 | 15.73 | 0.469 | 0.0629 | 1.907 |
-| 400 | 15.51 | 0.494 | 0.1277 | 3.724 |
+| 100 | 17.26 | 0.426 | 0.0283 | 0.502 |
+| 200 | 17.29 | 0.439 | 0.0578 | 1.051 |
+| 400 | 17.63 | 0.476 | 0.1175 | 2.021 |
 
 All values are medians of three repetitions. Full loads use `tracemalloc`; input
 fixture construction is excluded from both time and memory. Retained memory is
@@ -34,11 +34,11 @@ to the traced full-load column. Fixed updates average 50 same-patient refreshes 
 repetition; subset setup uses prebuilt slices. Deferred resolution excludes graph
 construction and times only the later registry input.
 
-Full-load doubling ratios were 2.02× and 2.01×.
-Peak and retained object memory grew roughly linearly. Fixed-patient update time
-stayed near 16 µs as unrelated data quadrupled. These measurements support the
-deterministic regression that prohibits iteration of unrelated registry dictionaries
-during a fixed update; timing is diagnostic, not a fragile absolute CI threshold.
+Full-load time and memory grew linearly (doubling ratios 2.00× and 2.02×).
+Fixed-patient update time stayed near 17 µs as unrelated data quadrupled, because
+updates touch only the indexes of the changed entity. Compared with the 0.1.0
+graph at `664b4e2`, full loads are about 20% faster and retain about 35% less
+memory for the same objects and edges. Timing is diagnostic, not a CI threshold.
 
 Batches contain 25 complete patient groups. A refresh invocation is one snapshot:
 callers must assemble all rows for a repeated semantic grain before applying it.

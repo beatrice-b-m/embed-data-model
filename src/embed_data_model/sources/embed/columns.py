@@ -1,6 +1,9 @@
 """Small, table-local column maps for the EMBED source loader.
 
 The maps bind only source facts that are established at this adapter boundary.
+Every bound default names a column that exists in the internal EMBED MagView
+or V1c image-metadata tables; semantic fields without such a column default to
+None and can be bound explicitly through ``columns``.
 In particular, registry payload fields and future image identity fields remain
 explicitly configurable instead of being guessed from similarly named columns.
 """
@@ -19,9 +22,12 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
         "patients": MappingProxyType(
             {
                 "patient_id": "empi_anon",
-                "sex": "GENDER_DESC",
-                "birth_year": "birth_year",
+                "accession": "acc_anon",
                 "context_date": "studydate_anon",
+                "sex": "GENDER_DESC",
+                "race": "race",
+                "ethnicity": "ethnicity",
+                "birth_year": None,
             }
         ),
         "exams": MappingProxyType(
@@ -30,6 +36,11 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "patient_id": "empi_anon",
                 "exam_date": "studydate_anon",
                 "exam_description": "desc",
+                "density": "tissueden",
+                "exam_type": "mg_exam_type",
+                "visit_type": "vtype",
+                "modality": "modality_desc",
+                "patient_age": "age_at_study_anon",
             }
         ),
         "findings": MappingProxyType(
@@ -41,13 +52,22 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "finding_type": None,
                 "assessment": "asses",
                 "recommendation": "recc",
-                "interpretation": None,
                 "location": "location",
                 "depth": "depth",
                 "distance": "distance",
-                "clock_position": None,
                 "record_type": None,
-                "descriptors": None,
+                "mass": "mass",
+                "asymmetry": "asymmetry",
+                "architectural_distortion": "arch_distortion",
+                "calcification": "calc",
+                "mass_shape": "massshape",
+                "mass_margin": "massmargin",
+                "mass_density": "massdens",
+                "calcification_morphology": "calcfind",
+                "calcification_distribution": "calcdistri",
+                "calcification_number": "calcnumber",
+                "other_finding": "otherfind",
+                "implant_finding": "implanfind",
             }
         ),
         "images": MappingProxyType(
@@ -66,7 +86,7 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "width": "Columns",
                 "frame_count": "ImagesInAcquisition",
                 "study_instance_uid": None,
-                "series_instance_uid": "SeriesInstanceUID",
+                "series_instance_uid": None,
                 "coordinate_frame_id": None,
             }
         ),
@@ -133,9 +153,9 @@ DEFAULT_COLUMNS: Mapping[str, ColumnMap] = MappingProxyType(
                 "laterality": "bside",
                 "procedure_date": "procdate_anon",
                 "procedure_type": "type",
-                "diagnosis": "pathology_diagnosis",
-                "result_category": "pathology_result_category",
-                "malignant": "pathology_malignant",
+                "diagnosis": None,
+                "result_category": None,
+                "malignant": None,
                 "severity": "path_severity",
                 "report_documented_date": "pdate_anon",
                 **{f"descriptor_{index}": f"path{index}" for index in range(1, 11)},

@@ -13,7 +13,7 @@ From the repository root, with Python 3.9–3.13 and `uv` available:
 ```bash
 uv sync --frozen
 uv run --frozen pytest
-uv run --frozen ruff check src/embed_data_model tests examples benchmarks
+uv run --frozen ruff check src/embed_data_model tests examples benchmarks tools
 uv run --frozen mypy
 uv run --frozen python -m examples.researcher_journeys
 uv run --frozen python -m build
@@ -57,21 +57,25 @@ the public API and supported table mappings.
 Synthetic library tests establish software behavior; consumer studies establish
 their own scientific validity.
 
-Inline API documentation follows [AGENTS.md](AGENTS.md). The normal pytest run
-checks documented public classes/members, constructor field coverage and inline
-doctests. Mypy also checks `tests/typing/public_api.py`, a consumer journey that
-asserts nullable lookup results, subclass preservation and typed selection
-navigation. The wheel test repeats these consumer checks against an isolated
-installation and checks `py.typed` in both wheel and source archive.
+Inline API documentation follows [AGENTS.md](AGENTS.md). Tests are organized
+by the behavior they protect:
 
-Optional editor-engine checks use Jedi without requiring a GUI editor:
+- `tests/model/` covers values and objects on their own: coercion, anatomy,
+  geometry, attributes and validation rules.
+- `tests/graph/` covers membership, identity, relationships and partitions.
+- `tests/loading/` covers EMBED source semantics and refresh/merge behavior,
+  always through `load_embed` with small synthetic rows.
+- `tests/packaging/` runs every docstring example and documented example,
+  builds the wheel, installs it into a clean environment, and type-checks
+  `tests/typing/public_api.py` against the installed package.
 
-```bash
-uv run --frozen --with 'jedi==0.20.0' pytest tests/integration/test_editor_support.py
-```
+EMBED code meanings in `src/embed_data_model/sources/embed/vocabulary.py` are
+generated from the EMBED clinical-semantic catalog. After the catalog changes,
+regenerate them with `python -m tools.generate_embed_vocabulary --catalog
+<catalog-set.json>` instead of editing the tables by hand.
 
-Without Jedi that optional test is skipped. Record language-engine checks,
-runtime `inspect`/`help()` checks and actual GUI editor checks separately.
+Test observable behavior through the public API. Do not assert private
+attributes, exact error-message text, docstring wording or module layout.
 
 ## Review and commits
 

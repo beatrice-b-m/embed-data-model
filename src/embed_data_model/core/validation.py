@@ -7,6 +7,8 @@ from math import isfinite
 from numbers import Real
 from typing import Any, Callable, Iterable, Tuple
 
+from embed_data_model.core.entity import MutableEntity
+from embed_data_model.core.primitives import ImageModality
 from embed_data_model.core.source import Issue, IssueSeverity
 
 
@@ -49,9 +51,10 @@ def validate(entity: Any, *, validators: Iterable[Validator] = (),
         Additional callbacks accepting one visited object and returning an
         iterable of Issue values. Default empty; each runs once per object.
     aggregate : bool, optional
-        Default True traverses containment children and embedded observations,
-        interpretations, history timing, anatomy and landmarks. False checks
-        only entity. Traversal deduplicates Python identity and excludes links.
+        Default True also checks everything the entity contains in its graph
+        and its embedded values: observations, interpretation, history timing,
+        anatomy and landmarks. False checks only ``entity``. Each object is
+        checked once; linked exams are not traversed.
     warnings_invalid : bool, optional
         Default False preserves severity. True copies warning issues as errors
         in this result, leaving the originals unchanged.
@@ -86,7 +89,9 @@ def validate(entity: Any, *, validators: Iterable[Validator] = (),
         for validator in custom:
             issues.extend(validator(obj))
         if aggregate:
-            pending.extend(getattr(obj, "_children", lambda: ())())
+            graph = getattr(obj, "graph", None)
+            if isinstance(obj, MutableEntity) and graph is not None:
+                pending.extend(graph.children(obj))
             for collection in ("history_observations", "attribute_observations", "landmarks"):
                 pending.extend(getattr(obj, collection, ()))
             for field in ("interpretation", "started", "stopped", "anatomical_position", "quadrant", "clock_position"):
@@ -109,14 +114,27 @@ def _quality(obj: Any) -> Iterable[Issue]:
     confidence = getattr(obj, "confidence", None)
     if confidence is not None and (not isinstance(confidence, Real) or not isfinite(float(confidence)) or not 0 <= float(confidence) <= 1):
         yield issue("confidence_range", "Confidence must be finite and between zero and one", value=confidence)
+    distance = getattr(obj, "distance_from_nipple_cm", None)
+    if distance is not None and (not isinstance(distance, Real) or not isfinite(float(distance)) or float(distance) < 0):
+        yield issue("distance_range", "Distance from nipple must be a finite non-negative measurement", value=distance)
     for field in ("height", "width", "frame_count"):
         value = getattr(obj, field, None)
         if value is not None and (not isinstance(value, Real) or not isfinite(float(value)) or float(value) <= 0):
             yield issue("positive_" + field, field + " should be positive", value=value)
     frame_count = getattr(obj, "frame_count", None)
-    modality = getattr(getattr(obj, "modality", None), "value", None)
-    if frame_count is not None and modality not in {None, "DBT", "dbt"}:
-        yield issue("frame_modality", "Frame count is supplied for a non-DBT image")
+    modality = getattr(obj, "modality", None)
+    if (
+        frame_count is not None
+        and isinstance(modality, ImageModality)
+        and modality not in {ImageModality.DBT, ImageModality.UNKNOWN}
+        and frame_count != 1
+    ):
+        yield Issue(
+            "frame_modality",
+            "Multiple frames are supplied for a non-DBT image",
+            IssueSeverity.WARNING,
+            context={"object_type": type(obj).__name__, "value": frame_count},
+        )
     coordinates = getattr(obj, "coordinates", None)
     if coordinates is not None:
         values = coordinates.as_tuple() if hasattr(coordinates, "as_tuple") else coordinates
@@ -139,9 +157,10 @@ def _quality(obj: Any) -> Iterable[Issue]:
         frames = getattr(obj, "source_frame_indices", ())
         if any(frame < 0 for frame in frames) or len(set(frames)) != len(frames):
             yield issue("roi_frame_indices", "ROI frame indices should be distinct and non-negative")
-    for field in ("age", "birth_year", "year", "month", "hour"):
+    for field in ("age", "patient_age", "birth_year", "year", "month", "hour"):
         value = getattr(obj, field, None)
-        limits = {"age": (0, 130), "birth_year": (1800, date.today().year),
+        # EMBED exam ages are top-coded to 89, and zero is a data-quality error.
+        limits = {"age": (0, 130), "patient_age": (1, 89), "birth_year": (1800, date.today().year),
                   "year": (1, 9999), "month": (1, 12), "hour": (1, 12)}
         if value is not None:
             lower, upper = limits[field]

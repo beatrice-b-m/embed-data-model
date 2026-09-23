@@ -1,40 +1,19 @@
-"""Mutable performed procedures and immutable procedure identities."""
+"""Performed procedures and their identities."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    ClassVar,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from embed_data_model.core.entity import (
-    MutableEntity,
-    plain_value,
-    serialize_entity,
-)
+from embed_data_model.core.codes import Code
+from embed_data_model.core.entity import MutableEntity, Reference
+from embed_data_model.core.graph import ensure_graph
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.provenance import SourceLocator
-from embed_data_model.core.source import SourceRef
+from embed_data_model.core.source import SourceRef, optional_source
 
 if TYPE_CHECKING:
+    from embed_data_model.clinical.findings import Finding
     from embed_data_model.clinical.pathology import Pathology
-
-
-SourceValue = Union[SourceLocator, SourceRef]
-
-
-def _to_plain(value: Any) -> Any:
-    """Convert nested domain values to JSON-ready Python primitives."""
-
-    return plain_value(value)
 
 
 @dataclass(frozen=True)
@@ -49,8 +28,10 @@ class ProcedureIdentity:
     performed_date : str
         Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
         Construction checks text, validate checks dates.
-    procedure_type : str
-        Non-empty reported procedure kind; part of semantic identity.
+    procedure_type : Code
+        Reported procedure type (EMBED ``B`` needle biopsy, ``S`` surgical)
+        with its meaning; part of the identity, compared by code. Text is
+        accepted as a code without meaning.
     laterality : Laterality
         Known LEFT, RIGHT or BILATERAL side. UNKNOWN raises ValueError.
     """
@@ -63,285 +44,139 @@ class ProcedureIdentity:
     """Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
     Construction checks text, validate checks dates.
     """
-    procedure_type: str
-    """Non-empty reported procedure kind; part of semantic identity."""
+    procedure_type: Code
+    """Reported procedure type and its meaning; compared by code."""
     laterality: Laterality
     """Known LEFT, RIGHT or BILATERAL side. UNKNOWN raises ValueError."""
 
     def __post_init__(self) -> None:
-        for attribute in ("patient_id", "performed_date", "procedure_type"):
+        for attribute in ("patient_id", "performed_date"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{attribute} must be a non-empty string")
             object.__setattr__(self, attribute, value.strip())
+        if not isinstance(self.procedure_type, (str, Code)) or not str(getattr(self.procedure_type, "code", self.procedure_type)).strip():
+            raise ValueError("procedure_type must be a non-empty code")
+        object.__setattr__(self, "procedure_type", Code.coerce(self.procedure_type))
         side = Laterality.coerce(self.laterality)
         if side is Laterality.UNKNOWN:
             raise ValueError("Resolved procedure identity requires known laterality")
         object.__setattr__(self, "laterality", side)
 
-    def to_dict(self) -> Dict[str, str]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
-
-        return {
-            "patient_id": self.patient_id,
-            "performed_date": self.performed_date,
-            "procedure_type": self.procedure_type,
-            "laterality": self.laterality.value,
-        }
-
-
-@dataclass(frozen=True)
-class UnresolvedProcedureOccurrence:
-    """Normalized procedure evidence that cannot establish clinical identity.
-
-    Attributes
-    ----------
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
-    missing_identity_fields : Tuple[str, ...]
-        Distinct non-empty names of missing identity fields, consistent with
-        supplied facts.
-    patient_id : Optional[str]
-        Patient identifier. Non-empty text; source patient claims and assigned
-        exam ownership are separate facts. Default: None.
-    performed_date : Optional[str]
-        Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
-        Construction checks text, validate checks dates. Default: None.
-    procedure_type : Optional[str]
-        Non-empty reported procedure kind; part of semantic identity. Default:
-        None.
-    laterality : Laterality
-        Breast side. Coercible values are normalized; unknown values become
-        UNKNOWN where coercion is supported. Default: Laterality.UNKNOWN.
-    """
-
-    IDENTITY_FIELDS: ClassVar[Tuple[str, ...]] = (
-        "patient_id",
-        "performed_date",
-        "procedure_type",
-        "laterality",
-    )
-
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
-    missing_identity_fields: Tuple[str, ...]
-    """Distinct non-empty names of missing identity fields, consistent with supplied facts."""
-    patient_id: Optional[str] = None
-    """Patient identifier. Non-empty text; source patient claims and assigned exam
-    ownership are separate facts. Default: None.
-    """
-    performed_date: Optional[str] = None
-    """Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
-    Construction checks text, validate checks dates. Default: None.
-    """
-    procedure_type: Optional[str] = None
-    """Non-empty reported procedure kind; part of semantic identity. Default: None."""
-    laterality: Laterality = Laterality.UNKNOWN
-    """Breast side. Coercible values are normalized; unknown values become UNKNOWN
-    where coercion is supported. Default: Laterality.UNKNOWN.
-    """
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
-        missing = tuple(self.missing_identity_fields)
-        if not missing or any(
-            not isinstance(value, str) or not value.strip() for value in missing
-        ):
-            raise ValueError("missing_identity_fields must identify incomplete fields")
-        if len(set(missing)) != len(missing):
-            raise ValueError("missing_identity_fields must not contain duplicates")
-        unknown = set(missing) - set(self.IDENTITY_FIELDS)
-        if unknown:
-            raise ValueError(
-                f"Unknown procedure identity fields: {tuple(sorted(unknown))}"
-            )
-        object.__setattr__(self, "missing_identity_fields", missing)
-        laterality = Laterality.coerce(self.laterality)
-        object.__setattr__(self, "laterality", laterality)
-        candidate_missing = {
-            field_name
-            for field_name, value in (
-                ("patient_id", self.patient_id),
-                ("performed_date", self.performed_date),
-                ("procedure_type", self.procedure_type),
-            )
-            if value is None or not isinstance(value, str) or not value.strip()
-        }
-        if laterality is Laterality.UNKNOWN:
-            candidate_missing.add("laterality")
-        if set(missing) != candidate_missing:
-            raise ValueError(
-                "missing_identity_fields must match absent or unknown candidate values"
-            )
-
     def to_dict(self) -> Dict[str, Any]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
+        """Return the identity as JSON-compatible values."""
 
         return {
-            "source": self.source.to_dict(),
-            "missing_identity_fields": list(self.missing_identity_fields),
             "patient_id": self.patient_id,
             "performed_date": self.performed_date,
-            "procedure_type": self.procedure_type,
+            "procedure_type": self.procedure_type.to_dict(),
             "laterality": self.laterality.value,
         }
 
 
 class Procedure(MutableEntity):
-    """One mutable performed procedure that can own pathology bundles.
+    """One performed breast procedure, keyed by its ProcedureIdentity.
+
+    A procedure can be attached to several findings and exams, and pathology
+    attaches to it. Within a patient, the procedure date, type and biopsy side
+    identify one procedure.
 
     Parameters
     ----------
     identity : ProcedureIdentity
-        Semantic identity used for graph membership; use rekey for a registered
-        entity.
-    sources : Optional[Iterable[object]], optional
-        Source evidence in supplied order. None starts an empty collection;
-        source adds one item. Default: None.
-    metadata : Optional[Dict[str, Any]], optional
-        Consumer metadata, shallow-copied into a mutable dict. Nested values
-        remain shared. Default: None.
-    pathologies : Optional[Iterable[Pathology]], optional
-        Initial pathology bundles, retained by reference in supplied order.
-        Default: None.
-    source : Optional[object], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
+        Patient, performed date, procedure type and known side; the key.
+    finding_references : iterable of (str, str), optional
+        Keys ``(accession, finding_number)`` of findings the procedure
+        addresses. Targets may be missing.
+    exam_references : iterable of str, optional
+        Accessions of exams the procedure is attached to directly.
+    sources : iterable of SourceRef, optional
+        Rows the procedure was read from, deduplicated in order.
+    metadata : mapping, optional
+        Consumer metadata, copied into a dict.
     """
 
+    kind = "procedure"
     __key_fields__ = ("identity",)
+    _references = (
+        Reference("finding_references", "finding", many=True),
+        Reference("exam_references", "exam", many=True),
+    )
+
+    identity: ProcedureIdentity
+    """Patient, performed date, procedure type and side; the key."""
+    finding_references: Set[Tuple[str, str]]
+    """Keys of findings the procedure addresses."""
+    exam_references: Set[str]
+    """Accessions of exams the procedure is attached to directly."""
+    sources: Tuple[SourceRef, ...]
+    """Rows the procedure was read from."""
+    metadata: Dict[str, Any]
+    """Consumer metadata."""
 
     def __init__(
         self,
         identity: ProcedureIdentity,
-        sources: Optional[Iterable[object]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        pathologies: Optional[Iterable["Pathology"]] = None,
-        source: Optional[object] = None,
+        finding_references: Optional[Iterable[Tuple[str, str]]] = None,
+        exam_references: Optional[Iterable[str]] = None,
+        sources: Optional[Iterable[SourceRef]] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
     ) -> None:
         super().__init__()
-        self.identity = self._coerce_identity(identity)
-        self._sources: List[object] = []
-        self._metadata: Dict[str, Any] = dict(metadata or {})
-        self._pathologies: List["Pathology"] = []
-        for candidate in sources or ():
-            self.add_source(candidate)
-        if source is not None:
-            self.add_source(source)
-        for pathology in pathologies or ():
-            self._attach_local(pathology)
-        self._finish_initialization()
+        self.identity = identity
+        self.finding_references = set(finding_references or ())
+        self.exam_references = set(exam_references or ())
+        self.sources = tuple(sources or ())
+        self.metadata = dict(metadata or {})
 
-    @staticmethod
-    def _coerce_identity(identity: ProcedureIdentity) -> ProcedureIdentity:
-        if not isinstance(identity, ProcedureIdentity):
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "identity" and not isinstance(value, ProcedureIdentity):
             raise TypeError("identity must be a ProcedureIdentity")
-        return identity
-
-    @property
-    def sources(self) -> Tuple[object, ...]:
-        """Tuple of retained source evidence in insertion order."""
-
-        return tuple(self._sources)
-
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, values: Dict[str, Any]) -> None:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        self._metadata = dict(values)
-
-    @property
-    def pathologies(self) -> Tuple["Pathology", ...]:
-        """Alias for pathology, preserving live objects and collection order."""
-
-        return tuple(self._pathologies)
+        if name == "finding_references":
+            return {(str(accession), str(number)) for accession, number in value or ()}
+        if name == "exam_references":
+            return {str(accession) for accession in value or ()}
+        if name == "sources":
+            unique: List[SourceRef] = []
+            for item in value or ():
+                source = optional_source(item)
+                if source is not None and source not in unique:
+                    unique.append(source)
+            return tuple(unique)
+        if name == "metadata":
+            return dict(value or {})
+        return value
 
     @property
     def pathology(self) -> Tuple["Pathology", ...]:
-        """Tuple of live pathology bundles in stored traversal order, deduplicated by
-        Python identity where aggregated.
-        """
+        """Pathology bundles attached to this procedure."""
 
-        return self.pathologies
+        graph = self.graph
+        return graph.children(self, "pathology") if graph is not None else ()
 
-    def add_source(self, source: object) -> object:
-        """Attach optional source evidence without changing identity."""
+    @property
+    def findings(self) -> Tuple["Finding", ...]:
+        """Registered findings this procedure addresses."""
 
-        if not isinstance(source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
-        if source not in self._sources:
-            self._sources.append(source)
+        graph = self.graph
+        return graph.parents(self, "finding") if graph is not None else ()
+
+    def add_source(self, source: SourceRef) -> SourceRef:
+        """Record another source row, ignoring duplicates, and return it."""
+
+        self.sources = (*self.sources, source)
         return source
 
     def add_pathology(self, pathology: "Pathology") -> "Pathology":
-        """Attach pathology through the graph when this procedure is owned."""
+        """Attach a pathology bundle to this procedure and return it."""
 
-        if self.graph is not None:
-            result = self.graph.attach(self, pathology)
-            return pathology if result is None else result
-        return self._attach_local(pathology)
+        return ensure_graph(self).attach(self, pathology)
 
-    def _children(self) -> Tuple[MutableEntity, ...]:
-        return tuple(self._pathologies)
-
-    def _attach_local(self, child: MutableEntity) -> "Pathology":
-        from embed_data_model.clinical.pathology import Pathology
-
-        if not isinstance(child, Pathology):
-            raise TypeError("Procedure children must be Pathology entities")
-        for existing in self._pathologies:
-            if existing.identity == child.identity:
-                if existing is child:
-                    return existing
-                raise ValueError(
-                    "Distinct Pathology objects cannot share an identity in a Procedure"
-                )
-        self._pathologies.append(child)
-        return child
-
-    def _detach_local(self, child: MutableEntity) -> MutableEntity:
-        for index, existing in enumerate(self._pathologies):
-            if existing is child:
-                return self._pathologies.pop(index)
-        return child  # idempotent graph recomposition
-
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
+    def _to_dict_data(self) -> Dict[str, Any]:
         return {
             "identity": self.identity,
+            "finding_references": self.finding_references,
+            "exam_references": self.exam_references,
             "sources": self.sources,
-            "pathology": self.pathology,
-            "metadata": self._metadata,
+            "metadata": self.metadata,
         }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)

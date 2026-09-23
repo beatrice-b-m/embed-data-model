@@ -1,9 +1,8 @@
-"""EMBED auxiliary-history vocabularies and row normalization."""
+"""EMBED patient-history row normalization."""
 
 from __future__ import annotations
 
 from math import isfinite
-from numbers import Real
 from typing import Any, Mapping, Optional
 
 from embed_data_model.clinical.histories import (
@@ -13,74 +12,24 @@ from embed_data_model.clinical.histories import (
 )
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, IssueSeverity, SourceRef
+from embed_data_model.core.codes import Code, Vocabulary
+from embed_data_model.sources.embed._values import cell, code, text
+from embed_data_model.sources.embed.vocabulary import (
+    BREAST_PROCEDURE,
+    CONTRACEPTIVE,
+    EXPOSURE_CATEGORY,
+    GYNECOLOGICAL_PROCEDURE,
+    HORMONE,
+    PROCEDURE_HISTORY_CATEGORY,
+    PROCEDURE_HISTORY_RESULT,
+    THERAPY,
+)
 
 
-_MEDICATION_CATEGORIES = {"H": "hormone", "T": "therapy", "O": "contraceptive"}
-_MEDICATIONS = {
-    ("H", "C"): "estrogen_and_progesterone",
-    ("H", "ESTRO"): "estrogen",
-    ("H", "PH"): "premphase",
-    ("H", "PP"): "prempro",
-    ("H", "PROGES"): "progesterone",
-    ("H", "R"): "premarin",
-    ("H", "RA"): "raloxifene",
-    ("H", "TAMOX"): "tamoxifen",
-    ("H", "V"): "provera",
-    ("H", "O"): "other",
-    ("T", "CH"): "chemotherapy",
-    ("T", "ET"): "endocrine_therapy",
-    ("T", "H"): "hormonal_therapy",
-    ("T", "RT"): "radiation_therapy",
-    ("T", "RTC"): "radiation_and_chemotherapy",
-    ("T", "RTH"): "radiation_and_hormone_therapy",
-    ("T", "TAXOL"): "taxol",
-    ("T", "XRT"): "xrt",
-    ("T", "O"): "other",
-    ("O", "C"): "combined_oral_contraceptive",
-    ("O", "ORAL"): "oral_contraceptive",
-    ("O", "O"): "other",
-}
-_PROCEDURE_CATEGORIES = {"G": "gynecological", "B": "breast"}
-_PROCEDURES = {
-    ("G", "HYST"): ("hysterectomy", "hysterectomy"),
-    ("G", "H"): ("hysterectomy", "partial_hysterectomy"),
-    ("G", "O"): ("oophorectomy", "one_ovary_removed"),
-    ("G", "OS"): ("oophorectomy", "ovaries_removed"),
-    ("B", "1"): ("biopsy", "core_biopsy"),
-    ("B", "SB"): ("biopsy", "stereotactic_core_biopsy"),
-    ("B", "UCB"): ("biopsy", "ultrasound_core_biopsy"),
-    ("B", "B"): ("biopsy", "mri_guided_core_biopsy"),
-    ("B", "E"): ("biopsy", "excisional_biopsy"),
-    ("B", "NB"): ("biopsy", "needle_biopsy"),
-    ("B", "CA"): ("aspiration", "cyst_aspiration"),
-    ("B", "FNA"): ("aspiration", "fine_needle_aspiration"),
-    ("B", "L"): ("lumpectomy", "lumpectomy"),
-    ("B", "M"): ("mastectomy", "mastectomy"),
-    ("B", "D"): ("other", "breast_reduction"),
-    ("B", "MP"): ("other", "mammoplasty"),
-    ("B", "R"): ("other", "reconstruction"),
-    ("B", "EXI"): ("other", "implants_removed"),
-    ("B", "NO"): ("other", "non_oncologic"),
-}
-_PROCEDURE_RESULTS = {
-    "ADH": "atypical_ductal_hyperplasia",
-    "ALH": "atypical_lobular_hyperplasia",
-    "BEN": "benign",
-    "BOT": "invasive_ductal_carcinoma_and_dcis",
-    "DE": "duct_ectasia",
-    "DS": "ductal_carcinoma_in_situ",
-    "FA": "fibroadenoma",
-    "FN": "fat_necrosis",
-    "ID": "invasive_ductal_carcinoma",
-    "IF": "chronic_inflammatory_changes",
-    "IL": "invasive_lobular_carcinoma",
-    "LS": "lobular_carcinoma_in_situ",
-    "LY": "lymphoma",
-    "MAL": "malignant",
-    "PA": "papilloma",
-    "SA": "sclerosing_adenosis",
-    "SF": "stromal_fibrosis",
-}
+# The history code tables are scoped by category: the same code means
+# different things in different categories.
+_MEDICATIONS = {"H": HORMONE, "T": THERAPY, "O": CONTRACEPTIVE}
+_PROCEDURES = {"B": BREAST_PROCEDURE, "G": GYNECOLOGICAL_PROCEDURE}
 _UNKNOWN_FLAGS = {"", "U", "NA", "N/A", "NAN", "UNKNOWN"}
 
 
@@ -88,7 +37,6 @@ def normalize_medication_history(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
     source: Optional[SourceRef],
-    patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[MedicationHistoryObservation], tuple[Issue, ...]]:
     """Normalize one patient-reported medication row.
@@ -102,8 +50,6 @@ def normalize_medication_history(
         Use the matching map from resolve_columns for EMBED defaults.
     source : SourceRef or None
         Physical diagnostic provenance, not clinical identity.
-    patient_id : str
-        Non-empty patient ID supplied by the loader/caller.
     record_id : str or None, optional
         Explicit patient-scoped record ID; None (default) is an unkeyed snapshot.
 
@@ -111,6 +57,9 @@ def normalize_medication_history(
     -------
     MedicationHistoryObservation or None, tuple of Issue
         Reported fact and diagnostics; None if required category/medication is absent.
+        Category and medication are decoded into Code values; the medication
+        code is read in its category's table. An unknown category or code
+        keeps its source code without a meaning and adds a warning.
 
     Notes
     -----
@@ -128,31 +77,12 @@ def normalize_medication_history(
                 source=source,
             ),
         )
-    category = _MEDICATION_CATEGORIES.get(raw_category, raw_category)
-    medication = _MEDICATIONS.get((raw_category, raw_code), raw_code)
-    if raw_category not in _MEDICATION_CATEGORIES:
-        issues.append(
-            Issue(
-                code="unknown_medication_history_category",
-                message="medication history category is not in the EMBED vocabulary",
-                severity=IssueSeverity.WARNING,
-                source=source,
-                context={"category": raw_category},
-            )
-        )
-    if (raw_category, raw_code) not in _MEDICATIONS:
-        issues.append(
-            Issue(
-                code="unknown_medication_history_code",
-                message="medication history code is not in the EMBED vocabulary",
-                severity=IssueSeverity.WARNING,
-                source=source,
-                context={"category": raw_category, "code": raw_code},
-            )
-        )
+    category, medication = _decode_pair(
+        raw_category, raw_code, EXPOSURE_CATEGORY, _MEDICATIONS, "medication", source, issues
+    )
     observation = MedicationHistoryObservation(
-        patient_id=patient_id,
         source=source,
+        record_id=_record_id(row, columns, record_id),
         category=category,
         medication=medication,
         context_accession=_text(row, columns["accession"]),
@@ -175,10 +105,6 @@ def normalize_medication_history(
         ),
         comment=_text(row, columns["comment"]),
     )
-    _set_record_id(
-        observation,
-        record_id if record_id is not None else _text(row, columns.get("record_id")),
-    )
     return observation, tuple(issues)
 
 
@@ -186,7 +112,6 @@ def normalize_procedure_history(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
     source: Optional[SourceRef],
-    patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[ProcedureHistoryObservation], tuple[Issue, ...]]:
     """Normalize one patient-reported prior procedure row.
@@ -200,8 +125,6 @@ def normalize_procedure_history(
         Use the matching map from resolve_columns for EMBED defaults.
     source : SourceRef or None
         Physical diagnostic provenance, not clinical identity.
-    patient_id : str
-        Non-empty patient ID supplied by the loader/caller.
     record_id : str or None, optional
         Explicit patient-scoped record ID; None (default) is an unkeyed snapshot.
 
@@ -209,6 +132,10 @@ def normalize_procedure_history(
     -------
     ProcedureHistoryObservation or None, tuple of Issue
         Reported fact and diagnostics; None if required category/procedure is absent.
+        Category, procedure and result are decoded into Code values; the
+        procedure code is read in its category's table. A combined result such
+        as ``FA,SF`` is not split. Unknown codes keep their source code without
+        a meaning and add a warning.
 
     Notes
     -----
@@ -226,77 +153,80 @@ def normalize_procedure_history(
                 source=source,
             ),
         )
-    category = _PROCEDURE_CATEGORIES.get(raw_category, raw_category)
-    procedure, detail = _PROCEDURES.get((raw_category, raw_code), (raw_code, None))
-    if raw_category not in _PROCEDURE_CATEGORIES:
-        issues.append(
-            Issue(
-                code="unknown_procedure_history_category",
-                message="procedure history category is not in the EMBED vocabulary",
-                severity=IssueSeverity.WARNING,
-                source=source,
-                context={"category": raw_category},
-            )
-        )
-    if (raw_category, raw_code) not in _PROCEDURES:
-        issues.append(
-            Issue(
-                code="unknown_procedure_history_code",
-                message="procedure history code is not in the EMBED vocabulary",
-                severity=IssueSeverity.WARNING,
-                source=source,
-                context={"category": raw_category, "code": raw_code},
-            )
-        )
-    raw_result = _upper(row, columns["result"])
-    result = _PROCEDURE_RESULTS.get(raw_result, raw_result or None)
-    if raw_result == "NONE":
-        result = None
-    elif raw_result and raw_result not in _PROCEDURE_RESULTS:
+    category, procedure = _decode_pair(
+        raw_category, raw_code, PROCEDURE_HISTORY_CATEGORY, _PROCEDURES, "procedure", source, issues
+    )
+    result = PROCEDURE_HISTORY_RESULT.decode(_upper(row, columns["result"]))
+    if result is not None and not result.is_known:
         issues.append(
             Issue(
                 code="unknown_procedure_history_result",
                 message="procedure history result is not in the EMBED vocabulary",
                 severity=IssueSeverity.WARNING,
                 source=source,
-                context={"result": raw_result},
+                context={"result": result.code},
             )
         )
     observation = ProcedureHistoryObservation(
-            patient_id=patient_id,
-            source=source,
-            category=category,
-            procedure=procedure,
-            detail=detail,
-            context_accession=_text(row, columns["accession"]),
-            laterality=Laterality.coerce(_text(row, columns["laterality"])),
-            reported_result=result,
-        )
-    _set_record_id(
-        observation,
-        record_id if record_id is not None else _text(row, columns.get("record_id")),
+        source=source,
+        record_id=_record_id(row, columns, record_id),
+        category=category,
+        procedure=procedure,
+        context_accession=_text(row, columns["accession"]),
+        laterality=Laterality.coerce(_text(row, columns["laterality"])),
+        reported_result=result,
     )
     return observation, tuple(issues)
 
 
+def _decode_pair(
+    raw_category: str,
+    raw_code: str,
+    categories: Vocabulary,
+    codes: Mapping[str, Vocabulary],
+    kind: str,
+    source: Optional[SourceRef],
+    issues: list[Issue],
+) -> tuple[Code, Code]:
+    """Decode a category and the code read in that category's table.
+
+    An unknown category or code keeps its source code without a meaning and
+    adds a warning.
+    """
+
+    category = categories.decode(raw_category)
+    table = codes.get(raw_category)
+    decoded = table.decode(raw_code) if table is not None else Code(raw_code, unknown=(raw_code,))
+    assert category is not None and decoded is not None
+    if not category.is_known:
+        issues.append(
+            Issue(
+                code=f"unknown_{kind}_history_category",
+                message=f"{kind} history category is not in the EMBED vocabulary",
+                severity=IssueSeverity.WARNING,
+                source=source,
+                context={"category": raw_category},
+            )
+        )
+    if not decoded.is_known:
+        issues.append(
+            Issue(
+                code=f"unknown_{kind}_history_code",
+                message=f"{kind} history code is not in the EMBED vocabulary",
+                severity=IssueSeverity.WARNING,
+                source=source,
+                context={"category": raw_category, "code": raw_code},
+            )
+        )
+    return category, decoded
+
+
 def _text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    if column is None:
-        return None
-    value = row.get(column)
-    if value is None or type(value).__name__ in {"NAType", "NaTType"}:
-        return None
-    if isinstance(value, Real) and not isinstance(value, bool):
-        try:
-            if not isfinite(float(value)):
-                return None
-        except (TypeError, ValueError, OverflowError):
-            return None
-    text = str(value).strip()
-    return text or None
+    return text(cell(row, column))
 
 
 def _upper(row: Mapping[str, Any], column: Optional[str]) -> str:
-    return (_text(row, column) or "").upper()
+    return code(cell(row, column)) or ""
 
 
 def _flag(
@@ -413,18 +343,11 @@ def _time_estimate(
     return None if estimate.is_empty else estimate
 
 
-def _set_record_id(observation: Any, record_id: Optional[str]) -> None:
-    """Attach an explicit semantic record identifier when the domain supports it."""
+def _record_id(
+    row: Mapping[str, Any],
+    columns: Mapping[str, Optional[str]],
+    explicit: Optional[str],
+) -> Optional[str]:
+    """Return the explicit record ID, else the mapped record-ID column value."""
 
-    if record_id is None:
-        return
-    normalized = str(record_id).strip()
-    if not normalized:
-        return
-    # The mutable history domain is being updated alongside this adapter.  The
-    # object-level fallback keeps this normalizer usable during that cutover
-    # without deriving an event identity from a source row or ordinal.
-    object.__setattr__(observation, "record_id", normalized)
-
-
-__all__ = ["normalize_medication_history", "normalize_procedure_history"]
+    return explicit if explicit is not None else _text(row, columns.get("record_id"))

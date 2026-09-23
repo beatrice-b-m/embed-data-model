@@ -5,7 +5,7 @@ Exam, Finding and imaging objects directly. DatasetGraph owns membership;
 lookups return live objects, while partition makes independent graph copies.
 ``validate`` is an explicit read-only quality check, never an ingestion gate.
 
-Common entry points are listed in __all__. Specialist anatomy, provenance,
+Common entry points are listed in __all__. Specialist anatomy, source,
 attribute-selection and geometry types live in their defining submodules;
 undocumented adapter internals are not supported extension points. This package
 has no mandatory pandas dependency, opens no pixel files and infers no diagnosis.
@@ -24,6 +24,7 @@ from embed_data_model.clinical.findings import Finding
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.clinical.procedures import Procedure, ProcedureIdentity
 from embed_data_model.clinical.pathology import Pathology, CancerRegistryEntry
+from embed_data_model.core.codes import Code
 from embed_data_model.core.primitives import Laterality, ImageModality, ViewPosition
 from embed_data_model.core.validation import ValidationResult, validate
 from embed_data_model.core.graph import DatasetGraph
@@ -34,6 +35,7 @@ from embed_data_model.sources.embed import LoadReport, load_embed
 
 __all__ = [
     "BreastSide",
+    "Code",
     "Box",
     "DatasetGraph",
     "Exam",

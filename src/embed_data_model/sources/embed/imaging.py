@@ -10,14 +10,15 @@ from typing import Any, Iterable, Mapping, Optional
 from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.primitives import ImageModality, Laterality, ViewPosition
-from embed_data_model.core.source import Issue, is_null_scalar
+from embed_data_model.core.source import Issue
 from embed_data_model.imaging.images import MammogramImage
 from embed_data_model.imaging.rois import RegionOfInterest
+from embed_data_model.sources.embed._values import cell, identifier, is_missing, reconcile_merge, whole_number
 
 
 def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping[str, Any]]],
                  graph: Any, columns: Mapping[str, Mapping[str, Optional[str]]],
-                 mode: str, issues: list[Issue]) -> None:
+                 mode: str, issues: list[Issue], claims: dict[str, set[str]]) -> None:
     """Each ROI-bearing row supplies a complete collection, never a row identity.
 
     Automatic metadata collections are overridden only for images addressed by
@@ -36,7 +37,8 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
         image = graph.image(first["image_id"]) if derivative else (
             graph.source_image(first["source_sop_instance_uid"]) if first["source_sop_instance_uid"] else graph.image(first["image_id"]))
         fields: dict[str, Any] = {}
-        for field in first["managed"]:
+        managed = set().union(*(item["managed"] for item in observations))
+        for field in sorted(managed):
             values = _distinct(item["fields"].get(field) for item in observations)
             if len(values) > 1:
                 _issue(issues, "conflicting_image_values", "Conflicting populated image values become unknown", identity=key, field=field)
@@ -59,20 +61,21 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
                 _issue(issues, "image_registration_failed", str(exc), image_id=first["image_id"])
                 continue
         else:
+            if mode == "merge":
+                reconcile_merge({name: getattr(image, name, None) for name in fields}, fields, grain="image", key=key, issues=issues)
             graph.update(image, **fields)
             graph.update(image, source_paths=set(image.source_paths) | aliases)
             if accession is not None and image.accession_number != accession:
-                graph.rekey(image, accession_number=accession)
+                graph.update(image, accession_number=accession)
             if patient is not None:
                 graph.update(image, patient_id=patient)
         if accession:
-            exam = graph.exam(accession) or graph.register(Exam(accession))
+            if graph.exam(accession) is None:
+                graph.register(Exam(accession))
             for claim in patient_values:
                 if graph.patient(claim) is None:
                     graph.register(Patient(claim))
-            if patient_values:
-                graph.claim_patient(exam, patient_values)
-            graph.reference("image", image.image_id, "exam", accession, relation="parent")
+            claims.setdefault(accession, set()).update(patient_values)
 
     automatic: dict[str, list[tuple[Mapping[str, Any], MammogramImage]]] = defaultdict(list)
     explicit: dict[str, list[tuple[Mapping[str, Any], MammogramImage]]] = defaultdict(list)
@@ -92,7 +95,7 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
         invalid = False
         for row, _ in roi_rows:
             raw = _mapped(row, roi_columns, "coordinates")
-            if is_null_scalar(raw):
+            if is_missing(raw):
                 continue
             try:
                 collection = _collection(row, roi_columns, image)
@@ -108,21 +111,20 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
             invalid = True
         if collections and not invalid:
             graph.replace_rois(image, collections[0])
-            graph.register(image)  # Index all current path aliases/positions.
 
 
 def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], issues: list[Issue]) -> Optional[dict[str, Any]]:
-    path = _identifier(_mapped(row, columns, "source_path"))
+    path = identifier(_mapped(row, columns, "source_path"))
     parsed = _parse_embed_path(path)
-    explicit_uid = _identifier(_mapped(row, columns, "source_sop_instance_uid"))
+    explicit_uid = identifier(_mapped(row, columns, "source_sop_instance_uid"))
     if explicit_uid and parsed and explicit_uid != parsed["source_sop_instance_uid"]:
         _issue(issues, "source_sop_path_mismatch", "Explicit SOP wins over path-derived SOP", explicit_uid=explicit_uid, path_uid=parsed["source_sop_instance_uid"], path=path)
     if path and parsed is None:
         _issue(issues, "unparseable_image_path", "Path does not match cohort/patient/study/series/SOP.dcm", path=path)
     uid = explicit_uid or (parsed["source_sop_instance_uid"] if parsed else None)
-    explicit_id = _identifier(_mapped(row, columns, "image_id"))
+    explicit_id = identifier(_mapped(row, columns, "image_id"))
     derived = _mapped(row, columns, "derived_from")
-    if is_null_scalar(derived):
+    if is_missing(derived):
         derived = None
     if derived is not None and explicit_id is None:
         _issue(issues, "derivative_requires_image_id", "A derivative requires an explicit toolkit ID")
@@ -136,44 +138,48 @@ def _observation(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], i
                   "frame_count": "frame_count", "study_instance_uid": "study_instance_uid", "series_instance_uid": "series_instance_uid",
                   "coordinate_frame_id": "coordinate_frame_id", "derived_image_type": "derived_image_type"}
     for semantic, field in scalar_map.items():
-        if columns.get(semantic) is not None:
+        if _supplied(row, columns, semantic):
             raw = _mapped(row, columns, semantic)
-            if not is_null_scalar(raw):
+            if not is_missing(raw):
                 if semantic == "laterality":
                     raw = Laterality.coerce(raw)
                 elif semantic == "view_position":
                     raw = ViewPosition.coerce(raw)
                 elif semantic in {"height", "width", "frame_count"}:
-                    try:
-                        raw = float(raw)
-                    except (ValueError, TypeError):
-                        _issue(issues, "image_numeric_parse", "Image dimension/frame fact is not numeric", field=semantic, value=raw)
-                        raw = None
+                    count = whole_number(raw)
+                    if count is None:
+                        _issue(issues, "image_numeric_parse", "Image dimension/frame fact is not a whole number", field=semantic, value=raw)
+                    raw = count
                 fields[field] = raw
             else:
                 fields[field] = None
-    if columns.get("modality") is not None or columns.get("derived_image_type") is not None:
+    if _supplied(row, columns, "modality") or _supplied(row, columns, "derived_image_type"):
         raw_modality = _mapped(row, columns, "modality")
         raw_type = _mapped(row, columns, "derived_image_type")
         inferred = ImageModality.coerce(raw_type)
         fields["modality"] = inferred if inferred is not ImageModality.UNKNOWN else ImageModality.coerce(raw_modality)
-        fields["source_modality"] = _identifier(raw_modality)
-        if is_null_scalar(raw_modality) and is_null_scalar(raw_type):
+        if _supplied(row, columns, "modality"):
+            fields["source_modality"] = identifier(raw_modality)
+        if is_missing(raw_modality) and is_missing(raw_type):
             fields["modality"] = None
+    if "frame_count" in fields and fields.get("modality") is not ImageModality.DBT:
+        # ImagesInAcquisition is a frame count only for DBT images; on other
+        # image types it must not be interpreted as frames.
+        fields["frame_count"] = None
     if parsed:
         for field in ("study_instance_uid", "series_instance_uid"):
             if fields.get(field) is None:
                 fields[field] = parsed[field]
     return {"group": image_id if derived is not None else uid or image_id, "image_id": image_id,
             "source_sop_instance_uid": uid, "source_paths": {path} if path else set(), "derived_from": derived,
-            "patient": _identifier(_mapped(row, columns, "patient_id")) or (parsed["patient_id"] if parsed else None),
-            "accession": _identifier(_mapped(row, columns, "accession")), "managed": set(fields), "fields": fields}
+            "patient": identifier(_mapped(row, columns, "patient_id")) or (parsed["patient_id"] if parsed else None),
+            "accession": identifier(_mapped(row, columns, "accession")), "managed": set(fields), "fields": fields}
 
 
 def _roi_image(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], image_columns: Mapping[str, Optional[str]], graph: Any, issues: list[Issue]) -> Any:
-    path = _identifier(_mapped(row, columns, "source_path"))
-    explicit_id = _identifier(_mapped(row, columns, "image_id"))
-    uid = _identifier(_mapped(row, image_columns, "source_sop_instance_uid"))
+    path = identifier(_mapped(row, columns, "source_path"))
+    explicit_id = identifier(_mapped(row, columns, "image_id"))
+    uid = identifier(_mapped(row, image_columns, "source_sop_instance_uid"))
     if explicit_id:
         image = graph.image(explicit_id)
         if image is not None:
@@ -189,7 +195,7 @@ def _roi_image(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], ima
         if path:
             graph.update(image, source_paths=set(image.source_paths) | {path})
         return image
-    if is_null_scalar(_mapped(row, columns, "coordinates")):
+    if is_missing(_mapped(row, columns, "coordinates")):
         return None
     image_id = explicit_id or uid
     if not image_id:
@@ -216,15 +222,15 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
     if len(flags) != len(value):
         raise ValueError("Depth flags must align with ROI collection slots")
     confidence = _mapped(row, columns, "confidence")
-    if not is_null_scalar(confidence):
+    if not is_missing(confidence):
         confidence = float(confidence)
     else:
         confidence = None
-    source_path = _identifier(_mapped(row, columns, "source_path"))
+    source_path = identifier(_mapped(row, columns, "source_path"))
     result = []
     for position, box in enumerate(value):
         flag = flags[position]
-        if is_null_scalar(flag):
+        if is_missing(flag):
             derived = False
         elif str(flag).strip().lower() in {"1", "1.0", "true", "yes"}:
             derived = True
@@ -250,8 +256,8 @@ def _collection(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], im
             source_coordinate_convention="inclusive_maxima", source_frame_indices=indices,
             frame_provenance="source_derived" if derived else "source_supplied" if indices else None,
             frame_derivation_method="ROI_depth_derived" if derived else None,
-            annotation_source=_identifier(_mapped(row, columns, "annotation_source")), confidence=confidence,
-            coordinate_frame_id=_identifier(_mapped(row, columns, "coordinate_frame_id"))))
+            annotation_source=identifier(_mapped(row, columns, "annotation_source")), confidence=confidence,
+            coordinate_frame_id=identifier(_mapped(row, columns, "coordinate_frame_id"))))
     return tuple(result)
 
 
@@ -259,24 +265,23 @@ def _signature(collection: tuple[RegionOfInterest, ...]) -> Any:
     return tuple((roi.coordinates, roi.source_frame_indices, roi.frame_provenance, roi.frame_derivation_method, roi.confidence, roi.annotation_source, roi.coordinate_frame_id) for roi in collection)
 
 
-def _mapped(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], semantic: str) -> Any:
+def _supplied(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], semantic: str) -> bool:
+    """Return whether the row carries the bound column, including an explicit null."""
+
     physical = columns.get(semantic)
-    return row.get(physical) if physical is not None else None
+    return physical is not None and physical in row
 
 
-def _identifier(value: Any) -> Optional[str]:
-    if is_null_scalar(value):
-        return None
-    if isinstance(value, Real) and not isinstance(value, bool) and float(value).is_integer():
-        return str(int(float(value)))
-    text = str(value).strip()
-    return text or None
+def _mapped(row: Mapping[str, Any], columns: Mapping[str, Optional[str]], semantic: str) -> Any:
+    """Return the row's value for a semantic field, or None when unbound or missing."""
+
+    return cell(row, columns.get(semantic))
 
 
 def _distinct(values: Iterable[Any]) -> list[Any]:
     result: list[Any] = []
     for value in values:
-        if not is_null_scalar(value) and value not in result:
+        if not is_missing(value) and value not in result:
             result.append(value)
     return result
 
@@ -286,7 +291,7 @@ def _unknown(field: str) -> Any:
 
 
 def _literal(value: Any) -> Any:
-    return ast.literal_eval(value) if isinstance(value, str) else None if is_null_scalar(value) else value
+    return ast.literal_eval(value) if isinstance(value, str) else None if is_missing(value) else value
 
 
 def _parse_embed_path(path: Optional[str]) -> Optional[dict[str, str]]:

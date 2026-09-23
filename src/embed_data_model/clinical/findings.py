@@ -1,39 +1,22 @@
-"""Mutable finding entities and source-neutral finding normalizers."""
+"""Imaging findings and the evidence behind their normalized anatomy."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from embed_data_model.clinical.interpretations import ImagingInterpretation
-from embed_data_model.clinical.procedures import _to_plain
 from embed_data_model.core.anatomy import AnatomicalPosition
-from embed_data_model.core.entity import (
-    MutableEntity,
-    readonly_mapping,
-    serialize_entity,
-)
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.provenance import SourceLocator
+from embed_data_model.core.entity import MutableEntity, Reference, plain_value
+from embed_data_model.core.graph import ensure_graph
 from embed_data_model.core.source import SourceRef
 
 if TYPE_CHECKING:
+    from embed_data_model.clinical.exams import Exam
     from embed_data_model.clinical.pathology import Pathology
     from embed_data_model.clinical.procedures import Procedure
-
-
-SourceValue = Union[SourceLocator, SourceRef]
 
 
 class FindingRecordType(str, Enum):
@@ -55,9 +38,9 @@ class FindingNormalizationEvidence:
 
     Attributes
     ----------
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
+    source : SourceRef or None
+        Physical row provenance when the load supplied source keys, else None.
+        It identifies evidence, not a clinical event.
     source_field : str
         Source column/slot that supplied the normalized evidence.
     raw_value : Any
@@ -69,8 +52,8 @@ class FindingNormalizationEvidence:
         Normalized value retained alongside source evidence. Default: None.
     """
 
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    source: Optional[SourceRef]
+    """Physical row provenance when the load supplied source keys, else None."""
     source_field: str
     """Source column/slot that supplied the normalized evidence."""
     raw_value: Any
@@ -81,8 +64,8 @@ class FindingNormalizationEvidence:
     """Normalized value retained alongside source evidence. Default: None."""
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
+        if self.source is not None and not isinstance(self.source, SourceRef):
+            raise TypeError("source must be a SourceRef or None")
         for attribute in ("source_field", "normalized_kind"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
@@ -95,11 +78,11 @@ class FindingNormalizationEvidence:
         """
 
         return {
-            "source": self.source.to_dict(),
+            "source": None if self.source is None else self.source.to_dict(),
             "source_field": self.source_field,
-            "raw_value": _to_plain(self.raw_value),
+            "raw_value": plain_value(self.raw_value),
             "normalized_kind": self.normalized_kind,
-            "normalized_value": _to_plain(self.normalized_value),
+            "normalized_value": plain_value(self.normalized_value),
         }
 
 
@@ -109,9 +92,9 @@ class FindingNormalizationWarning:
 
     Attributes
     ----------
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
+    source : SourceRef or None
+        Physical row provenance when the load supplied source keys, else None.
+        It identifies evidence, not a clinical event.
     code : str
         Non-empty machine-readable diagnostic code.
     message : str
@@ -123,8 +106,8 @@ class FindingNormalizationWarning:
         identity. Default: None.
     """
 
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    source: Optional[SourceRef]
+    """Physical row provenance when the load supplied source keys, else None."""
     code: str
     """Non-empty machine-readable diagnostic code."""
     message: str
@@ -137,8 +120,8 @@ class FindingNormalizationWarning:
     """
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
+        if self.source is not None and not isinstance(self.source, SourceRef):
+            raise TypeError("source must be a SourceRef or None")
         for attribute in ("code", "message"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
@@ -155,90 +138,87 @@ class FindingNormalizationWarning:
         """
 
         return {
-            "source": self.source.to_dict(),
+            "source": None if self.source is None else self.source.to_dict(),
             "source_field": self.source_field,
-            "raw_value": _to_plain(self.raw_value),
+            "raw_value": plain_value(self.raw_value),
             "code": self.code,
             "message": self.message,
         }
 
 
 class Finding(MutableEntity):
-    """A mutable clinical finding at accession/finding-number grain.
+    """A radiologist-recorded imaging finding, keyed by accession and finding number.
 
     Parameters
     ----------
     accession_number : str
-        Non-empty exam accession identifying the clinical examination.
+        Accession of the exam the finding belongs to; part of the key.
     laterality : Laterality
-        Breast side. Coercible values are normalized; unknown values become
-        UNKNOWN where coercion is supported.
+        Breast side, coerced; an attribute, not part of the key.
     finding_number : str
-        Non-empty finding identifier scoped to its accession; not a row ordinal.
-    finding_type : Optional[str], optional
-        Reported finding category; None means not supplied. Default: None.
-    interpretation : Optional[ImagingInterpretation], optional
-        Finding-level assessment/recommendation object, retained by reference;
-        None means absent. Default: None.
-    anatomical_position : Optional[AnatomicalPosition], optional
-        Reported anatomy, independent of image coordinates; None means unknown.
-        Default: None.
-    source_location_codes : Optional[Dict[str, Any]], optional
-        Source location codes copied into a dict, retaining raw evidence.
-        Default: None.
-    source_depth_codes : Optional[Dict[str, Any]], optional
-        Source depth codes copied into a dict, retaining raw evidence. Default:
-        None.
-    source_distance_codes : Optional[Dict[str, Any]], optional
-        Source distance codes copied into a dict, retaining raw evidence.
-        Default: None.
-    normalization_evidence : Optional[Iterable[FindingNormalizationEvidence]], optional
-        Ordered source-code evidence retained for normalized finding anatomy.
-        Default: None.
-    descriptors : Optional[Mapping[str, Any]], optional
-        Reported descriptor payload; no diagnosis is inferred from these values.
-        Default: None.
-    normalization_warnings : Optional[Iterable[FindingNormalizationWarning]], optional
-        Ordered warnings for unknown or conflicting source codes. Default: None.
-    metadata : Optional[Mapping[str, Any]], optional
-        Consumer metadata, shallow-copied into a mutable dict. Nested values
-        remain shared. Default: None.
+        Finding number within the accession, stored as text; part of the key.
+        EMBED uses ``-9`` for a synthetic contralateral negative finding.
+    finding_type : str or None, optional
+        Reported finding category. Default None.
+    interpretation : ImagingInterpretation or None, optional
+        Assessment and recommendation. Default None.
+    anatomical_position : AnatomicalPosition or None, optional
+        Reported anatomy, independent of image coordinates. Default None.
+    source_location_codes, source_depth_codes, source_distance_codes : mapping, optional
+        Raw source anatomy codes, copied into dicts.
+    normalization_evidence : iterable of FindingNormalizationEvidence, optional
+        How the anatomy was normalized from source codes.
+    descriptors : mapping, optional
+        Reported descriptors, copied into a dict. No diagnosis is inferred.
+    normalization_warnings : iterable of FindingNormalizationWarning, optional
+        Unknown or conflicting anatomy codes.
+    metadata : mapping, optional
+        Consumer metadata, copied into a dict.
     record_type : FindingRecordType, optional
-        Semantic kind; FINDING is the default. Synthetic contralateral negatives
-        must be explicit. Default: FindingRecordType.FINDING.
-    procedures : Optional[Iterable[Procedure]], optional
-        Initial performed procedures; objects are attached by reference and may
-        be shared. Default: None.
-    source : Optional[object], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        FINDING or SYNTHETIC_CONTRALATERAL_NEGATIVE. Default FINDING.
+    source : SourceRef or None, optional
+        Row the finding was read from.
 
     Notes
     -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
-
-    Raises
-    ------
-    ValueError
-        Blank accession/finding ID or incompatible interpretation/procedure context.
-    TypeError
-        Invalid interpretation, anatomy, evidence or warning type."""
-
-    __key_fields__ = ("accession_number", "finding_number")
-
-    finding_type: Optional[str]
-    """Reported finding category; None means not supplied."""
-    interpretation: Optional[ImagingInterpretation]
-    """Finding-level assessment/recommendation object, retained by reference; None
-    means absent.
+    ``procedures`` and ``pathology`` are resolved by the graph from the keys
+    those entities store; a finding without a graph has none.
     """
+
+    kind = "finding"
+    __key_fields__ = ("accession_number", "finding_number")
+    _references = (Reference("accession_number", "exam"),)
+
+    accession_number: str
+    """Exam accession; part of the key."""
+    finding_number: str
+    """Finding number within the accession; part of the key."""
+    laterality: Laterality
+    """Breast side; an attribute, not part of the key."""
+    finding_type: Optional[str]
+    """Reported finding category."""
+    interpretation: Optional[ImagingInterpretation]
+    """Assessment and recommendation."""
     anatomical_position: Optional[AnatomicalPosition]
-    """Reported anatomy, independent of image coordinates; None means unknown."""
+    """Reported anatomy, independent of image coordinates."""
+    source_location_codes: Dict[str, Any]
+    """Raw source location codes."""
+    source_depth_codes: Dict[str, Any]
+    """Raw source depth codes."""
+    source_distance_codes: Dict[str, Any]
+    """Raw source distance codes, including exceptional negative values."""
+    normalization_evidence: Tuple[FindingNormalizationEvidence, ...]
+    """How the anatomy was normalized from source codes."""
+    normalization_warnings: Tuple[FindingNormalizationWarning, ...]
+    """Unknown or conflicting anatomy codes."""
+    descriptors: Dict[str, Any]
+    """Reported descriptors."""
+    metadata: Dict[str, Any]
+    """Consumer metadata."""
+    record_type: FindingRecordType
+    """FINDING or SYNTHETIC_CONTRALATERAL_NEGATIVE."""
     source: Optional[object]
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    """Row the finding was read from."""
 
     def __init__(
         self,
@@ -248,245 +228,111 @@ class Finding(MutableEntity):
         finding_type: Optional[str] = None,
         interpretation: Optional[ImagingInterpretation] = None,
         anatomical_position: Optional[AnatomicalPosition] = None,
-        source_location_codes: Optional[Dict[str, Any]] = None,
-        source_depth_codes: Optional[Dict[str, Any]] = None,
-        source_distance_codes: Optional[Dict[str, Any]] = None,
+        source_location_codes: Optional[Mapping[str, Any]] = None,
+        source_depth_codes: Optional[Mapping[str, Any]] = None,
+        source_distance_codes: Optional[Mapping[str, Any]] = None,
         normalization_evidence: Optional[Iterable[FindingNormalizationEvidence]] = None,
         descriptors: Optional[Mapping[str, Any]] = None,
         normalization_warnings: Optional[Iterable[FindingNormalizationWarning]] = None,
         metadata: Optional[Mapping[str, Any]] = None,
         record_type: FindingRecordType = FindingRecordType.FINDING,
-        procedures: Optional[Iterable["Procedure"]] = None,
         source: Optional[object] = None,
     ) -> None:
         super().__init__()
-        self.accession_number = _required_text(accession_number, "accession_number")
-        self.laterality = Laterality.coerce(laterality)
-        self.finding_number = _identifier_text(finding_number, "finding_number")
+        self.accession_number = accession_number
+        self.finding_number = finding_number
+        self.laterality = laterality
         self.finding_type = finding_type
         self.interpretation = interpretation
-        if interpretation is not None and interpretation.identity != self.identity:
-            raise ValueError("Finding interpretation identity must match Finding")
         self.anatomical_position = anatomical_position
-        self._source_location_codes = dict(source_location_codes or {})
-        self._source_depth_codes = dict(source_depth_codes or {})
-        self._source_distance_codes = dict(source_distance_codes or {})
-        self._normalization_evidence = list(normalization_evidence or ())
-        self._descriptors = dict(descriptors or {})
-        self._normalization_warnings = list(normalization_warnings or ())
-        self._metadata = dict(metadata or {})
-        self.record_type = FindingRecordType(record_type)
+        self.source_location_codes = dict(source_location_codes or {})
+        self.source_depth_codes = dict(source_depth_codes or {})
+        self.source_distance_codes = dict(source_distance_codes or {})
+        self.normalization_evidence = tuple(normalization_evidence or ())
+        self.descriptors = dict(descriptors or {})
+        self.normalization_warnings = tuple(normalization_warnings or ())
+        self.metadata = dict(metadata or {})
+        self.record_type = record_type
         self.source = source
-        self._procedures: List["Procedure"] = []
-        for procedure in procedures or ():
-            self._attach_local(procedure)
-        self._finish_initialization()
+
+    def _coerce(self, name: str, value: Any) -> Any:
+        if name == "accession_number":
+            return _required_text(value, "accession_number")
+        if name == "finding_number":
+            return _identifier_text(value, "finding_number")
+        if name == "laterality":
+            return Laterality.coerce(value)
+        if name == "record_type":
+            return FindingRecordType(value)
+        if name in {"source_location_codes", "source_depth_codes", "source_distance_codes", "descriptors", "metadata"}:
+            return dict(value or {})
+        if name in {"normalization_evidence", "normalization_warnings"}:
+            return tuple(value or ())
+        if name == "interpretation" and value is not None and not isinstance(value, ImagingInterpretation):
+            raise TypeError("interpretation must be an ImagingInterpretation or None")
+        return value
 
     @property
     def identity(self) -> Tuple[str, str]:
-        """Source-stable identity: accession and finding number."""
+        """Return ``(accession_number, finding_number)``."""
 
         return self.accession_number, self.finding_number
 
-    @property
-    def finding_id(self) -> str:
-        """Alias for finding_number; unique only within an accession."""
-
-        return ":".join((self.accession_number, self.finding_number))
+    def _children(self, kind: str) -> Tuple[Any, ...]:
+        graph = self.graph
+        return graph.children(self, kind) if graph is not None else ()
 
     @property
-    def source_location_codes(self) -> Dict[str, Any]:
-        """Live dictionary of raw source location evidence."""
+    def exam(self) -> Optional["Exam"]:
+        """The exam with this accession if registered, else None."""
 
-        return readonly_mapping(self._source_location_codes)  # type: ignore[return-value]
-
-    @property
-    def source_depth_codes(self) -> Dict[str, Any]:
-        """Live dictionary of raw source depth evidence."""
-
-        return readonly_mapping(self._source_depth_codes)  # type: ignore[return-value]
-
-    @property
-    def source_distance_codes(self) -> Dict[str, Any]:
-        """Live dictionary of raw source distance evidence."""
-
-        return readonly_mapping(self._source_distance_codes)  # type: ignore[return-value]
-
-    @property
-    def normalization_evidence(self) -> Tuple[FindingNormalizationEvidence, ...]:
-        """Immutable tuple of source normalization evidence in supplied order."""
-
-        return tuple(self._normalization_evidence)
-
-    @property
-    def descriptors(self) -> Dict[str, Any]:
-        """Reported descriptors in stored order; container behavior follows the return
-        type and values are not deep-copied.
-        """
-
-        return self._descriptors
-
-    @descriptors.setter
-    def descriptors(self, values: Mapping[str, Any]) -> None:
-        """Reported descriptors in stored order; container behavior follows the return
-        type and values are not deep-copied.
-        """
-
-        self._descriptors = dict(values)
-
-    @property
-    def normalization_warnings(self) -> Tuple[FindingNormalizationWarning, ...]:
-        """Immutable tuple of normalization warnings in supplied order."""
-
-        return tuple(self._normalization_warnings)
-
-    @property
-    def metadata(self) -> Dict[str, Any]:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        return self._metadata
-
-    @metadata.setter
-    def metadata(self, values: Dict[str, Any]) -> None:
-        """Mutable consumer metadata dictionary. Assignment shallow-copies the mapping;
-        nested values remain shared.
-        """
-
-        self._metadata = dict(values)
+        graph = self.graph
+        return graph.exam(self.accession_number) if graph is not None else None
 
     @property
     def procedures(self) -> Tuple["Procedure", ...]:
-        """Tuple of live performed procedures in stored traversal order, deduplicated
-        by Python identity where aggregated.
-        """
+        """Procedures attached to this finding."""
 
-        return tuple(self._procedures)
-
-    @property
-    def pathologies(self) -> Tuple["Pathology", ...]:
-        """Alias for pathology, preserving live objects and collection order."""
-
-        result: List["Pathology"] = []
-        seen = set()
-        for procedure in self._procedures:
-            for pathology in procedure.pathologies:
-                if id(pathology) not in seen:
-                    seen.add(id(pathology))
-                    result.append(pathology)
-        return tuple(result)
+        return self._children("procedure")
 
     @property
     def pathology(self) -> Tuple["Pathology", ...]:
-        """Tuple of live pathology bundles in stored traversal order, deduplicated by
-        Python identity where aggregated.
-        """
+        """Pathology attached to this finding or to its procedures, once each."""
 
-        return self.pathologies
-
-    def merge_observation(self, observation: "Finding") -> None:
-        """Merge a compatible repeated observation in place."""
-
-        if not isinstance(observation, Finding):
-            raise TypeError("observation must be a Finding")
-        if observation.identity != self.identity:
-            raise ValueError("Finding observations must have matching identity")
-        conflicts = tuple(
-            attribute
-            for attribute in ("laterality", "finding_type")
-            if getattr(self, attribute) is not None
-            and getattr(observation, attribute) is not None
-            and getattr(self, attribute) != getattr(observation, attribute)
-        )
-        if conflicts:
-            raise ValueError(
-                "Finding observations conflict on populated attributes: "
-                + ", ".join(conflicts)
-            )
-        if self.finding_type is None:
-            self.finding_type = observation.finding_type
-        self._metadata["source_row_count"] = int(
-            self._metadata.get("source_row_count", 1)
-        ) + 1
+        found: List["Pathology"] = []
+        for item in (*self._children("pathology"), *(p for proc in self.procedures for p in proc.pathology)):
+            if all(item is not existing for existing in found):
+                found.append(item)
+        return tuple(found)
 
     def add_procedure(self, procedure: "Procedure") -> "Procedure":
-        """Attach procedure and return the retained live object.
+        """Attach a procedure to this finding and return it."""
 
-        Parameters
-        ----------
-        procedure : Procedure
-            Compatible object with matching parent context. Retained by reference.
+        return ensure_graph(self).attach(self, procedure)
 
-        Returns
-        -------
-        Procedure
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
+    def add_pathology(self, pathology: "Pathology") -> "Pathology":
+        """Attach a pathology bundle directly to this finding and return it."""
 
-        Raises
-        ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
-        """
+        return ensure_graph(self).attach(self, pathology)
 
-        if self.graph is not None:
-            result = self.graph.attach(self, procedure)
-            return procedure if result is None else result
-        return self._attach_local(procedure)
-
-    def _children(self) -> Tuple[MutableEntity, ...]:
-        return tuple(self._procedures)
-
-    def _attach_local(self, child: MutableEntity) -> "Procedure":
-        from embed_data_model.clinical.procedures import Procedure
-
-        if not isinstance(child, Procedure):
-            raise TypeError("Finding children must be Procedure entities")
-        for existing in self._procedures:
-            if existing.identity == child.identity:
-                if existing is child:
-                    return existing
-                raise ValueError(
-                    "Distinct Procedure objects cannot share an identity in a Finding"
-                )
-        self._procedures.append(child)
-        return child
-
-    def _detach_local(self, child: MutableEntity) -> MutableEntity:
-        for index, existing in enumerate(self._procedures):
-            if existing is child:
-                return self._procedures.pop(index)
-        return child  # idempotent graph recomposition
-
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
+    def _to_dict_data(self) -> Dict[str, Any]:
         return {
             "accession_number": self.accession_number,
-            "laterality": self.laterality,
             "finding_number": self.finding_number,
+            "laterality": self.laterality,
             "finding_type": self.finding_type,
+            "record_type": self.record_type,
             "interpretation": self.interpretation,
             "anatomical_position": self.anatomical_position,
-            "source_location_codes": self._source_location_codes,
-            "source_depth_codes": self._source_depth_codes,
-            "source_distance_codes": self._source_distance_codes,
+            "source_location_codes": self.source_location_codes,
+            "source_depth_codes": self.source_depth_codes,
+            "source_distance_codes": self.source_distance_codes,
             "normalization_evidence": self.normalization_evidence,
-            "descriptors": self._descriptors,
             "normalization_warnings": self.normalization_warnings,
-            "metadata": self._metadata,
-            "record_type": self.record_type,
+            "descriptors": self.descriptors,
+            "metadata": self.metadata,
             "source": self.source,
-            "procedures": self.procedures,
-            "pathology": self.pathology,
         }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
 
 
 def _required_text(value: Any, name: str) -> str:

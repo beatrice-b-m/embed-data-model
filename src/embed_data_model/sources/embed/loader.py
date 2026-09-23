@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -10,6 +9,7 @@ from math import isfinite
 from numbers import Integral, Real
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Union
 
+from embed_data_model.clinical.attributes import PatientAttributeObservation
 from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.findings import (
     Finding,
@@ -24,10 +24,22 @@ from embed_data_model.clinical.histories import (
 from embed_data_model.clinical.interpretations import ImagingInterpretation
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.anatomy import AnatomicalPosition, Quadrant
+from embed_data_model.core.codes import Code, Vocabulary
 from embed_data_model.core.graph import DatasetGraph
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, IssueSeverity, SourceRef
 from embed_data_model.core.tables import TableNormalizationError, TableRecord, _TableInput, iter_records
+from embed_data_model.sources.embed._values import (
+    cell,
+    code,
+    identifier,
+    is_missing,
+    reconcile_merge,
+    same as _same,
+    scalar,
+    text,
+)
+from embed_data_model.sources.embed import vocabulary
 from embed_data_model.sources.embed.columns import resolve_columns
 from embed_data_model.sources.embed.histories import (
     normalize_medication_history,
@@ -56,8 +68,8 @@ class LoadReport:
 
     Notes
     -----
-    The report is frozen; its graph remains mutable. Issues are not automatically
-    copied into graph.issues. Run validate explicitly for quality checks.
+    The report is frozen; its graph remains mutable. Run validate explicitly
+    for quality checks.
     """
 
     graph: DatasetGraph
@@ -93,14 +105,11 @@ def load_embed(
     pathology: Optional[_TableInput] = None,
     magview: Optional[_TableInput] = None,
     registry: Optional[_TableInput] = None,
-    registry_rows: Optional[_TableInput] = None,
     into: Optional[DatasetGraph] = None,
     source_scope: Optional[str] = None,
-    identity_namespace: Optional[str] = None,
     source_keys: Optional[Mapping[str, SourceKeySelector]] = None,
     columns: Optional[Mapping[str, Mapping[str, Optional[str]]]] = None,
     mode: Literal["refresh", "merge"] = "refresh",
-    retain_raw: bool = False,
 ) -> LoadReport:
     """Load any supported subset of EMBED tables into a mutable graph.
 
@@ -122,9 +131,8 @@ def load_embed(
     magview : iterable of mappings or DataFrame-like, optional
         Wide rows projected into clinical grains and supplied associations.
         Default None. Wide and narrow projections are reconciled together.
-    registry, registry_rows : iterable of mappings or DataFrame-like, optional
-        Patient-scoped registry entries. Both default None; registry_rows is an
-        alias and cannot be supplied together with registry. Payload columns are
+    registry : iterable of mappings or DataFrame-like, optional
+        Patient-scoped registry entries. Default None. Payload columns are
         unbound by default and must be configured explicitly.
     into : DatasetGraph or None, optional
         Existing graph to mutate in place; None creates a graph. Existing entity
@@ -132,9 +140,6 @@ def load_embed(
     source_scope : str or None, optional
         Non-empty diagnostic materialization label. None uses the target graph's
         scope ("in-memory" for a new graph); does not change an existing scope.
-    identity_namespace : str or None, optional
-        Namespace label, default "default" for a new graph. If supplied with
-        into, must match its namespace. This is not a prefix applied to IDs.
     source_keys : mapping or None, optional
         Table name to physical column name or row callback. None omits physical
         keys. These diagnose rows; neither keys, indexes nor ordinals supply
@@ -143,15 +148,15 @@ def load_embed(
         Table name to semantic-field-to-column overrides. None uses
         ``sources.embed.columns.DEFAULT_COLUMNS``. Partial maps retain defaults;
         a None binding disables an optional field. Required fields cannot be
-        unbound. Supported table names are the input names except registry_rows.
+        unbound. Supported table names are the input table names.
     mode : {"refresh", "merge"}, optional
-        Default "refresh" resets bound adapter-managed scalars at addressed
-        grains, including absent/null fields. "merge" applies non-null values;
-        conflicting populated facts become unknown with an issue. Missing tables
+        Default "refresh" replaces bound adapter-managed scalars at addressed
+        grains whose columns the rows supply, including explicit nulls; a
+        column absent from every row leaves its field unchanged. "merge"
+        applies non-null values; a value conflicting with another supplied
+        value or with the populated graph value becomes unknown with an
+        issue. Missing tables
         and unspecified descendant grains survive either mode.
-    retain_raw : bool, optional
-        Compatibility control, default False. Currently validated but otherwise
-        unused: True does not retain a raw-row ledger.
 
     Returns
     -------
@@ -162,10 +167,9 @@ def load_embed(
     Raises
     ------
     TypeError
-        Invalid into, retain_raw, source_keys or columns shape, or both registry
-        aliases supplied.
+        Invalid into, source_keys or columns shape.
     ValueError
-        Invalid mode, scope, namespace, column binding or source-key table.
+        Invalid mode, scope, column binding or source-key table.
 
     Notes
     -----
@@ -174,6 +178,9 @@ def load_embed(
     cancellation control, and may partially mutate the graph before an exception.
     There is no row limit; memory use grows with the materialized inputs. No files
     or pixels are opened. Objects own metadata, not file resources.
+
+    Coded values (assessment, recommendation, procedure type, pathology
+    descriptors) are trimmed and uppercased before comparison and storage.
 
     ROI input replaces the complete addressed collection in either mode, including
     manual annotations. Save/pop manual ROIs before replacement if needed.
@@ -194,34 +201,14 @@ def load_embed(
         raise TypeError("into must be a DatasetGraph or None")
     if mode not in {"refresh", "merge"}:
         raise ValueError("mode must be 'refresh' or 'merge'")
-    if not isinstance(retain_raw, bool):
-        raise TypeError("retain_raw must be a bool")
-    if registry is not None and registry_rows is not None:
-        raise TypeError("use either registry or registry_rows, not both")
-    if registry is None:
-        registry = registry_rows
     if source_scope is not None and (
         not isinstance(source_scope, str) or not source_scope.strip()
     ):
         raise ValueError("source_scope must be a non-empty string or None")
-    if identity_namespace is not None and (
-        not isinstance(identity_namespace, str) or not identity_namespace.strip()
-    ):
-        raise ValueError("identity_namespace must be a non-empty string or None")
 
     column_maps = resolve_columns(columns)
     selectors = _resolve_source_keys(source_keys)
-    if (
-        into is not None
-        and identity_namespace is not None
-        and identity_namespace != into.identity_namespace
-    ):
-        raise ValueError("identity_namespace does not match the target DatasetGraph")
-
-    graph = into or DatasetGraph(
-        identity_namespace=identity_namespace,
-        source_scope=source_scope,
-    )
+    graph = into or DatasetGraph(source_scope=source_scope)
     resolved_scope = source_scope or graph.source_scope
     issues: list[Issue] = []
 
@@ -255,9 +242,11 @@ def load_embed(
         "exams": materialized["exams"] + projected["exams"],
         "findings": materialized["findings"] + projected["findings"],
     }
+    # Source patient claims per accession, applied once after every adapter ran.
+    claims: dict[str, set[str]] = {}
     _load_patients(core_rows["patients"], graph, column_maps["patients"], mode, issues)
-    _load_exams(core_rows["exams"], graph, column_maps["exams"], mode, issues)
-    _load_findings(core_rows["findings"], graph, column_maps["findings"], mode, issues, resolved_scope)
+    _load_exams(core_rows["exams"], graph, column_maps["exams"], mode, issues, claims)
+    _load_findings(core_rows["findings"], graph, column_maps["findings"], mode, issues, resolved_scope, claims)
 
     _load_history(
         materialized["hormone_history"],
@@ -289,6 +278,7 @@ def load_embed(
         columns=column_maps,
         mode=mode,
         issues=issues,
+        claims=claims,
     )
     load_imaging(
         images=[dict(item.mapping) for item in materialized["images"]],
@@ -297,7 +287,9 @@ def load_embed(
         columns=column_maps,
         mode=mode,
         issues=issues,
+        claims=claims,
     )
+    _apply_patient_claims(graph, claims, mode)
 
     return LoadReport(graph=graph, issues=tuple(issues), source_scope=resolved_scope)
 
@@ -426,25 +418,53 @@ def _load_patients(
     mode: str,
     issues: list[Issue],
 ) -> None:
+    """Record patient attributes per exam context and derive stable scalars.
+
+    Patient attributes repeat on every exam row and may legitimately change
+    over time. Each row contributes an observation for its exam context
+    (accession and exam date); refresh replaces the observation for a supplied
+    context and merge fills it. The scalar attribute keeps a value only when
+    every observation of the patient agrees; otherwise consumers choose one
+    with ``Patient.attribute_as_of``.
+    """
+
+    converters = {"sex": text, "race": text, "ethnicity": text, "birth_year": _birth_year_value}
     groups = _group_rows(rows, columns, ("patient_id",), "patient", issues)
     for key in sorted(groups, key=repr):
-        group = groups[key]
         patient = _ensure_patient(graph, key)
-        fields, conflicts = _combine_fields(
-            group,
-            columns,
-            {
-                "sex": _text_value,
-                "birth_year": _birth_year_value,
-                "context_date": _date_value,
-            },
-            "patient",
-            key,
-            issues,
-        )
-        updates = _updates_for_mode(fields, conflicts, columns, mode)
-        if updates:
-            _update_entity(graph, patient, updates)
+        date_column = columns.get("context_date")
+        contexts: dict[tuple[Optional[str], Optional[date]], list[_InputRow]] = {}
+        for row in groups[key]:
+            context = (
+                _id_at(row.mapping, columns.get("accession")),
+                _date_value(row.mapping.get(date_column)) if date_column else None,
+            )
+            contexts.setdefault(context, []).append(row)
+        touched: set[str] = set()
+        for (accession, context_date), context_rows in sorted(contexts.items(), key=repr):
+            fields, conflicts = _combine_fields(context_rows, columns, converters, "patient", key, issues)
+            updates = _updates_for_mode(fields, conflicts, mode)
+            current = {
+                item.attribute: item.value
+                for item in patient.attribute_observations
+                if item.accession_number == accession and item.context_date == context_date
+            }
+            if mode == "merge":
+                reconcile_merge({name: current.get(name) for name in updates}, updates, grain="patient", key=key, issues=issues)
+            for attribute, value in updates.items():
+                patient.add_attribute_observation(
+                    PatientAttributeObservation(attribute, value, accession, context_date)
+                )
+                touched.add(attribute)
+        scalars = {}
+        for attribute in sorted(touched):
+            values: list[Any] = []
+            for item in patient.attribute_observations:
+                if item.attribute == attribute and item.value is not None and item.value not in values:
+                    values.append(item.value)
+            scalars[attribute] = values[0] if len(values) == 1 else None
+        if scalars:
+            graph.update(patient, **scalars)
 
 
 def _load_exams(
@@ -453,6 +473,7 @@ def _load_exams(
     columns: Mapping[str, Optional[str]],
     mode: str,
     issues: list[Issue],
+    claims: dict[str, set[str]],
 ) -> None:
     groups = _group_rows(rows, columns, ("accession",), "exam", issues)
     for key in sorted(groups, key=repr):
@@ -461,29 +482,30 @@ def _load_exams(
         fields, conflicts = _combine_fields(
             group,
             columns,
-            {"exam_date": _text_value, "exam_description": _text_value},
+            {
+                "exam_date": text,
+                "exam_description": text,
+                "density": _decoder(vocabulary.DENSITY),
+                "exam_type": _decoder(vocabulary.EXAM_TYPE, uppercase=False),
+                "visit_type": _decoder(vocabulary.VISIT_TYPE),
+                "modality": _decoder(vocabulary.EXAM_MODALITY),
+                "patient_age": _number,
+            },
             "exam",
             key,
             issues,
         )
+        renamed = {"exam_description": "description"}
         updates = _updates_for_mode(
-            {
-                "exam_date": fields.get("exam_date"),
-                "description": fields.get("exam_description"),
-            },
-            {
-                "exam_date": conflicts.get("exam_date", False),
-                "description": conflicts.get("exam_description", False),
-            },
-            {
-                "exam_date": columns.get("exam_date"),
-                "description": columns.get("exam_description"),
-            },
+            {renamed.get(name, name): value for name, value in fields.items()},
+            {renamed.get(name, name): value for name, value in conflicts.items()},
             mode,
         )
+        if mode == "merge":
+            reconcile_merge(_current(exam, updates), updates, grain="exam", key=key, issues=issues)
         if updates:
-            _update_entity(graph, exam, updates)
-        _claim_exam_from_rows(graph, exam, group, columns)
+            graph.update(exam, **updates)
+        _claim_exam_from_rows(graph, exam, group, columns, claims)
 
 
 def _load_findings(
@@ -493,6 +515,7 @@ def _load_findings(
     mode: str,
     issues: list[Issue],
     source_scope: str,
+    claims: dict[str, set[str]],
 ) -> None:
     groups = _group_rows(
         rows,
@@ -505,36 +528,35 @@ def _load_findings(
         group = groups[key]
         accession, finding_number = key
         exam = _ensure_exam(graph, accession)
-        _claim_exam_from_rows(graph, exam, group, columns)
+        _claim_exam_from_rows(graph, exam, group, columns, claims)
         fields, conflicts = _combine_fields(
             group,
             columns,
             {
                 "laterality": lambda value: Laterality.coerce(value),
-                "finding_type": _text_value,
-                "assessment": _text_value,
-                "recommendation": _text_value,
-                "record_type": _text_value,
+                "finding_type": text,
+                "assessment": _decoder(vocabulary.ASSESSMENT),
+                "recommendation": _decoder(vocabulary.RECOMMENDATION),
+                "record_type": text,
                 "location": _raw_value,
                 "depth": _raw_value,
                 "distance": _raw_value,
-                "descriptors": _literal_value,
+                **{name: _decoder(table) for name, table in FINDING_DESCRIPTORS.items()},
             },
             "finding",
             key,
             issues,
         )
-        if fields.get("laterality") is None:
-            laterality = Laterality.UNKNOWN
-        else:
-            laterality = fields["laterality"]
+        laterality = _finding_laterality(fields, conflicts, group, columns)
+        if laterality is Laterality.BILATERAL:
+            # A supplied null side is a populated bilateral fact, so merge
+            # applies it like any other supplied value.
+            fields["laterality"] = laterality
         record_type = _finding_record_type(fields.get("record_type"), finding_number)
         interpretation = _interpretation(
-            accession,
-            finding_number,
             fields.get("assessment"),
             fields.get("recommendation"),
-            _semantic_source(group, source_scope, "finding", key),
+            _semantic_source(group),
         )
         anatomy = _finding_anatomy(
             fields,
@@ -544,16 +566,9 @@ def _load_findings(
             key,
             issues,
         )
-        source = _semantic_source(group, source_scope, "finding", key)
-        evidence = anatomy["evidence"] if source is not None else ()
-        warnings = anatomy["warnings"] if source is not None else ()
-        descriptors = fields.get("descriptors")
-        if descriptors is None:
-            descriptor_map: dict[str, Any] = {}
-        elif isinstance(descriptors, Mapping):
-            descriptor_map = dict(descriptors)
-        else:
-            descriptor_map = {"value": descriptors}
+        source = _semantic_source(group)
+        evidence = anatomy["evidence"]
+        warnings = anatomy["warnings"]
         updates = {
             "laterality": laterality,
             "finding_type": fields.get("finding_type"),
@@ -564,7 +579,6 @@ def _load_findings(
             "source_distance_codes": anatomy["distance_codes"],
             "normalization_evidence": evidence,
             "normalization_warnings": warnings,
-            "descriptors": descriptor_map,
             "record_type": record_type,
         }
         dependencies = {
@@ -576,21 +590,31 @@ def _load_findings(
         managed_updates = {}
         for name, value in updates.items():
             semantics = dependencies.get(name, (_finding_field(name),))
-            if not any(columns.get(semantic) is not None for semantic in semantics):
+            if not any(semantic in fields for semantic in semantics):
                 continue
             if mode == "refresh" or any(conflicts.get(semantic) or fields.get(semantic) is not None for semantic in semantics):
                 managed_updates[name] = value
         updates = managed_updates
         existing = graph.get("finding", key)
+        descriptors = _finding_descriptors(existing, fields, conflicts, mode, key, issues)
+        if descriptors is not None:
+            updates["descriptors"] = descriptors
+        if existing is not None and mode == "merge":
+            scalars = {name: updates[name] for name in ("laterality", "finding_type") if name in updates}
+            reconcile_merge(_current(existing, scalars), scalars, grain="finding", key=key, issues=issues)
+            updates.update(scalars)
         if existing is not None and "interpretation" in updates and existing.interpretation is not None:
             # Interpretations share the finding grain; refresh their bound fields
             # without discarding a consumer's live reference or extension state.
             current = existing.interpretation
             for name in ("assessment", "recommendation"):
-                if columns.get(name) is not None and (
+                if name in fields and (
                     mode == "refresh" or conflicts.get(name) or fields.get(name) is not None
                 ):
-                    current.update(**{name: fields.get(name)})
+                    change = {name: fields.get(name)}
+                    if mode == "merge":
+                        reconcile_merge(_current(current, change), change, grain="finding", key=key, issues=issues)
+                    current.update(**change)
             updates["interpretation"] = current
         if existing is None:
             finding = Finding(
@@ -609,13 +633,9 @@ def _load_findings(
                 record_type=updates.get("record_type", record_type),
                 source=source,
             )
-            finding = graph.register(finding)
+            graph.register(finding)
         elif updates:
-            _update_entity(graph, existing, updates)
-            finding = existing
-        else:
-            finding = existing
-        graph.reference("finding", key, "exam", accession, relation="parent")
+            graph.update(existing, **updates)
 
 
 def _load_history(
@@ -643,8 +663,8 @@ def _load_history(
         observations: list[Any] = []
         for row in groups[patient_id]:
             source = row.source
-            record_id = _mapped_identifier(row.mapping, columns.get("record_id"))
-            observation, row_issues = normalizer(row.mapping, columns, source, patient_id, record_id=record_id)
+            record_id = _id_at(row.mapping, columns.get("record_id"))
+            observation, row_issues = normalizer(row.mapping, columns, source, record_id=record_id)
             issues.extend(row_issues)
             if observation is not None and isinstance(observation, observation_type):
                 observations.append(observation)
@@ -677,7 +697,7 @@ def _apply_history_snapshot(
             facts.append(item)
         else:
             incoming_groups.setdefault(item.record_id, []).append(item)
-    managed = ("category", "medication", "context_accession", "continuous", "current", "reported_duration", "started", "stopped", "comment") if kind == "medication" else ("category", "procedure", "detail", "context_accession", "laterality", "reported_result")
+    managed = ("category", "medication", "context_accession", "continuous", "current", "reported_duration", "started", "stopped", "comment") if kind == "medication" else ("category", "procedure", "context_accession", "laterality", "reported_result")
     for record_id, observations in incoming_groups.items():
         target = keyed.get(record_id)
         updates: dict[str, Any] = {}
@@ -716,7 +736,7 @@ def _history_kind(item: Any, kind: str) -> bool:
 
 def _set_history_values(patient: Any, values: Sequence[Any]) -> None:
     patient.replace_history("medication", [item for item in values if isinstance(item, MedicationHistoryObservation)])
-    patient.replace_history("reported_procedure", [item for item in values if isinstance(item, ProcedureHistoryObservation)])
+    patient.replace_history("procedure", [item for item in values if isinstance(item, ProcedureHistoryObservation)])
 
 
 def _ensure_patient(graph: DatasetGraph, patient_id: str) -> Any:
@@ -738,17 +758,34 @@ def _claim_exam_from_rows(
     exam: Any,
     rows: Sequence[_InputRow],
     columns: Mapping[str, Optional[str]],
+    claims_by_exam: dict[str, set[str]],
 ) -> None:
     patient_column = columns.get("patient_id")
-    claims = {
-        identifier
-        for row in rows
-        if (identifier := _mapped_identifier(row.mapping, patient_column)) is not None
-    }
+    claims = {pid for pid in (_id_at(row.mapping, patient_column) for row in rows) if pid is not None}
     for patient_id in claims:
         _ensure_patient(graph, patient_id)
-    if claims:
-        graph.claim_patient(exam, claims)
+    claims_by_exam.setdefault(exam.accession_number, set()).update(claims)
+
+
+def _apply_patient_claims(
+    graph: DatasetGraph,
+    claims_by_exam: Mapping[str, set[str]],
+    mode: str,
+) -> None:
+    """Apply the patient claims one invocation supplied for each exam.
+
+    Refresh replaces an exam's claims with this snapshot's claims, so a
+    corrected source patient ID replaces the old one. Merge adds them.
+    """
+
+    for accession, claims in claims_by_exam.items():
+        exam = graph.exam(accession)
+        if exam is None or not claims:
+            continue
+        if mode == "refresh":
+            graph.set_patient_claims(exam, claims)
+        else:
+            graph.claim_patient(exam, claims)
 
 
 def _group_rows(
@@ -782,7 +819,7 @@ def _semantic_key(
     columns: Mapping[str, Optional[str]],
     identity: Sequence[str],
 ) -> Any:
-    values = tuple(_mapped_identifier(row, columns.get(field)) for field in identity)
+    values = tuple(_id_at(row, columns.get(field)) for field in identity)
     if any(value is None for value in values):
         return None
     return values[0] if len(values) == 1 else values
@@ -800,14 +837,16 @@ def _combine_fields(
     conflicts: dict[str, bool] = {}
     for semantic, converter in converters.items():
         physical = columns.get(semantic)
-        if physical is None:
+        if physical is None or not _column_supplied(rows, physical):
+            # An unbound column, or one absent from every row, is not part of
+            # this snapshot: refresh leaves the current value alone.
             continue
         candidates: list[Any] = []
         for row in rows:
             if physical not in row.mapping:
                 continue
-            raw = _plain_scalar(row.mapping.get(physical))
-            if _is_missing(raw):
+            raw = scalar(row.mapping.get(physical))
+            if is_missing(raw):
                 continue
             try:
                 candidate = converter(raw)
@@ -836,40 +875,21 @@ def _combine_fields(
 def _updates_for_mode(
     fields: Mapping[str, Any],
     conflicts: Mapping[str, bool],
-    columns: Mapping[str, Optional[str]],
     mode: str,
 ) -> dict[str, Any]:
+    """Select supplied field values to apply: all in refresh, populated in merge."""
+
     result: dict[str, Any] = {}
     for semantic, value in fields.items():
-        if columns.get(semantic) is None:
-            continue
         if mode == "refresh" or conflicts.get(semantic, False) or value is not None:
             result[semantic] = value
     return result
 
 
-def _update_entity(graph: DatasetGraph, entity: Any, updates: Mapping[str, Any]) -> None:
-    prepared: dict[str, Any] = {}
-    private_fields = {
-        "source_location_codes": "_source_location_codes",
-        "source_depth_codes": "_source_depth_codes",
-        "source_distance_codes": "_source_distance_codes",
-        "normalization_evidence": "_normalization_evidence",
-        "normalization_warnings": "_normalization_warnings",
-        "descriptors": "_descriptors",
-        "metadata": "_metadata",
-        "history_observations": "_history_observations",
-    }
-    for field, value in updates.items():
-        target = private_fields.get(field, field)
-        if target in {"_normalization_evidence", "_normalization_warnings"}:
-            value = list(value or ())
-        elif target == "_descriptors":
-            value = dict(value or {})
-        elif target == "_metadata":
-            value = dict(value or {})
-        prepared[target] = value
-    graph.update(entity, **prepared)
+def _current(entity: Any, updates: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the entity's current values for the fields an update addresses."""
+
+    return {name: getattr(entity, name, None) for name in updates}
 
 
 def _finding_anatomy(
@@ -890,7 +910,7 @@ def _finding_anatomy(
     position: Optional[AnatomicalPosition] = None
     evidence: list[FindingNormalizationEvidence] = []
     warnings: list[FindingNormalizationWarning] = []
-    source = _semantic_source(rows, source_scope, "finding", key)
+    source = _semantic_source(rows)
     if has_anatomy:
         normalized = normalize_magview_location(
             laterality=laterality,
@@ -898,48 +918,47 @@ def _finding_anatomy(
             depth_code=depth,
         )
         position = normalized.position
-        if source is not None:
-            source_fields = {
-                "location_code": ("location", location),
-                "depth_code": ("depth", depth),
-                "laterality": ("laterality", laterality.value),
-            }
-            for item in normalized.evidence:
-                source_field, raw_value = source_fields.get(
-                    item.field, (item.field, item.raw_value)
+        source_fields = {
+            "location_code": ("location", location),
+            "depth_code": ("depth", depth),
+            "laterality": ("laterality", laterality.value),
+        }
+        for item in normalized.evidence:
+            source_field, raw_value = source_fields.get(
+                item.field, (item.field, item.raw_value)
+            )
+            evidence.append(
+                FindingNormalizationEvidence(
+                    source=source,
+                    source_field=source_field,
+                    raw_value=raw_value,
+                    normalized_kind=item.normalized_kind,
+                    normalized_value=item.normalized_value,
                 )
-                evidence.append(
-                    FindingNormalizationEvidence(
-                        source=source,
-                        source_field=source_field,
-                        raw_value=raw_value,
-                        normalized_kind=item.normalized_kind,
-                        normalized_value=item.normalized_value,
-                    )
+            )
+        for warning in normalized.warnings:
+            source_field, raw_value = source_fields.get(
+                warning.field or "", (warning.field or "location", warning.raw_value)
+            )
+            warnings.append(
+                FindingNormalizationWarning(
+                    source=source,
+                    source_field=source_field,
+                    raw_value=raw_value,
+                    code=warning.code,
+                    message=warning.message,
                 )
-            for warning in normalized.warnings:
-                source_field, raw_value = source_fields.get(
-                    warning.field or "", (warning.field or "location", warning.raw_value)
+            )
+        for warning in normalized.warnings:
+            issues.append(
+                Issue(
+                    code=warning.code,
+                    message=warning.message,
+                    severity=IssueSeverity.WARNING,
+                    source=source,
+                    context={"identity": key},
                 )
-                warnings.append(
-                    FindingNormalizationWarning(
-                        source=source,
-                        source_field=source_field,
-                        raw_value=raw_value,
-                        code=warning.code,
-                        message=warning.message,
-                    )
-                )
-            for warning in normalized.warnings:
-                issues.append(
-                    Issue(
-                        code=warning.code,
-                        message=warning.message,
-                        severity=IssueSeverity.WARNING,
-                        source=source,
-                        context={"identity": key},
-                    )
-                )
+            )
     distance: Optional[float] = None
     if distance_raw is not None:
         try:
@@ -951,6 +970,20 @@ def _finding_anatomy(
                 Issue(
                     code="invalid_finding_distance",
                     message="finding distance could not be parsed as a finite number",
+                    severity=IssueSeverity.WARNING,
+                    source=source,
+                    context={"identity": key, "value": distance_raw},
+                )
+            )
+        if distance is not None and distance < 0:
+            # EMBED uses negative values such as -2 and -99 as undocumented
+            # exceptional representations, never as physical measurements.
+            # The raw code stays in source_distance_codes.
+            distance = None
+            issues.append(
+                Issue(
+                    code="exceptional_finding_distance",
+                    message="negative finding distance is an exceptional source code, not a measurement",
                     severity=IssueSeverity.WARNING,
                     source=source,
                     context={"identity": key, "value": distance_raw},
@@ -979,21 +1012,7 @@ def _finding_anatomy(
     }
 
 
-def _source_code_map(
-    rows: Sequence[_InputRow],
-    semantic: str,
-) -> dict[str, Any]:
-    values: dict[str, Any] = {}
-    for row in rows:
-        value = row.mapping.get(semantic)
-        if value is not None:
-            values[semantic] = value
-    return values
-
-
 def _interpretation(
-    accession: str,
-    finding_number: str,
     assessment: Any,
     recommendation: Any,
     source: Optional[SourceRef],
@@ -1001,12 +1020,105 @@ def _interpretation(
     if assessment is None and recommendation is None:
         return None
     return ImagingInterpretation(
-        accession_number=accession,
-        finding_number=finding_number,
-        sources=(source,) if source is not None else (),
         assessment=assessment,
         recommendation=recommendation,
+        sources=(source,) if source is not None else (),
     )
+
+
+FINDING_DESCRIPTORS: Mapping[str, Vocabulary] = {
+    "mass": vocabulary.PRESENCE,
+    "asymmetry": vocabulary.PRESENCE,
+    "architectural_distortion": vocabulary.PRESENCE,
+    "calcification": vocabulary.PRESENCE,
+    "mass_shape": vocabulary.MASS_SHAPE,
+    "mass_margin": vocabulary.MASS_MARGIN,
+    "mass_density": vocabulary.MASS_DENSITY,
+    "calcification_morphology": vocabulary.CALCIFICATION_MORPHOLOGY,
+    "calcification_distribution": vocabulary.CALCIFICATION_DISTRIBUTION,
+    "calcification_number": vocabulary.CALCIFICATION_NUMBER,
+    "other_finding": vocabulary.OTHER_FINDING,
+    "implant_finding": vocabulary.IMPLANT_FINDING,
+}
+"""Finding descriptors loaded into ``Finding.descriptors``, with the vocabulary decoding each."""
+
+
+def _source_code(value: Any) -> Optional[str]:
+    """Return a source code as text: whole numbers as ``"2"``, other text trimmed and uppercased."""
+
+    number = scalar(value)
+    if isinstance(number, Real) and not isinstance(number, bool) and float(number).is_integer():
+        return str(int(float(number)))
+    return code(number)
+
+
+def _decoder(table: Vocabulary, *, uppercase: bool = True) -> Callable[[Any], Optional[Code]]:
+    """Return a converter that decodes a source value with ``table``.
+
+    ``uppercase=False`` keeps the source case, for label-like codes such as the
+    exam type ``"screening and diagnostic"``; the lookup ignores case either way.
+    """
+
+    return lambda value: table.decode(_source_code(value) if uppercase else text(value))
+
+
+def _finding_descriptors(
+    existing: Any,
+    fields: Mapping[str, Any],
+    conflicts: Mapping[str, bool],
+    mode: str,
+    key: Any,
+    issues: list[Issue],
+) -> Optional[dict[str, Any]]:
+    """Return the finding's descriptor dict after applying supplied descriptor columns.
+
+    Each supplied descriptor follows the refresh and merge rules separately;
+    descriptors whose columns are absent stay as they are. Returns None when
+    no descriptor column was supplied.
+    """
+
+    supplied = [name for name in FINDING_DESCRIPTORS if name in fields]
+    if not supplied:
+        return None
+    current = dict(existing.descriptors) if existing is not None else {}
+    incoming = _updates_for_mode({name: fields[name] for name in supplied}, conflicts, mode)
+    if mode == "merge":
+        reconcile_merge({name: current.get(name) for name in incoming}, incoming, grain="finding", key=key, issues=issues)
+    for name, value in incoming.items():
+        if value is None:
+            current.pop(name, None)
+        else:
+            current[name] = value
+    return current
+
+
+def _finding_laterality(
+    fields: Mapping[str, Any],
+    conflicts: Mapping[str, bool],
+    rows: Sequence[_InputRow],
+    columns: Mapping[str, Optional[str]],
+) -> Laterality:
+    """Return finding side, reading a supplied null side as bilateral.
+
+    In EMBED MagView a null finding side is equivalent to code ``B`` and
+    projects to both breast sides. Only a column that is absent from every row,
+    or conflicting populated values, leave the side unknown.
+    """
+
+    value = fields.get("laterality")
+    if value is not None:
+        return value
+    if conflicts.get("laterality"):
+        return Laterality.UNKNOWN
+    if _column_supplied(rows, columns.get("laterality")):
+        return Laterality.BILATERAL
+    return Laterality.UNKNOWN
+
+
+def _column_supplied(rows: Sequence[_InputRow], column: Optional[str]) -> bool:
+    """Return whether any row carries ``column``, including an explicit null."""
+
+    return column is not None and any(column in row.mapping for row in rows)
 
 
 def _finding_record_type(value: Any, finding_number: str) -> FindingRecordType:
@@ -1031,60 +1143,46 @@ def _finding_field(name: str) -> str:
         "source_distance_codes": "distance",
         "normalization_evidence": "location",
         "normalization_warnings": "location",
-        "descriptors": "descriptors",
         "record_type": "record_type",
     }.get(name, name)
 
 
-def _all_values_absent(
-    fields: Mapping[str, Any],
-    columns: Mapping[str, Optional[str]],
-    semantic: str,
-) -> bool:
-    return columns.get(semantic) is not None and fields.get(semantic) is None
+def _semantic_source(rows: Sequence[_InputRow]) -> Optional[SourceRef]:
+    """Return the first physical source reference among a grain's rows."""
 
-
-def _semantic_source(
-    rows: Sequence[_InputRow],
-    source_scope: str,
-    grain: str,
-    key: Any,
-) -> Optional[SourceRef]:
     for row in rows:
         if row.source is not None:
             return row.source
     return None
 
 
-def _mapped_identifier(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    if column is None:
-        return None
-    return _normalize_identifier(row.get(column))
+def _id_at(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
+    """Return the normalized identifier in a bound column of a row, or None."""
 
-
-def _text_value(value: Any) -> Optional[str]:
-    if _is_missing(value):
-        return None
-    text = str(value).strip()
-    return text or None
+    return identifier(cell(row, column))
 
 
 def _raw_value(value: Any) -> Any:
-    return None if _is_missing(value) else _plain_scalar(value)
+    return None if is_missing(value) else scalar(value)
 
 
-def _literal_value(value: Any) -> Any:
-    value = _raw_value(value)
-    if isinstance(value, str):
-        try:
-            return ast.literal_eval(value)
-        except (SyntaxError, ValueError):
-            return value
-    return value
+def _number(value: Any) -> Optional[float]:
+    """Return a finite number (whole numbers as int), or None when not numeric."""
+
+    value = scalar(value)
+    if is_missing(value) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(number):
+        return None
+    return int(number) if number.is_integer() else number
 
 
 def _birth_year_value(value: Any) -> Optional[int]:
-    value = _plain_scalar(value)
+    value = scalar(value)
     if isinstance(value, bool):
         return None
     if isinstance(value, Integral):
@@ -1102,7 +1200,7 @@ def _birth_year_value(value: Any) -> Optional[int]:
 
 
 def _date_value(value: Any) -> Optional[date]:
-    value = _plain_scalar(value)
+    value = scalar(value)
     if isinstance(value, datetime):
         return value.date()
     if type(value) is date:
@@ -1119,62 +1217,6 @@ def _date_value(value: Any) -> Optional[date]:
         return date.fromisoformat(text)
     except ValueError:
         return None
-
-
-def _is_missing(value: Any) -> bool:
-    if value is None or type(value).__name__ in {"NAType", "NaTType"}:
-        return True
-    if isinstance(value, str):
-        return not value.strip()
-    try:
-        unequal = value != value
-        if type(unequal) is bool:
-            return unequal
-        item = getattr(unequal, "item", None)
-        if callable(item):
-            scalar = item()
-            return type(scalar) is bool and scalar
-    except (TypeError, ValueError):
-        return False
-    return False
-
-
-def _plain_scalar(value: Any) -> Any:
-    item = getattr(value, "item", None)
-    if callable(item) and not isinstance(value, (str, bytes)):
-        try:
-            return item()
-        except (TypeError, ValueError, OverflowError):
-            return value
-    return value
-
-
-def _normalize_identifier(value: Any) -> Optional[str]:
-    value = _plain_scalar(value)
-    if _is_missing(value) or isinstance(value, bool):
-        return None
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    if isinstance(value, Integral):
-        return str(int(value))
-    if isinstance(value, Real):
-        numeric = float(value)
-        if not isfinite(numeric):
-            return None
-        return str(int(numeric)) if numeric.is_integer() else str(value)
-    return None
-
-
-def _same(left: Any, right: Any) -> bool:
-    try:
-        equal = left == right
-        if type(equal) is bool:
-            return equal
-        item = getattr(equal, "item", None)
-        return bool(item()) if callable(item) else False
-    except (TypeError, ValueError):
-        return repr(left) == repr(right)
 
 
 __all__ = ["LoadReport", "load_embed"]

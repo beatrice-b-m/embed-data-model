@@ -9,7 +9,6 @@ quickstart, then use the [user guide](user-guide.md) for runnable examples.
   image and ROI identities, pathology keys, and supplied relationships.
 - [Downstream integration guide](downstream-integration.md) — dependency setup,
   table mappings, snapshot handling, and consumer acceptance checks.
-- [Qualification](qualification.md) — dated test and packaging evidence and its scope.
 - [Loading measurements](../benchmarks/README.md) — synthetic benchmark methodology
   and measured results.
 - [Mammography breast coordinate system](mammography-breast-coordinate-system.md) —

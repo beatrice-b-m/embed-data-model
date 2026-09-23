@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import copy
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 from embed_data_model.core.anatomy import ContinuousAnatomicalPosition, DepthThird
-from embed_data_model.core.entity import MutableEntity
 from embed_data_model.core.primitives import Laterality, ViewPosition
 
 
@@ -28,136 +26,51 @@ class LandmarkType(Enum):
     OTHER = "other"
 
 
-class ImageLandmark(MutableEntity):
-    """One mutable image-local point.
+@dataclass(frozen=True)
+class ImageLandmark:
+    """One named point in an image's pixel frame.
 
-    Coordinates and confidence are retained as supplied numeric facts. Their
-    clinical plausibility is a validation concern, so values outside an image
-    or outside a confidence range remain representable here.
+    Coordinates and confidence are kept as supplied; their plausibility is a
+    validation concern, so values outside the image or outside 0-1 remain
+    representable. A landmark belongs to the image that stores it and does not
+    repeat the image identifier. Use ``dataclasses.replace`` to change one.
 
-    Parameters
+    Attributes
     ----------
-    y : float
-        Image-local vertical coordinate in pixels, converted to float.
-    x : float
-        Image-local horizontal coordinate in pixels, converted to float.
+    y, x : float
+        Vertical and horizontal pixel coordinates, converted to float.
     landmark_type : LandmarkType, optional
-        Named point role; OTHER is the default. Default: LandmarkType.OTHER.
-    image_id : Optional[str], optional
-        Explicit non-empty model image identifier, independent of source SOP
-        identity. Default: None.
-    source : Optional[str], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
-    confidence : Optional[float], optional
-        Optional numeric confidence; converted to float. validate checks the
-        finite 0–1 range. Default: None.
-    provenance : Optional[str], optional
-        Optional annotation provenance label. Default: None.
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
+        Named point role. Default: LandmarkType.OTHER.
+    confidence : float or None, optional
+        Optional confidence; validate checks the finite 0-1 range. Default None.
+    source : str or None, optional
+        Optional label for where the point came from, such as an annotator or
+        model. Default None.
     """
 
     y: float
-    """Image-local vertical coordinate in pixels, converted to float."""
+    """Vertical pixel coordinate."""
     x: float
-    """Image-local horizontal coordinate in pixels, converted to float."""
-    landmark_type: LandmarkType
-    """Named point role; OTHER is the default. Default: LandmarkType.OTHER."""
-    image_id: Optional[str]
-    """Explicit non-empty model image identifier, independent of source SOP
-    identity. Default: None.
-    """
-    source: Optional[str]
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not
-    clinical events. Default: None.
-    """
-    confidence: Optional[float]
-    """Optional numeric confidence; converted to float. validate checks the finite
-    0–1 range. Default: None.
-    """
-    provenance: Optional[str]
-    """Optional annotation provenance label. Default: None."""
+    """Horizontal pixel coordinate."""
+    landmark_type: LandmarkType = LandmarkType.OTHER
+    """Named point role."""
+    confidence: Optional[float] = None
+    """Optional confidence; validate checks the finite 0-1 range."""
+    source: Optional[str] = None
+    """Optional label for where the point came from."""
 
-    __key_fields__ = ()
-
-    def __init__(
-        self,
-        y: float,
-        x: float,
-        landmark_type: LandmarkType = LandmarkType.OTHER,
-        image_id: Optional[str] = None,
-        source: Optional[str] = None,
-        confidence: Optional[float] = None,
-        provenance: Optional[str] = None,
-    ) -> None:
-        super().__init__()
-        object.__setattr__(self, "y", float(y))
-        object.__setattr__(self, "x", float(x))
-        object.__setattr__(self, "landmark_type", LandmarkType(landmark_type))
-        object.__setattr__(self, "image_id", image_id)
-        object.__setattr__(self, "source", source)
-        object.__setattr__(
-            self,
-            "confidence",
-            None if confidence is None else float(confidence),
-        )
-        object.__setattr__(self, "provenance", provenance)
-        self._finish_initialization()
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if name in {"y", "x"}:
-            value = float(value)
-        elif name == "landmark_type":
-            value = LandmarkType(value)
-        elif name == "confidence" and value is not None:
-            value = float(value)
-        super().__setattr__(name, value)
-
-    def _children(self) -> Tuple[MutableEntity, ...]:
-        return ()
-
-    def _attach_local(self, child: MutableEntity) -> MutableEntity:
-        raise TypeError("ImageLandmark does not contain domain children")
-
-    def _detach_local(self, child: MutableEntity) -> MutableEntity:
-        raise TypeError("ImageLandmark does not contain domain children")
-
-    def update(self, **fields: Any) -> "ImageLandmark":
-        """Update this landmark, delegating ownership handling to the base."""
-
-        prepared: Dict[str, Any] = dict(fields)
-        if "y" in prepared:
-            prepared["y"] = float(prepared["y"])
-        if "x" in prepared:
-            prepared["x"] = float(prepared["x"])
-        if "landmark_type" in prepared:
-            prepared["landmark_type"] = LandmarkType(prepared["landmark_type"])
-        if "confidence" in prepared and prepared["confidence"] is not None:
-            prepared["confidence"] = float(prepared["confidence"])
-        super().update(**prepared)
-        return self
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "y", float(self.y))
+        object.__setattr__(self, "x", float(self.x))
+        object.__setattr__(self, "landmark_type", LandmarkType(self.landmark_type))
+        if self.confidence is not None:
+            object.__setattr__(self, "confidence", float(self.confidence))
 
     @property
     def point(self) -> Tuple[float, float]:
-        """Return the image-local point as ``(y, x)``."""
+        """Return ``(y, x)`` in pixels."""
 
         return self.y, self.x
-
-    def owned_by(self, image_id: str) -> "ImageLandmark":
-        """Return an image-owned copy without sharing graph membership."""
-
-        if self.image_id == image_id:
-            return self
-        owned = copy.copy(self)
-        object.__setattr__(owned, "_graph", None)
-        object.__setattr__(owned, "image_id", image_id)
-        return owned
 
 
 @dataclass(frozen=True)
@@ -185,11 +98,9 @@ class BreastGeometry:
         Caller-defined coordinate frame label; None means unspecified. Default:
         None.
     nipple : Optional[ImageLandmark]
-        Optional mutable nipple landmark in the declared pixel frame; retained
-        by reference. Default: None.
+        Optional nipple landmark in the declared pixel frame. Default: None.
     posterior_nipple_line : Optional[Tuple[ImageLandmark, ImageLandmark]]
-        Optional pair of mutable line endpoints in the same pixel frame;
-        retained by reference. Default: None.
+        Optional pair of line endpoints in the same pixel frame. Default: None.
     """
 
     image_id: str
@@ -209,13 +120,9 @@ class BreastGeometry:
     coordinate_frame_id: Optional[str] = None
     """Caller-defined coordinate frame label; None means unspecified. Default: None."""
     nipple: Optional[ImageLandmark] = None
-    """Optional mutable nipple landmark in the declared pixel frame; retained by
-    reference. Default: None.
-    """
+    """Optional nipple landmark in the declared pixel frame."""
     posterior_nipple_line: Optional[Tuple[ImageLandmark, ImageLandmark]] = None
-    """Optional pair of mutable line endpoints in the same pixel frame; retained by
-    reference. Default: None.
-    """
+    """Optional pair of line endpoints in the same pixel frame."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "laterality", Laterality.coerce(self.laterality))

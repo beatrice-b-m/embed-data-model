@@ -1,8 +1,7 @@
 # EMBED Data Model API reference
 
 This reference specifies the behavior defined by the [contract](contract.md).
-See the [user guide](user-guide.md) for runnable examples and
-[qualification](qualification.md) for dated verification evidence.
+See the [user guide](user-guide.md) for runnable examples.
 
 Public classes, properties and entry points carry inline usage contracts for
 editor hovers and `help()`. For example, inspect `help(load_embed)`,
@@ -20,41 +19,64 @@ the entity constructor for ordinary fields and their types. ROI factory overload
 expose base constructor options and preserve arbitrary subclass forwarding.
 These annotations do not introduce runtime validation or new root exports.
 
-## Identity, ownership, and mutation
+## Identity, relationships, and mutation
 
-One accession has one `Exam`; its `asserted_patient_ids` retains all source claims. Conflicting claims leave
-`patient_id` unset until `graph.assign_patient(exam, patient_id)` explicitly
-chooses ownership. That choice persists on reload; source identities are unchanged.
+The graph holds eight entity kinds, each keyed by its source identity:
+patient (`patient_id`), exam (`accession_number`), finding
+(`(accession_number, finding_number)`), procedure (`ProcedureIdentity`),
+pathology (`identity`), registry entry (`(patient_id, registry_id)`), image
+(`image_id`) and ROI (`(image_id, roi_key)`).
 
-Each mutable entity has `graph` (zero or one owner), `update(**fields)`, and
-`rekey(**identifiers)`. Registered key fields must use rekey. Graph methods are
-`register(entity, boundary="copy_shared")`, `attach(parent, child)`,
-`detach(parent, child)`, `update(entity, **fields)`, `rekey(entity, **fields)`,
-and `pop(entity, boundary="copy_shared")`. Detach leaves the child registered.
-Child collections are read-only sequences; convenience add methods delegate to
-the graph. Distinct objects at occupied keys raise ValueError before movement.
+Entities store the *keys* of related entities, never object pointers: a
+finding stores its exam's accession, an ROI its image's ID, a procedure the
+keys of its findings and exams (`finding_references`, `exam_references`),
+pathology the keys of its procedures, findings and exams, and an exam its
+owner (`patient_id`), linked accessions and registry assignments. The graph
+resolves these keys through indexes, so entities can be registered in any order
+and a relationship appears once both ends are present. `unresolved_references`
+lists stored keys whose target is absent. Collections such as `exam.findings`,
+`finding.procedures` or `patient.exams` are resolved on access; an entity
+without a graph has none. Adding a child to an entity without a graph first
+registers it in a new graph.
 
-Standalone parent rekeys update dependent identities and embedded context within
-the reachable containment subtree, preserving the same Python objects. Local
-collision checks cover that subtree; standalone objects do not have a global
-registry of unrelated parents or siblings. Patient rekey changes assigned exam
-ownership and patient-owned observation context, while preserving asserted source
-patient IDs, image patient claims, and procedure/registry source identities.
+One accession has one `Exam`; its `asserted_patient_ids` retains all source
+claims. Conflicting claims leave `patient_id` unset until
+`graph.assign_patient(exam, patient_id)` chooses ownership explicitly. That choice
+persists on reload; source identities are unchanged.
 
-Linked exams are associations, never containment. Traversal deduplicates object identity;
-serialization emits semantic references for repeated objects and linked cycles.
+Each entity has `graph` (zero or one owner), `update(**fields)`, and
+`rekey(**key_fields)`. Changing a key, reference or source-alias field of a
+registered entity, by `update`, `rekey` or plain assignment, goes through the
+graph. A key change is propagated: every entity that stored the old key stores
+the new one, and entities whose own key includes it (findings of a rekeyed exam,
+ROIs of a rekeyed image) are rekeyed too. The whole change is checked for key
+and source-SOP collisions before anything is modified. A patient rekey keeps its
+exams (their owner becomes explicit) and leaves source claims, image patient
+claims and procedure or registry identities unchanged.
 
-Pop retains exclusive Python objects. Descendants needed outside the selected
-subtree remain original there and are independently copied into the popped tree.
-Source UID/path and ROI-position changes use `update` so prior aliases are removed;
-location sets supplied by metadata reload deliberately union old and new paths.
-Crossing associations retain semantic references, including incoming links whose
-source stays in the original graph. Registering a detached tree remaps stored
-internal references to members rekeyed while detached; standalone rekey alone
-does not visit sibling sources outside its reachable subtree. Partition independently copies
-once per output, adds labeled ancestor context, and includes only selected branches.
-`select(level=..., predicate=...)` is explicitly a non-owning view. Copy failures
-raise an informative error; consumer `__deepcopy__` hooks are supported.
+Graph methods: `register(entity)`, `attach(parent, child)`, `detach(parent,
+child)`, `update(entity, **fields)`, `rekey(entity, **fields)`, `pop(entity)`,
+`remove(entity)` and `replace_rois(image, rois)`. `detach` removes an optional or
+many-valued containment and refuses one that is part of the child's key.
+`children`, `parents`, `descendants` and `ancestors` expose the structure.
+
+`pop(entity)` moves the entity and everything it contains into a new graph and
+returns it (`entity.graph` is the new graph). Contained entities keep their Python
+identity. A contained entity that something staying behind also contains, such
+as a procedure attached to findings of two exams, stays and is deep-copied into
+the new graph. `register` moves an entity from another graph the same way, after
+checking every key first. Keys pointing across the boundary remain unresolved
+references until their targets are registered in the same graph.
+
+Linked exams are associations, never containment, and read symmetrically:
+`exam.linked_exams` includes exams this one lists and exams that list it.
+
+`select(level=..., predicate=...)` returns a non-owning view. `partition(level=...,
+key=...)` returns independent graphs holding deep copies of the grouped entities,
+everything they contain, and their ancestors, for which `graph.is_context(entity)`
+is True. Copies keep the keys they stored, so relationships to entities outside a
+group stay unresolved. Copy failures raise an informative error; consumer
+`__deepcopy__` hooks are supported.
 
 ## Semantic loading
 
@@ -63,14 +85,17 @@ report containing the graph and issues. Inputs are optional. One invocation is
 one complete grouped snapshot; callers must assemble complete groups across
 streaming chunks before invoking refresh. Separate calls are separate snapshots.
 
-Refresh resets bound adapter-managed scalar fields, including absent/null fields,
-and applies the combined snapshot. Unbound fields, consumer metadata/attributes,
+Refresh replaces bound adapter-managed scalar fields whose columns are supplied,
+including explicit nulls, and applies the combined snapshot. Columns absent from
+every row leave their fields unchanged. Unbound fields, consumer metadata/attributes,
 subclass types, Python references, and unspecified descendant grains survive.
-Merge applies supplied non-null fields. Complementary rows combine; conflicting
-populated values become unknown with a diagnostic. Wide and narrow projections
+Merge applies supplied non-null fields. Complementary rows combine; a value that
+conflicts with another supplied value or with a populated value already in the
+graph becomes unknown with a diagnostic. Wide and narrow projections
 share one grouping stage. Child rows ensure parents without refreshing them.
 
-Managed fields by grain (bound mapped fields only): patient sex/birth_year/context_date;
+Managed fields by grain (bound mapped fields only): patient sex/birth_year, recorded
+per exam context as attribute observations;
 exam exam_date/description; finding laterality/finding_type/interpretation/anatomy,
 source anatomy codes/descriptors/record_type; image laterality/view/modality,
 source modality/derived type, dimensions/frame_count, study/series IDs and coordinate
@@ -82,30 +107,52 @@ History snapshots replace each addressed patient's supplied history kind when no
 explicit event ID is bound; merge of unkeyed history collections requires explicit
 record IDs rather than guessing event equality.
 
+## Coded values
+
+Coded source fields hold `Code(code, meaning, tokens, unknown)` values. `code` is
+the trimmed source code (alphabetic codes uppercased, exam types kept as
+supplied); `meaning` comes from the EMBED vocabulary tables in
+`sources.embed.vocabulary`, or is None for a code without a documented meaning.
+Codes compare and hash by code (by token set for comma-separated codes) and
+never equal plain strings. Constructors accept text for these fields and store a
+`Code` without meaning.
+
+Patient-history codes are scoped by category: a hormone-history `code` is
+decoded in the hormone, therapy or contraceptive table its `type` selects, and
+a procedure-history `pcode` in the breast or gynecological table. An unknown
+category or code keeps its source code without a meaning and adds a warning. A
+procedure-history result of `NONE` means no result was reported; it is not a
+negative result.
+
 ## Pathology and reported facts
 
-Prefer a supplied patient-scoped `record_id`. The fallback bundle key is the
-supported attachment identity plus supplied report_documented_date: a complete
-ProcedureIdentity when available, otherwise (accession, finding_number) or
-accession. A documentation date is not a diagnosis/event date. Ordered descriptor
-slots belong inside the bundle; duplicate values and order are preserved.
-Absent discriminators produce accessible unresolved records with their payload
-and supported attachment, not row ordinals or payload-derived event IDs.
-Conflicting descriptor slots at a fallback key make the candidate bundles unresolved;
-an explicit key is needed to distinguish them. Narrow and wide rows use the same
-logical namespace. Within an addressed attachment's refresh these unresolved snapshots replace prior
-unresolved snapshots; no replay ledger accumulates. Explicit record keys are
-required to distinguish multiple reports at the same fallback grain.
+A pathology bundle is keyed by a supplied patient-scoped record ID,
+`(patient_id, record_id)`, or, for MagView procedure rows without one, by the
+procedure it was reported for, `("procedure", ProcedureIdentity)`. The
+provisional report date (`pdate_anon`) is an attribute, never part of the key,
+and is not a diagnosis or event date. Descriptor slots belong to the bundle;
+duplicate values and order are preserved. Pathology without a complete
+procedure or record ID is kept as an unresolved record with its payload and the
+attachment the adapter could establish, never keyed by a row position. When rows
+of one procedure disagree on a descriptor slot, the bundle is unresolved because
+only a record ID could tell the reports apart. Within an addressed attachment's
+refresh, unresolved snapshots replace earlier ones; no replay ledger accumulates.
 
-History records with explicit record IDs are patient-scoped mutable entities.
-Without IDs they are patient-scoped reported-fact snapshots, never performed
-procedures and never inferred distinct clinical events. Interpretations, histories,
-attribute observations, pathology observations/diagnoses, and landmarks are mutable.
-Patient, Exam, BreastSide, Finding, Procedure, MammogramImage and RegionOfInterest
-are mutable entities. Box, ProcedureIdentity, enums, coordinate/anatomy values,
-semantic references, SourceRef, Issue and optional normalization diagnostics are
-replaceable values. Frozen value types do not exempt their owning entities from
-updates.
+`path_severity` loads as `PathologySeverity`, an inverse scale on which 0 is
+invasive breast cancer and 5 non-breast cancer; code 6 is invalid and kept only
+as `raw_severity`. A missing severity means no pathology is attached, not a
+benign result.
+
+History observations with an explicit record ID are updated in place on reload.
+Without one they are snapshots of reported facts: never performed procedures and
+never inferred distinct events. Patient attribute observations record one value
+per exam context; choose among them with `Patient.attribute_as_of`.
+
+The eight graph entities are Patient, Exam, Finding, Procedure, Pathology,
+CancerRegistryEntry, MammogramImage and RegionOfInterest. Interpretations and
+history observations are mutable values stored on their entity. BreastSide,
+ProcedureIdentity, PatientAttributeObservation, PathologyObservation,
+ImageLandmark, Box, anatomy values, enums, SourceRef and Issue are frozen values.
 
 ## Imaging and supplied association collections
 
@@ -150,22 +197,17 @@ severity, and modality/frame plausibility are checked by explicit validation.
 Warnings do not invalidate by default; error issues do. Missing optional tables
 alone are valid. Validation is read-only and never called implicitly by loading.
 
-## Current limitations exposed by inline review
+## Current limitations
 
-`retain_raw` on `load_embed` accepts a boolean but currently has no effect;
-`True` does not retain a raw-row ledger. Inputs are materialized in memory,
+Inputs are materialized in memory,
 loading is synchronous, and arbitrary multi-field updates are not transactions.
 `validate(graph)` does not traverse graph registries; validate individual roots
 or use `partition_by_validation` at the desired level.
 
 For direct `Pathology` construction, use an explicit hashable `identity` or
-`patient_id` plus `record_id`. The historical error message advertises
-`attachment_identity` plus `report_documented_date`, but the date is consumed
-by the named constructor parameter before the fallback sees it. This path
-still raises `TypeError`; use `identity=(attachment_identity, report_date)`.
-The adapter's own attachment/date identity construction is unaffected.
+`patient_id` plus `record_id`; anything else raises `TypeError`.
 
-ROI `resize`/`realign` and image `with_landmark` return standalone **shallow**
+ROI `resize`/`realign` return graph-less **shallow**
 copies. They retain shared mutable metadata and other referenced values; use
 graph partitions when independent owning copies are needed. ROI `to_dict()`
 copies metadata without recursively encoding arbitrary consumer objects, so

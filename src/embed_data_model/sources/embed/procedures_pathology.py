@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from math import isfinite
-from numbers import Integral, Real
 from typing import Any, Mapping, Optional
 
 from embed_data_model.clinical.pathology import (
-    PathologyDiagnosis,
     PathologyObservation,
     PathologySeverity,
 )
 from embed_data_model.clinical.procedures import Procedure, ProcedureIdentity
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, SourceRef
+from embed_data_model.sources.embed._values import cell, code, identifier, text
+from embed_data_model.sources.embed.vocabulary import PATHOLOGY_DESCRIPTOR, PROCEDURE_TYPE
 
 
 def normalize_procedure(
@@ -44,12 +43,10 @@ def normalize_procedure(
     No graph is mutated, no files are read and no scientific validity is inferred.
     """
 
-    patient_id = _identifier(row, columns.get("patient_id"))
-    performed_date = _text(
-        row, columns.get("performed_date", columns.get("procedure_date"))
-    )
-    procedure_type = _text(row, columns.get("procedure_type"))
-    laterality = Laterality.coerce(_text(row, columns.get("laterality")))
+    patient_id = identifier(cell(row, columns.get("patient_id")))
+    performed_date = text(cell(row, columns.get("performed_date", columns.get("procedure_date"))))
+    procedure_type = PROCEDURE_TYPE.decode(code(cell(row, columns.get("procedure_type"))))
+    laterality = Laterality.coerce(text(cell(row, columns.get("laterality"))))
     missing = tuple(
         name
         for name, value in (
@@ -93,12 +90,8 @@ def normalize_pathology(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
     source: Optional[SourceRef] = None,
-) -> tuple[
-    Optional[PathologyDiagnosis],
-    tuple[PathologyObservation, ...],
-    tuple[Issue, ...],
-]:
-    """Normalize reported diagnosis and ordered pathology descriptor slots.
+) -> tuple[dict[str, Any], tuple[PathologyObservation, ...]]:
+    """Normalize reported pathology fields and ordered descriptor slots.
 
     Parameters
     ----------
@@ -112,14 +105,12 @@ def normalize_pathology(
 
     Returns
     -------
-    PathologyDiagnosis or None, tuple of PathologyObservation, tuple of Issue
-        Missing diagnosis fields yield None. Descriptor slots 1–10 retain source
-        order and duplicates; source_ordinal is the one-based slot number here.
-        No input facts yields (None, (), ()). No clinical event identity is inferred.
-
-    Notes
-    -----
-    No graph is mutated, no files are read and no scientific validity is inferred.
+    dict, tuple of PathologyObservation
+        Supplied non-null Pathology fields (``diagnosis``, ``result_category``,
+        ``malignant``, ``severity``, ``raw_severity``,
+        ``report_documented_date``), and descriptor slots 1-10 in slot order
+        with duplicates kept. A severity outside the 0-5 scale is kept only as
+        ``raw_severity``. No clinical event identity is inferred.
     """
 
     observations = tuple(
@@ -131,111 +122,32 @@ def normalize_pathology(
         )
         for index in range(1, 11)
         if (column := columns.get(f"descriptor_{index}")) is not None
-        if (descriptor := _text(row, column)) is not None
+        if (descriptor := PATHOLOGY_DESCRIPTOR.decode(code(cell(row, column)))) is not None
     )
-    raw_severity = _value(row, columns.get("severity"))
-    severity, severity_issues = _severity(raw_severity, observations, source)
-    diagnosis = _text(row, columns.get("diagnosis"))
-    result_category = _text(row, columns.get("result_category"))
-    malignant = _optional_bool(_value(row, columns.get("malignant")))
-    report_date = _text(row, columns.get("report_documented_date"))
-    if not any(
-        (
-            diagnosis,
-            result_category,
-            malignant is not None,
-            raw_severity is not None,
-            report_date,
-            observations,
-        )
-    ):
-        return None, (), ()
-    if not any(
-        (
-            diagnosis,
-            result_category,
-            malignant is not None,
-            raw_severity is not None,
-            report_date,
-        )
-    ):
-        return None, observations, severity_issues
-    return (
-        PathologyDiagnosis(
-            source=source,
-            diagnosis=diagnosis,
-            result_category=result_category,
-            malignant=malignant,
-            severity=severity,
-            raw_severity=raw_severity,
-            report_documented_date=report_date,
-            validation_issues=severity_issues,
-        ),
-        observations,
-        severity_issues,
-    )
+    raw_severity = cell(row, columns.get("severity"))
+    values = {
+        "diagnosis": text(cell(row, columns.get("diagnosis"))),
+        "result_category": text(cell(row, columns.get("result_category"))),
+        "malignant": _optional_bool(cell(row, columns.get("malignant"))),
+        "severity": _severity(raw_severity),
+        "raw_severity": raw_severity,
+        "report_documented_date": text(cell(row, columns.get("report_documented_date"))),
+    }
+    return {name: value for name, value in values.items() if value is not None}, observations
 
 
-def _severity(
-    raw: Any,
-    observations: tuple[PathologyObservation, ...],
-    source: Optional[SourceRef],
-) -> tuple[Optional[PathologySeverity], tuple[Issue, ...]]:
-    if raw is None:
-        return None, ()
-    try:
-        if isinstance(raw, bool):
-            raise ValueError
-        numeric = int(raw)
-        if float(raw) != numeric:
-            raise ValueError
-        return PathologySeverity(numeric), ()
-    except (TypeError, ValueError):
-        # Preserve raw values; severity plausibility belongs to validation.
-        return None, ()
+def _severity(raw: Any) -> Optional[PathologySeverity]:
+    """Return the governed severity for a whole-number code 0-5, else None."""
 
-
-def _value(row: Mapping[str, Any], column: Optional[str]) -> Any:
-    if column is None:
-        return None
-    value = row.get(column)
-    if value is None or type(value).__name__ in {"NAType", "NaTType"}:
+    if raw is None or isinstance(raw, bool):
         return None
     try:
-        unequal = value != value
-        if isinstance(unequal, bool) and unequal:
-            return None
+        numeric = float(raw)
     except (TypeError, ValueError):
         return None
-    item = getattr(value, "item", None)
-    if callable(item) and not isinstance(value, (str, bytes)):
-        try:
-            value = item()
-        except (TypeError, ValueError, OverflowError):
-            pass
-    return value
-
-
-def _text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    value = _value(row, column)
-    if value is None:
+    if not numeric.is_integer() or int(numeric) not in PathologySeverity._value2member_map_:
         return None
-    text = str(value).strip()
-    return text or None
-
-
-def _identifier(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
-    value = _value(row, column)
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, Integral):
-        return str(int(value))
-    if isinstance(value, Real):
-        number = float(value)
-        if not isfinite(number):
-            return None
-        return str(int(number)) if number.is_integer() else str(value)
-    return _text(row, column)
+    return PathologySeverity(int(numeric))
 
 
 def _optional_bool(value: Any) -> Optional[bool]:
