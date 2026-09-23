@@ -10,16 +10,14 @@ from embed_data_model.clinical.histories import (
 )
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.provenance import SourceLocator, SourceScopeKind
+from embed_data_model.core.source import SourceRef
 
 
-def source(row: int = 0) -> SourceLocator:
-    return SourceLocator(
-        scope="history-test",
-        scope_kind=SourceScopeKind.MATERIALIZATION,
-        source_profile="test",
-        source_table="HormoneHist",
-        row_ordinal=row,
+def source(row: int = 0) -> SourceRef:
+    return SourceRef(
+        "history-test",
+        "HormoneHist",
+        row,
     )
 
 
@@ -45,12 +43,10 @@ def test_patient_owns_extensible_reported_history() -> None:
     )
     procedure = ProcedureHistoryObservation(
         patient_id="P-1",
-        source=SourceLocator(
-            scope="history-test",
-            scope_kind=SourceScopeKind.MATERIALIZATION,
-            source_profile="test",
-            source_table="ProcHist",
-            row_ordinal=0,
+        source=SourceRef(
+            "history-test",
+            "ProcHist",
+            0,
         ),
         category="breast",
         procedure="biopsy",

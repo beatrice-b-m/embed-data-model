@@ -5,14 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Optional, Tuple
 
 from embed_data_model.core.entity import MutableEntity, serialize_entity
-from embed_data_model.core.provenance import SourceLocator
-from embed_data_model.core.source import SourceRef
+from embed_data_model.core.source import SourceRef, optional_source
 
 
-SourceValue = Union[SourceLocator, SourceRef]
 
 
 class ExamAttributeName(str, Enum):
@@ -27,13 +25,7 @@ class ExamAttributeName(str, Enum):
     DESCRIPTION = "description"
 
 
-def _optional_source(source: Optional[object]) -> Optional[SourceValue]:
-    if source is not None and not isinstance(source, (SourceLocator, SourceRef)):
-        raise TypeError("source must be a SourceRef or SourceLocator")
-    return source
-
-
-def _source_dict(source: Optional[SourceValue]) -> Optional[dict[str, object]]:
+def _source_dict(source: Optional[SourceRef]) -> Optional[dict[str, object]]:
     return None if source is None else source.to_dict()
 
 
@@ -50,9 +42,9 @@ class ExamAttributeObservation(MutableEntity):
     value : Optional[str]
         Reported value, including explicit None; missing values are not silently
         filled.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
 
     Notes
     -----
@@ -72,7 +64,7 @@ class ExamAttributeObservation(MutableEntity):
         accession_number: str,
         attribute: ExamAttributeName,
         value: Optional[str],
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
     ) -> None:
         super().__init__()
         if not isinstance(accession_number, str) or not accession_number.strip():
@@ -84,11 +76,11 @@ class ExamAttributeObservation(MutableEntity):
                 raise TypeError("exam attribute value must be a string or None")
             value = value.strip()
         self.value = value
-        self.source = _optional_source(source)
+        self.source = optional_source(source)
         self._finish_initialization()
 
     @property
-    def identity(self) -> Tuple[str, ExamAttributeName, Optional[SourceValue]]:
+    def identity(self) -> Tuple[str, ExamAttributeName, Optional[SourceRef]]:
         """Semantic identity used for equality of addresses, independent of Python object identity."""
 
         return self.accession_number, self.attribute, self.source

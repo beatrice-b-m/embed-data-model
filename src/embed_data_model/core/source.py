@@ -251,6 +251,18 @@ class SourceRef:
         )
 
 
+def optional_source(value: Optional[object]) -> Optional[SourceRef]:
+    """Return ``value`` if it is a SourceRef or None, else raise TypeError.
+
+    A SourceRef locates the physical source row. It is evidence, never a
+    clinical identity.
+    """
+
+    if value is not None and not isinstance(value, SourceRef):
+        raise TypeError("source must be a SourceRef or None")
+    return value
+
+
 @dataclass(frozen=True)
 class Issue:
     """A compact, immutable problem report for the new loading surface.
@@ -266,8 +278,8 @@ class Issue:
         ValidationResult; warnings do not by default. Default:
         IssueSeverity.ERROR.
     source : Optional[SourceRef]
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        Optional SourceRef locating the source row; evidence, not a clinical
+        event. Default: None.
     context : Mapping[str, Any]
         Shallow-copied read-only diagnostic mapping. Nested mutable values are
         not frozen. Default: a fresh empty mapping.
@@ -282,9 +294,7 @@ class Issue:
     ValidationResult; warnings do not by default. Default: IssueSeverity.ERROR.
     """
     source: Optional[SourceRef] = None
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not
-    clinical events. Default: None.
-    """
+    """Optional SourceRef locating the source row; evidence, not a clinical event."""
     context: Mapping[str, Any] = field(default_factory=dict)
     """Shallow-copied read-only diagnostic mapping. Nested mutable values are not
     frozen. Default: a fresh empty mapping.

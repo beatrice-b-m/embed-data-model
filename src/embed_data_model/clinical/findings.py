@@ -13,7 +13,6 @@ from typing import (
     Mapping,
     Optional,
     Tuple,
-    Union,
 )
 
 from embed_data_model.clinical.interpretations import ImagingInterpretation
@@ -25,7 +24,6 @@ from embed_data_model.core.entity import (
     serialize_entity,
 )
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.provenance import SourceLocator
 from embed_data_model.core.source import SourceRef
 
 if TYPE_CHECKING:
@@ -33,7 +31,6 @@ if TYPE_CHECKING:
     from embed_data_model.clinical.procedures import Procedure
 
 
-SourceValue = Union[SourceLocator, SourceRef]
 
 
 class FindingRecordType(str, Enum):
@@ -55,7 +52,7 @@ class FindingNormalizationEvidence:
 
     Attributes
     ----------
-    source : SourceValue or None
+    source : SourceRef or None
         Physical row provenance when the load supplied source keys, else None.
         It identifies evidence, not a clinical event.
     source_field : str
@@ -69,7 +66,7 @@ class FindingNormalizationEvidence:
         Normalized value retained alongside source evidence. Default: None.
     """
 
-    source: Optional[SourceValue]
+    source: Optional[SourceRef]
     """Physical row provenance when the load supplied source keys, else None."""
     source_field: str
     """Source column/slot that supplied the normalized evidence."""
@@ -81,8 +78,8 @@ class FindingNormalizationEvidence:
     """Normalized value retained alongside source evidence. Default: None."""
 
     def __post_init__(self) -> None:
-        if self.source is not None and not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef, SourceLocator or None")
+        if self.source is not None and not isinstance(self.source, SourceRef):
+            raise TypeError("source must be a SourceRef or None")
         for attribute in ("source_field", "normalized_kind"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
@@ -109,7 +106,7 @@ class FindingNormalizationWarning:
 
     Attributes
     ----------
-    source : SourceValue or None
+    source : SourceRef or None
         Physical row provenance when the load supplied source keys, else None.
         It identifies evidence, not a clinical event.
     code : str
@@ -123,7 +120,7 @@ class FindingNormalizationWarning:
         identity. Default: None.
     """
 
-    source: Optional[SourceValue]
+    source: Optional[SourceRef]
     """Physical row provenance when the load supplied source keys, else None."""
     code: str
     """Non-empty machine-readable diagnostic code."""
@@ -137,8 +134,8 @@ class FindingNormalizationWarning:
     """
 
     def __post_init__(self) -> None:
-        if self.source is not None and not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef, SourceLocator or None")
+        if self.source is not None and not isinstance(self.source, SourceRef):
+            raise TypeError("source must be a SourceRef or None")
         for attribute in ("code", "message"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
@@ -210,8 +207,8 @@ class Finding(MutableEntity):
         Initial performed procedures; objects are attached by reference and may
         be shared. Default: None.
     source : Optional[object], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
 
     Notes
     -----
@@ -238,7 +235,7 @@ class Finding(MutableEntity):
     anatomical_position: Optional[AnatomicalPosition]
     """Reported anatomy, independent of image coordinates; None means unknown."""
     source: Optional[object]
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    """Optional SourceRef locating the source row; evidence, not a clinical event."""
 
     def __init__(
         self,

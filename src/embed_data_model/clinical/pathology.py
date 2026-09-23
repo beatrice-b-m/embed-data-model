@@ -3,23 +3,15 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any, Dict, Hashable, Iterable, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, Hashable, Iterable, Mapping, Optional, Tuple
 
 from embed_data_model.core.entity import (
     MutableEntity,
     serialize_entity,
 )
-from embed_data_model.core.provenance import SourceLocator
-from embed_data_model.core.source import SourceRef
+from embed_data_model.core.source import SourceRef, optional_source
 
 
-SourceValue = Union[SourceLocator, SourceRef]
-
-
-def _optional_source(source: Optional[object]) -> Optional[SourceValue]:
-    if source is not None and not isinstance(source, (SourceLocator, SourceRef)):
-        raise TypeError("source must be a SourceRef or SourceLocator")
-    return source
 
 
 class PathologySeverity(IntEnum):
@@ -59,9 +51,9 @@ class PathologyObservation(MutableEntity):
     source_ordinal : int
         One-based occurrence within a descriptor slot; must be a positive
         integer.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
 
     Notes
     -----
@@ -79,7 +71,7 @@ class PathologyObservation(MutableEntity):
         descriptor: str,
         source_slot: str,
         source_ordinal: int,
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
     ) -> None:
         super().__init__()
         self.descriptor = _required_text(descriptor, "descriptor")
@@ -91,7 +83,7 @@ class PathologyObservation(MutableEntity):
         ):
             raise ValueError("source_ordinal must be a positive integer")
         self.source_ordinal = source_ordinal
-        self.source = _optional_source(source)
+        self.source = optional_source(source)
         self._finish_initialization()
 
     @property
@@ -122,9 +114,9 @@ class PathologyDiagnosis(MutableEntity):
 
     Parameters
     ----------
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
     diagnosis : Optional[str], optional
         Reported diagnosis text; None means absent. No diagnosis is inferred.
         Default: None.
@@ -168,7 +160,7 @@ class PathologyDiagnosis(MutableEntity):
 
     def __init__(
         self,
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
         diagnosis: Optional[str] = None,
         result_category: Optional[str] = None,
         malignant: Optional[bool] = None,
@@ -178,7 +170,7 @@ class PathologyDiagnosis(MutableEntity):
         validation_issues: Tuple[object, ...] = (),
     ) -> None:
         super().__init__()
-        self.source = _optional_source(source)
+        self.source = optional_source(source)
         self.diagnosis = diagnosis
         self.result_category = result_category
         self.malignant = malignant
@@ -257,9 +249,9 @@ class Pathology(MutableEntity):
     descriptors : Iterable[Any], optional
         Ordered descriptor occurrences, copied into a list. Duplicates and order
         are preserved; no event IDs are inferred. Default: ().
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
     metadata : Optional[Mapping[str, Any]], optional
         Consumer metadata, shallow-copied into a mutable dict. Nested values
         remain shared. Default: None.
@@ -315,7 +307,7 @@ class Pathology(MutableEntity):
         raw_severity: Any = None,
         report_documented_date: Optional[str] = None,
         descriptors: Iterable[Any] = (),
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
         metadata: Optional[Mapping[str, Any]] = None,
         payload: Optional[Mapping[str, Any]] = None,
         *,
@@ -341,7 +333,7 @@ class Pathology(MutableEntity):
         self.raw_severity = raw_severity
         self.report_documented_date = report_documented_date
         self._descriptors = list(descriptors)
-        self.source = _optional_source(source)
+        self.source = optional_source(source)
         self._metadata = dict(metadata or {})
         self._payload = dict(payload or {})
         self._finish_initialization()
@@ -442,9 +434,9 @@ class CancerRegistryEntry(MutableEntity):
     metadata : Optional[Mapping[str, Any]], optional
         Consumer metadata, shallow-copied into a mutable dict. Nested values
         remain shared. Default: None.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
 
     Notes
     -----
@@ -468,14 +460,14 @@ class CancerRegistryEntry(MutableEntity):
         registry_id: str,
         payload: Optional[Mapping[str, Any]] = None,
         metadata: Optional[Mapping[str, Any]] = None,
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
     ) -> None:
         super().__init__()
         self.patient_id = _required_text(patient_id, "patient_id")
         self.registry_id = _required_text(registry_id, "registry_id")
         self._payload = dict(payload or {})
         self._metadata = dict(metadata or {})
-        self.source = _optional_source(source)
+        self.source = optional_source(source)
         self._finish_initialization()
 
     @property

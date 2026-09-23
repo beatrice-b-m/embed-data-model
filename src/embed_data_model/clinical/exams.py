@@ -259,8 +259,8 @@ class Exam(MutableEntity):
         Whether assigned patient ownership is explicit and should survive later
         source claims. Default: False.
     source : Optional[object], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
 
     Notes
     -----
@@ -287,7 +287,7 @@ class Exam(MutableEntity):
     description: Optional[str]
     """Source-reported exam description; None means absent."""
     source: Optional[object]
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    """Optional SourceRef locating the source row; evidence, not a clinical event."""
 
     def __init__(
         self,

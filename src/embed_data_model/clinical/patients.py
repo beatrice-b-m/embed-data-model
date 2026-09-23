@@ -58,8 +58,8 @@ class Patient(MutableEntity):
         Reported calendar birth year; None means unknown. Plausibility is
         checked by validate. Default: None.
     source : Optional[object], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
 
     Notes
     -----
@@ -82,7 +82,7 @@ class Patient(MutableEntity):
     birth_year: Optional[int]
     """Reported calendar birth year; None means unknown. Plausibility is checked by validate."""
     source: Optional[object]
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    """Optional SourceRef locating the source row; evidence, not a clinical event."""
 
     def __init__(
         self,

@@ -4,6 +4,13 @@
 
 ### Removed
 
+- The `core.provenance` module (`SourceLocator`, `BuildIssue`,
+  `SourceOccurrence`, `ResolutionState`, `AvailabilityState`,
+  `SourceScopeKind` and a duplicate `IssueSeverity`). The loader only ever
+  produced `SourceRef`, which is now the single source-row type; each class
+  validates it through `core.source.optional_source`.
+  `ImagingInterpretation` drops its availability fields and its separate
+  `source` constructor argument; pass `sources`.
 - Unused association and attribution types that the library never produced:
   the `clinical.associations` module (`AttributionStatus`,
   `ClinicalObjectReference`, `FindingProcedureLink`, `AssociationLink`),

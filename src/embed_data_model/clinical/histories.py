@@ -8,15 +8,13 @@ clinical event identity.
 from __future__ import annotations
 
 from numbers import Real
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple
 
 from embed_data_model.core.entity import MutableEntity, serialize_entity
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.provenance import SourceLocator
-from embed_data_model.core.source import SourceRef
+from embed_data_model.core.source import SourceRef, optional_source
 
 
-SourceValue = Union[SourceLocator, SourceRef]
 
 
 def _optional_text(value: Optional[str], name: str) -> Optional[str]:
@@ -34,13 +32,7 @@ def _required_text(value: str, name: str) -> str:
     return value.strip()
 
 
-def _optional_source(source: Optional[object]) -> Optional[SourceValue]:
-    if source is not None and not isinstance(source, (SourceLocator, SourceRef)):
-        raise TypeError("source must be a SourceRef or SourceLocator")
-    return source
-
-
-def _source_dict(source: Optional[SourceValue]) -> Optional[Dict[str, object]]:
+def _source_dict(source: Optional[SourceRef]) -> Optional[Dict[str, object]]:
     return None if source is None else source.to_dict()
 
 
@@ -124,9 +116,9 @@ class PatientHistoryObservation(MutableEntity):
     patient_id : str
         Patient identifier. Non-empty text; source patient claims and assigned
         exam ownership are separate facts.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
     record_id : Optional[object], optional
         Explicit patient-scoped record ID, converted to stripped text when
         supplied. None represents an unkeyed reported fact. Default: None.
@@ -144,12 +136,12 @@ class PatientHistoryObservation(MutableEntity):
     def __init__(
         self,
         patient_id: str,
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
         record_id: Optional[object] = None,
     ) -> None:
         super().__init__()
         self.patient_id = _required_text(patient_id, "patient_id")
-        self.source = _optional_source(source)
+        self.source = optional_source(source)
         self.record_id = _record_id(record_id)
 
     @property
@@ -189,9 +181,9 @@ class MedicationHistoryObservation(PatientHistoryObservation):
     patient_id : str
         Patient identifier. Non-empty text; source patient claims and assigned
         exam ownership are separate facts.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
     category : str, optional
         Non-empty reported category. Although the default is empty, callers must
         supply a non-empty value. Default: ''.
@@ -238,7 +230,7 @@ class MedicationHistoryObservation(PatientHistoryObservation):
     def __init__(
         self,
         patient_id: str,
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
         category: str = "",
         medication: str = "",
         context_accession: Optional[str] = None,
@@ -303,9 +295,9 @@ class ProcedureHistoryObservation(PatientHistoryObservation):
     patient_id : str
         Patient identifier. Non-empty text; source patient claims and assigned
         exam ownership are separate facts.
-    source : Optional[SourceValue], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+    source : Optional[SourceRef], optional
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
     category : str, optional
         Non-empty reported category. Although the default is empty, callers must
         supply a non-empty value. Default: ''.
@@ -339,7 +331,7 @@ class ProcedureHistoryObservation(PatientHistoryObservation):
     def __init__(
         self,
         patient_id: str,
-        source: Optional[SourceValue] = None,
+        source: Optional[SourceRef] = None,
         category: str = "",
         procedure: str = "",
         detail: Optional[str] = None,

@@ -5,7 +5,7 @@ Exam, Finding and imaging objects directly. DatasetGraph owns membership;
 lookups return live objects, while partition makes independent graph copies.
 ``validate`` is an explicit read-only quality check, never an ingestion gate.
 
-Common entry points are listed in __all__. Specialist anatomy, provenance,
+Common entry points are listed in __all__. Specialist anatomy, source,
 attribute-selection and geometry types live in their defining submodules;
 undocumented adapter internals are not supported extension points. This package
 has no mandatory pandas dependency, opens no pixel files and infers no diagnosis.

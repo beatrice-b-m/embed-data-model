@@ -218,7 +218,6 @@ def test_specialist_symbols_are_available_from_focused_modules() -> None:
         pathology = importlib.import_module("embed_data_model.clinical.pathology")
         birads = importlib.import_module("embed_data_model.core.birads")
         primitives = importlib.import_module("embed_data_model.core.primitives")
-        provenance = importlib.import_module("embed_data_model.core.provenance")
         images = importlib.import_module("embed_data_model.imaging.images")
         rois = importlib.import_module("embed_data_model.imaging.rois")
 
@@ -235,6 +234,5 @@ def test_specialist_symbols_are_available_from_focused_modules() -> None:
     assert attributes.PatientAttributeObservation
     assert birads.MassShape.LOBULATED.value == "lobulated"
     assert images.MammogramImage
-    assert provenance.SourceRef if hasattr(provenance, "SourceRef") else provenance.SourceLocator
     assert primitives.Laterality.LEFT.value == "L"
     assert rois.RegionOfInterest((0, 0, 1, 1), image_id="IMG-1", roi_key="0").area == 1

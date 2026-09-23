@@ -19,7 +19,7 @@ DOMAIN_MODULES = (
     "clinical.attributes", "clinical.exams",
     "clinical.findings", "clinical.histories", "clinical.interpretations",
     "clinical.pathology", "clinical.patients", "clinical.procedures",
-    "core.anatomy", "core.birads", "core.primitives", "core.provenance",
+    "core.anatomy", "core.birads", "core.primitives",
     "core.source", "core.tables", "core.validation", "core.selection",
     "core.graph", "imaging.images", "imaging.landmarks", "imaging.rois",
     "sources.embed.loader", "sources.embed.magview",

@@ -18,7 +18,7 @@ from embed_data_model.core.anatomy import (
     Quadrant,
 )
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.provenance import SourceLocator, SourceScopeKind
+from embed_data_model.core.source import SourceRef
 
 
 def test_finding_identity_uses_accession_and_number_with_side_as_attribute() -> None:
@@ -91,12 +91,10 @@ def test_procedure_owns_resolved_source_evidence_not_finding_references() -> Non
         procedure_type="biopsy",
         laterality="R",
     )
-    source = SourceLocator(
-        scope="materialization-1",
-        scope_kind=SourceScopeKind.MATERIALIZATION,
-        source_profile="internal-v2",
-        source_table="magview",
-        row_ordinal=1,
+    source = SourceRef(
+        "materialization-1",
+        "magview",
+        1,
     )
     procedure = Procedure(identity=identity, sources=[source])
 
@@ -139,12 +137,10 @@ def test_finding_preserves_source_fields_anatomy_descriptors_and_warnings() -> N
         descriptors={"mass": {"shape": "oval"}},
         normalization_warnings=[
             FindingNormalizationWarning(
-                source=SourceLocator(
-                    scope="clinical-materialization",
-                    scope_kind=SourceScopeKind.MATERIALIZATION,
-                    source_profile="internal-v2",
-                    source_table="magview",
-                    row_ordinal=0,
+                source=SourceRef(
+                    "clinical-materialization",
+                    "magview",
+                    0,
                 ),
                 source_field="margin",
                 raw_value="X",

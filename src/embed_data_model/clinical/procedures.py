@@ -11,7 +11,6 @@ from typing import (
     List,
     Optional,
     Tuple,
-    Union,
 )
 
 from embed_data_model.core.entity import (
@@ -19,14 +18,12 @@ from embed_data_model.core.entity import (
     serialize_entity,
 )
 from embed_data_model.core.primitives import Laterality
-from embed_data_model.core.provenance import SourceLocator
 from embed_data_model.core.source import SourceRef
 
 if TYPE_CHECKING:
     from embed_data_model.clinical.pathology import Pathology
 
 
-SourceValue = Union[SourceLocator, SourceRef]
 
 
 @dataclass(frozen=True)
@@ -103,8 +100,8 @@ class Procedure(MutableEntity):
         Initial pathology bundles, retained by reference in supplied order.
         Default: None.
     source : Optional[object], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
 
     Notes
     -----
@@ -182,8 +179,8 @@ class Procedure(MutableEntity):
     def add_source(self, source: object) -> object:
         """Attach optional source evidence without changing identity."""
 
-        if not isinstance(source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
+        if not isinstance(source, SourceRef):
+            raise TypeError("source must be a SourceRef")
         if source not in self._sources:
             self._sources.append(source)
         return source

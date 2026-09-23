@@ -47,8 +47,8 @@ class ImageLandmark(MutableEntity):
         Explicit non-empty model image identifier, independent of source SOP
         identity. Default: None.
     source : Optional[str], optional
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events. Default: None.
+        Optional SourceRef locating the source row; evidence, not a
+        clinical event. Default: None.
     confidence : Optional[float], optional
         Optional numeric confidence; converted to float. validate checks the
         finite 0–1 range. Default: None.
@@ -74,8 +74,8 @@ class ImageLandmark(MutableEntity):
     identity. Default: None.
     """
     source: Optional[str]
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not
-    clinical events. Default: None.
+    """Optional SourceRef locating the source row; evidence, not a
+    clinical event. Default: None.
     """
     confidence: Optional[float]
     """Optional numeric confidence; converted to float. validate checks the finite
