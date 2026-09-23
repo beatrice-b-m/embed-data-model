@@ -25,6 +25,9 @@
 
 ### Fixed
 
+- A prior-procedure history result of `NONE` loads as `"no_reported_result"`
+  instead of None, so it stays distinct from a blank result. `NONE` means no
+  result was reported; it is not a negative result.
 - Pathology on MagView procedure rows is keyed by its procedure and attaches to
   it. It was keyed on the provisional pathology report date (`pdate_anon`), so
   pathology without that date became an unresolved record even when its

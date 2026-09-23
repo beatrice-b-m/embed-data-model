@@ -80,6 +80,9 @@ _PROCEDURE_RESULTS = {
     "PA": "papilloma",
     "SA": "sclerosing_adenosis",
     "SF": "stromal_fibrosis",
+    # NONE is a governed state meaning no result was reported. It is not a
+    # negative result, and it differs from a blank or missing value.
+    "NONE": "no_reported_result",
 }
 _UNKNOWN_FLAGS = {"", "U", "NA", "N/A", "NAN", "UNKNOWN"}
 
@@ -250,9 +253,7 @@ def normalize_procedure_history(
         )
     raw_result = _upper(row, columns["result"])
     result = _PROCEDURE_RESULTS.get(raw_result, raw_result or None)
-    if raw_result == "NONE":
-        result = None
-    elif raw_result and raw_result not in _PROCEDURE_RESULTS:
+    if raw_result and raw_result not in _PROCEDURE_RESULTS:
         issues.append(
             Issue(
                 code="unknown_procedure_history_result",
