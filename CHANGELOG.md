@@ -4,6 +4,10 @@
 
 ### Removed
 
+- `core.birads` and its lexicon normalizers. They were never used by the loader
+  and accept only English BI-RADS terms such as "oval", while EMBED stores
+  source codes such as "O" in columns that mix finding kinds. EMBED finding
+  descriptors are now loaded as their source codes (see Added).
 - Graph internals exposed as API: `reference`, `remove_reference`,
   `clear_references`, `operation_counts`, `issues`, `identity_namespace`, and
   the `core.selection.select`/`partition` functions (use the graph methods).
