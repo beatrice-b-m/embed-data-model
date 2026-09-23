@@ -28,6 +28,7 @@ from embed_data_model.core.graph import DatasetGraph
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, IssueSeverity, SourceRef
 from embed_data_model.core.tables import TableNormalizationError, TableRecord, _TableInput, iter_records
+from embed_data_model.sources.embed._values import reconcile_merge, same as _same
 from embed_data_model.sources.embed.columns import resolve_columns
 from embed_data_model.sources.embed.histories import (
     normalize_medication_history,
@@ -148,8 +149,9 @@ def load_embed(
         Default "refresh" replaces bound adapter-managed scalars at addressed
         grains whose columns the rows supply, including explicit nulls; a
         column absent from every row leaves its field unchanged. "merge"
-        applies non-null values;
-        conflicting populated facts become unknown with an issue. Missing tables
+        applies non-null values; a value conflicting with another supplied
+        value or with the populated graph value becomes unknown with an
+        issue. Missing tables
         and unspecified descendant grains survive either mode.
     retain_raw : bool, optional
         Compatibility control, default False. Currently validated but otherwise
@@ -448,6 +450,8 @@ def _load_patients(
             issues,
         )
         updates = _updates_for_mode(fields, conflicts, mode)
+        if mode == "merge":
+            reconcile_merge(_current(patient, updates), updates, grain="patient", key=key, issues=issues)
         if updates:
             _update_entity(graph, patient, updates)
 
@@ -477,6 +481,8 @@ def _load_exams(
             {renamed[name]: value for name, value in conflicts.items()},
             mode,
         )
+        if mode == "merge":
+            reconcile_merge(_current(exam, updates), updates, grain="exam", key=key, issues=issues)
         if updates:
             _update_entity(graph, exam, updates)
         _claim_exam_from_rows(graph, exam, group, columns)
@@ -579,6 +585,10 @@ def _load_findings(
                 managed_updates[name] = value
         updates = managed_updates
         existing = graph.get("finding", key)
+        if existing is not None and mode == "merge":
+            scalars = {name: updates[name] for name in ("laterality", "finding_type") if name in updates}
+            reconcile_merge(_current(existing, scalars), scalars, grain="finding", key=key, issues=issues)
+            updates.update(scalars)
         if existing is not None and "interpretation" in updates and existing.interpretation is not None:
             # Interpretations share the finding grain; refresh their bound fields
             # without discarding a consumer's live reference or extension state.
@@ -587,7 +597,10 @@ def _load_findings(
                 if name in fields and (
                     mode == "refresh" or conflicts.get(name) or fields.get(name) is not None
                 ):
-                    current.update(**{name: fields.get(name)})
+                    change = {name: fields.get(name)}
+                    if mode == "merge":
+                        reconcile_merge(_current(current, change), change, grain="finding", key=key, issues=issues)
+                    current.update(**change)
             updates["interpretation"] = current
         if existing is None:
             finding = Finding(
@@ -844,6 +857,12 @@ def _updates_for_mode(
         if mode == "refresh" or conflicts.get(semantic, False) or value is not None:
             result[semantic] = value
     return result
+
+
+def _current(entity: Any, updates: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the entity's current values for the fields an update addresses."""
+
+    return {name: getattr(entity, name, None) for name in updates}
 
 
 def _update_entity(graph: DatasetGraph, entity: Any, updates: Mapping[str, Any]) -> None:
@@ -1215,17 +1234,6 @@ def _normalize_identifier(value: Any) -> Optional[str]:
             return None
         return str(int(numeric)) if numeric.is_integer() else str(value)
     return None
-
-
-def _same(left: Any, right: Any) -> bool:
-    try:
-        equal = left == right
-        if type(equal) is bool:
-            return equal
-        item = getattr(equal, "item", None)
-        return bool(item()) if callable(item) else False
-    except (TypeError, ValueError):
-        return repr(left) == repr(right)
 
 
 __all__ = ["LoadReport", "load_embed"]

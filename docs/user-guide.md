@@ -172,8 +172,9 @@ fields, and child grains that were not supplied. A child-only load ensures
 missing parent shells but does not refresh the parent's fields.
 
 `mode="merge"` applies supplied non-null scalar values. Complementary rows
-combine. When one snapshot supplies conflicting populated values for a field,
-the field becomes unknown and the load report contains an issue. Merge does not
+combine. When supplied values conflict with each other, or with a populated
+value already in the graph, the field becomes unknown and the load report
+contains an issue. Merge does not
 guess equality for unkeyed history facts or for revised ROI collections.
 
 ```python

@@ -67,8 +67,9 @@ Refresh replaces bound adapter-managed scalar fields whose columns are supplied,
 including explicit nulls, and applies the combined snapshot. Columns absent from
 every row leave their fields unchanged. Unbound fields, consumer metadata/attributes,
 subclass types, Python references, and unspecified descendant grains survive.
-Merge applies supplied non-null fields. Complementary rows combine; conflicting
-populated values become unknown with a diagnostic. Wide and narrow projections
+Merge applies supplied non-null fields. Complementary rows combine; a value that
+conflicts with another supplied value or with a populated value already in the
+graph becomes unknown with a diagnostic. Wide and narrow projections
 share one grouping stage. Child rows ensure parents without refreshing them.
 
 Managed fields by grain (bound mapped fields only): patient sex/birth_year/context_date;

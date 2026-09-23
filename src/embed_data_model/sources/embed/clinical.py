@@ -16,6 +16,7 @@ from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.pathology import CancerRegistryEntry, Pathology
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.source import Issue
+from embed_data_model.sources.embed._values import reconcile_merge
 from embed_data_model.sources.embed.procedures_pathology import (
     _identifier,
     _value,
@@ -139,14 +140,18 @@ def load_clinical(
             [(item[2], cmap) for item, cmap in zip(group, payload_maps)], issues, key
         )
         conflicts = _conflict_fields(issues[issue_start:])
-        graph.update(
-            entity,
-            **{
-                k: v
-                for k, v in values.items()
-                if not merge or v is not None or k in conflicts
-            },
-        )
+        procedure_updates = {
+            k: v for k, v in values.items() if not merge or v is not None or k in conflicts
+        }
+        if merge:
+            reconcile_merge(
+                {k: getattr(entity, k, None) for k in procedure_updates},
+                procedure_updates,
+                grain="procedure",
+                key=key,
+                issues=issues,
+            )
+        graph.update(entity, **procedure_updates)
         for _, attachment, row, cmap in group:
             _link(graph, "procedure", key, attachment)
 
@@ -217,6 +222,14 @@ def load_clinical(
             updates = {
                 k: v for k, v in updates.items() if v is not None or k in conflicts
             }
+            if entity is not None:
+                reconcile_merge(
+                    {k: getattr(entity, k, None) for k in updates},
+                    updates,
+                    grain="pathology",
+                    key=key,
+                    issues=issues,
+                )
         if entity is None:
             entity = graph.register(
                 Pathology(identity=key, **updates, descriptors=descriptor_values)
@@ -288,13 +301,12 @@ def load_clinical(
             graph.register(CancerRegistryEntry(key[0], key[1], payload=payload))
         else:
             retained = dict(entity.payload)
-            retained.update(
-                {
-                    k: v
-                    for k, v in payload.items()
-                    if not merge or v is not None or k in conflicts
-                }
-            )
+            payload_updates = {
+                k: v for k, v in payload.items() if not merge or v is not None or k in conflicts
+            }
+            if merge:
+                reconcile_merge(retained, payload_updates, grain="registry", key=key, issues=issues)
+            retained.update(payload_updates)
             graph.update(entity, payload=retained)
     _collections(magview, graph, columns, merge, issues)
 

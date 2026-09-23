@@ -101,7 +101,7 @@ def test_interpretation_without_diagnostics_refreshes_in_place_and_respects_unbi
     assert graph.findings[0].interpretation is interpretation
     assert interpretation.assessment == "2" and interpretation.recommendation == "BIOPSY"
     assert interpretation.consumer_note == {"reviewed": True}
-    load_embed(findings=[{"acc_anon": "A", "numfind": 1, "recc": "FU"}], into=graph, mode="merge")
+    load_embed(findings=[{"acc_anon": "A", "numfind": 1, "recc": "FU"}], into=graph)
     assert interpretation.assessment == "2" and interpretation.recommendation == "FU"
     load_embed(findings=[{"acc_anon": "A", "numfind": 1}], into=graph)
     assert interpretation.assessment == "2" and interpretation.recommendation == "FU"

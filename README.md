@@ -128,8 +128,9 @@ bound fields whose columns the rows supply, including an explicitly supplied
 null. A column absent from the rows leaves its field unchanged, so tables and
 extracts with different columns can be loaded one after another. It keeps object references, subclasses,
 consumer-added attributes and metadata, unbound fields, and child grains that
-were not supplied. `mode="merge"` applies supplied non-null scalar values and
-reports conflicting populated values as issues. A single invocation is one
+were not supplied. `mode="merge"` fills gaps with supplied non-null scalar values. A value that
+contradicts another supplied value, or a populated value already in the graph,
+becomes unknown and is reported as an issue. A single invocation is one
 snapshot, so callers assembling streamed data must group complete semantic
 objects before calling refresh.
 

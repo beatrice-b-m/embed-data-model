@@ -134,9 +134,9 @@ nulls; a column absent from the rows leaves its field unchanged. It
 updates the existing object in place, keeps consumer attributes/metadata and
 subclasses, and leaves unbound fields and unspecified child grains alone.
 
-`mode="merge"` applies supplied non-null scalar values. Complementary rows in
-one invocation combine; conflicting populated values become unknown and add an
-issue. It does not infer whether two unkeyed history rows or two revised ROI
+`mode="merge"` applies supplied non-null scalar values. Complementary rows
+combine; a populated value that conflicts with another supplied value or with
+the value already in the graph becomes unknown and adds an issue. It does not infer whether two unkeyed history rows or two revised ROI
 collections represent the same event.
 
 These rules make the following results intentional:

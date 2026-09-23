@@ -13,6 +13,7 @@ from embed_data_model.core.primitives import ImageModality, Laterality, ViewPosi
 from embed_data_model.core.source import Issue, is_null_scalar
 from embed_data_model.imaging.images import MammogramImage
 from embed_data_model.imaging.rois import RegionOfInterest
+from embed_data_model.sources.embed._values import reconcile_merge
 
 
 def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping[str, Any]]],
@@ -60,6 +61,8 @@ def load_imaging(*, images: list[Mapping[str, Any]], rois: Optional[list[Mapping
                 _issue(issues, "image_registration_failed", str(exc), image_id=first["image_id"])
                 continue
         else:
+            if mode == "merge":
+                reconcile_merge({name: getattr(image, name, None) for name in fields}, fields, grain="image", key=key, issues=issues)
             graph.update(image, **fields)
             graph.update(image, source_paths=set(image.source_paths) | aliases)
             if accession is not None and image.accession_number != accession:

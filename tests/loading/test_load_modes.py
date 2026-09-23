@@ -51,3 +51,48 @@ def test_partial_image_row_keeps_metadata_it_does_not_supply():
     assert image.view_position.value == "CC"
     assert (image.height, image.width) == (100, 80)
     assert image.laterality.value == "R"
+
+
+def test_merge_reports_a_value_that_contradicts_the_graph_and_makes_it_unknown():
+    graph = load_embed(exams=[{"acc_anon": "A1", "desc": "screen"}]).graph
+    report = load_embed(exams=[{"acc_anon": "A1", "desc": "diagnostic"}], into=graph, mode="merge")
+
+    assert graph.exam("A1").description is None
+    assert "conflicting_exam_description" in {issue.code for issue in report.issues}
+
+
+def test_merge_fills_gaps_and_accepts_an_agreeing_value_silently():
+    graph = load_embed(exams=[{"acc_anon": "A1", "desc": "screen"}]).graph
+    report = load_embed(
+        exams=[{"acc_anon": "A1", "desc": "screen", "studydate_anon": "2020-01-01"}],
+        into=graph,
+        mode="merge",
+    )
+
+    exam = graph.exam("A1")
+    assert (exam.description, exam.exam_date) == ("screen", "2020-01-01")
+    assert not report.issues
+
+
+def test_merge_conflict_on_an_enum_field_becomes_its_unknown_member():
+    from embed_data_model import Laterality
+
+    graph = load_embed(findings=[{"acc_anon": "A1", "numfind": 1, "side": "L", "asses": "B"}]).graph
+    report = load_embed(
+        findings=[{"acc_anon": "A1", "numfind": 1, "side": "R", "asses": "S"}], into=graph, mode="merge"
+    )
+
+    finding = graph.finding("A1", "1")
+    assert finding.laterality is Laterality.UNKNOWN
+    assert finding.interpretation.assessment is None
+    codes = {issue.code for issue in report.issues}
+    assert {"conflicting_finding_laterality", "conflicting_finding_assessment"} <= codes
+
+
+def test_merge_conflict_in_image_metadata_is_reported():
+    path = "cohort1/P1/S1/SE1/U1.dcm"
+    graph = load_embed(images=[{"anon_dicom_path": path, "ViewPosition": "CC"}]).graph
+    report = load_embed(images=[{"anon_dicom_path": path, "ViewPosition": "MLO"}], into=graph, mode="merge")
+
+    assert graph.images[0].view_position.value == "UNKNOWN"
+    assert "conflicting_image_view_position" in {issue.code for issue in report.issues}

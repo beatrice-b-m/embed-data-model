@@ -15,6 +15,10 @@
 
 ### Fixed
 
+- `mode="merge"` now detects values that contradict a populated value already
+  in the graph. The field becomes unknown and the load reports
+  `conflicting_<grain>_<field>`. Previously a later merge silently overwrote
+  the earlier value, and only conflicts within one call were detected.
 - A supplied null finding `side` now loads as bilateral and projects to both
   breast sides, matching the EMBED MagView convention. It previously loaded as
   unknown and the finding appeared on neither side.

@@ -64,7 +64,8 @@ unchanged, so partial tables and extracts can be loaded progressively. It preser
 references, subclasses, consumer attributes and metadata, unbound fields, and
 unsupplied child grains. Child-only loads ensure parent objects without resetting
 their scalar fields. Explicit merge applies non-null values. Complementary rows
-combine; conflicting populated values become unknown with a diagnostic.
+combine; a populated value that conflicts with another supplied value or with the
+populated value already in the graph becomes unknown with a diagnostic.
 
 Image metadata projects ROI collections by default. Valid supplied ROI collections
 replace the addressed image collection in either load mode, including manual ROIs.
