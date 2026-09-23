@@ -89,3 +89,16 @@ def test_validation_rejects_a_negative_distance_supplied_directly():
     finding = Finding("A1", Laterality.LEFT, "1", anatomical_position=position)
 
     assert "distance_range" in {issue.code for issue in validate(finding).issues}
+
+
+@pytest.mark.parametrize("source_keys", [None, {"magview": "row_id"}])
+def test_unknown_location_codes_are_reported_with_or_without_source_keys(source_keys):
+    report = load_embed(
+        magview=[magview_row(side="L", location="ZZZ", depth="Q", row_id="r1")],
+        source_keys=source_keys,
+    )
+
+    finding = report.graph.finding("A1", "1")
+    warning_codes = {warning.code for warning in finding.normalization_warnings}
+    assert {"unknown_location_code", "unknown_depth_code"} <= warning_codes
+    assert warning_codes <= {issue.code for issue in report.issues}

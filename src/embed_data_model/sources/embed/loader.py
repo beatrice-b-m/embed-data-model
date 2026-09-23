@@ -549,8 +549,8 @@ def _load_findings(
             issues,
         )
         source = _semantic_source(group, source_scope, "finding", key)
-        evidence = anatomy["evidence"] if source is not None else ()
-        warnings = anatomy["warnings"] if source is not None else ()
+        evidence = anatomy["evidence"]
+        warnings = anatomy["warnings"]
         descriptors = fields.get("descriptors")
         if descriptors is None:
             descriptor_map: dict[str, Any] = {}
@@ -902,48 +902,47 @@ def _finding_anatomy(
             depth_code=depth,
         )
         position = normalized.position
-        if source is not None:
-            source_fields = {
-                "location_code": ("location", location),
-                "depth_code": ("depth", depth),
-                "laterality": ("laterality", laterality.value),
-            }
-            for item in normalized.evidence:
-                source_field, raw_value = source_fields.get(
-                    item.field, (item.field, item.raw_value)
+        source_fields = {
+            "location_code": ("location", location),
+            "depth_code": ("depth", depth),
+            "laterality": ("laterality", laterality.value),
+        }
+        for item in normalized.evidence:
+            source_field, raw_value = source_fields.get(
+                item.field, (item.field, item.raw_value)
+            )
+            evidence.append(
+                FindingNormalizationEvidence(
+                    source=source,
+                    source_field=source_field,
+                    raw_value=raw_value,
+                    normalized_kind=item.normalized_kind,
+                    normalized_value=item.normalized_value,
                 )
-                evidence.append(
-                    FindingNormalizationEvidence(
-                        source=source,
-                        source_field=source_field,
-                        raw_value=raw_value,
-                        normalized_kind=item.normalized_kind,
-                        normalized_value=item.normalized_value,
-                    )
+            )
+        for warning in normalized.warnings:
+            source_field, raw_value = source_fields.get(
+                warning.field or "", (warning.field or "location", warning.raw_value)
+            )
+            warnings.append(
+                FindingNormalizationWarning(
+                    source=source,
+                    source_field=source_field,
+                    raw_value=raw_value,
+                    code=warning.code,
+                    message=warning.message,
                 )
-            for warning in normalized.warnings:
-                source_field, raw_value = source_fields.get(
-                    warning.field or "", (warning.field or "location", warning.raw_value)
+            )
+        for warning in normalized.warnings:
+            issues.append(
+                Issue(
+                    code=warning.code,
+                    message=warning.message,
+                    severity=IssueSeverity.WARNING,
+                    source=source,
+                    context={"identity": key},
                 )
-                warnings.append(
-                    FindingNormalizationWarning(
-                        source=source,
-                        source_field=source_field,
-                        raw_value=raw_value,
-                        code=warning.code,
-                        message=warning.message,
-                    )
-                )
-            for warning in normalized.warnings:
-                issues.append(
-                    Issue(
-                        code=warning.code,
-                        message=warning.message,
-                        severity=IssueSeverity.WARNING,
-                        source=source,
-                        context={"identity": key},
-                    )
-                )
+            )
     distance: Optional[float] = None
     if distance_raw is not None:
         try:

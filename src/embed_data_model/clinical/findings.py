@@ -55,9 +55,9 @@ class FindingNormalizationEvidence:
 
     Attributes
     ----------
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
+    source : SourceValue or None
+        Physical row provenance when the load supplied source keys, else None.
+        It identifies evidence, not a clinical event.
     source_field : str
         Source column/slot that supplied the normalized evidence.
     raw_value : Any
@@ -69,8 +69,8 @@ class FindingNormalizationEvidence:
         Normalized value retained alongside source evidence. Default: None.
     """
 
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    source: Optional[SourceValue]
+    """Physical row provenance when the load supplied source keys, else None."""
     source_field: str
     """Source column/slot that supplied the normalized evidence."""
     raw_value: Any
@@ -81,8 +81,8 @@ class FindingNormalizationEvidence:
     """Normalized value retained alongside source evidence. Default: None."""
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
+        if self.source is not None and not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef, SourceLocator or None")
         for attribute in ("source_field", "normalized_kind"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
@@ -95,7 +95,7 @@ class FindingNormalizationEvidence:
         """
 
         return {
-            "source": self.source.to_dict(),
+            "source": None if self.source is None else self.source.to_dict(),
             "source_field": self.source_field,
             "raw_value": _to_plain(self.raw_value),
             "normalized_kind": self.normalized_kind,
@@ -109,9 +109,9 @@ class FindingNormalizationWarning:
 
     Attributes
     ----------
-    source : SourceValue
-        Optional provenance. SourceRef and SourceLocator identify evidence, not
-        clinical events.
+    source : SourceValue or None
+        Physical row provenance when the load supplied source keys, else None.
+        It identifies evidence, not a clinical event.
     code : str
         Non-empty machine-readable diagnostic code.
     message : str
@@ -123,8 +123,8 @@ class FindingNormalizationWarning:
         identity. Default: None.
     """
 
-    source: SourceValue
-    """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
+    source: Optional[SourceValue]
+    """Physical row provenance when the load supplied source keys, else None."""
     code: str
     """Non-empty machine-readable diagnostic code."""
     message: str
@@ -137,8 +137,8 @@ class FindingNormalizationWarning:
     """
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source, (SourceLocator, SourceRef)):
-            raise TypeError("source must be a SourceRef or SourceLocator")
+        if self.source is not None and not isinstance(self.source, (SourceLocator, SourceRef)):
+            raise TypeError("source must be a SourceRef, SourceLocator or None")
         for attribute in ("code", "message"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
@@ -155,7 +155,7 @@ class FindingNormalizationWarning:
         """
 
         return {
-            "source": self.source.to_dict(),
+            "source": None if self.source is None else self.source.to_dict(),
             "source_field": self.source_field,
             "raw_value": _to_plain(self.raw_value),
             "code": self.code,
