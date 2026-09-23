@@ -112,5 +112,5 @@ Consumers can inspect results, partition by validation, or select with independe
 predicates without imposing a study-specific rejection policy on the library.
 
 Synthetic tests establish software behavior. Private-data, real-pixel, and downstream
-scientific qualification require their own evidence. See [qualification](qualification.md)
-and [loading measurements](../benchmarks/README.md) for dated local results.
+scientific qualification require their own evidence. See
+[loading measurements](../benchmarks/README.md) for synthetic scale results.

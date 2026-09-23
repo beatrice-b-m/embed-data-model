@@ -4,6 +4,8 @@
 
 ### Removed
 
+- `docs/qualification.md`, a dated record of one local test run whose counts
+  and commit hashes went stale with the next change. CI records test results.
 - `load_embed` parameters `retain_raw` (validated but never used),
   `registry_rows` (an alias of `registry`) and `identity_namespace` (a label
   that changed nothing).

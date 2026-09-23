@@ -1,8 +1,7 @@
 # EMBED Data Model API reference
 
 This reference specifies the behavior defined by the [contract](contract.md).
-See the [user guide](user-guide.md) for runnable examples and
-[qualification](qualification.md) for dated verification evidence.
+See the [user guide](user-guide.md) for runnable examples.
 
 Public classes, properties and entry points carry inline usage contracts for
 editor hovers and `help()`. For example, inspect `help(load_embed)`,
