@@ -92,10 +92,9 @@ def load_clinical(
                     (procedure, attachment, row, cmap)
                 )
             else:
-                diagnosis, descriptors, errors = normalize_pathology(row, cmap)
-                issues.extend(errors)
+                diagnosis, descriptors = normalize_pathology(row, cmap)
                 record_id = _identifier(row, cmap.get("record_id"))
-                if diagnosis is None and not descriptors and record_id is None:
+                if not diagnosis and not descriptors and record_id is None:
                     continue
                 _claim(graph, row, cmap, claims)
                 procedure, _ = normalize_procedure(row, cmap)
@@ -210,17 +209,13 @@ def load_clinical(
             key,
         )
         # Reuse the normalizer after combining scalar source values.
-        normalized, _, errors = normalize_pathology(values, {k: k for k in values})
-        issues.extend(errors)
+        normalized, _ = normalize_pathology(values, {k: k for k in values})
         descriptor_values = tuple(
             next(d for _, ds, *_ in group for d in ds if d.source_ordinal == slot)
             for slot in sorted(slots)
             if len(slots[slot]) == 1
         )
-        updates = {
-            field: getattr(normalized, field) if normalized is not None else None
-            for field in values
-        }
+        updates = {field: normalized.get(field) for field in values}
         if "severity" in values:
             updates["raw_severity"] = values["severity"]
         if merge:

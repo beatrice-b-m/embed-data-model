@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Dict, Hashable, Iterable, Mapping, Optional, Tuple
 
@@ -38,182 +39,50 @@ class PathologySeverity(IntEnum):
     NON_BREAST_CANCER = 5
 
 
-class PathologyObservation(MutableEntity):
-    """One mutable descriptor occurrence in an ordered source slot.
+@dataclass(frozen=True)
+class PathologyObservation:
+    """One pathology descriptor code reported in a numbered source slot.
 
-    Parameters
+    Slot position and repeated values are kept as reported; neither implies
+    weight or chronology.
+
+    Attributes
     ----------
     descriptor : str
-        One non-empty reported pathology descriptor.
+        Non-empty reported descriptor code.
     source_slot : str
-        Non-empty source descriptor slot name; preserves ordered source
-        evidence.
+        Non-empty source slot name, such as ``"path1"``.
     source_ordinal : int
-        One-based occurrence within a descriptor slot; must be a positive
-        integer.
-    source : Optional[SourceRef], optional
-        Optional SourceRef locating the source row; evidence, not a
-        clinical event. Default: None.
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
+        One-based slot number.
+    source : SourceRef or None, optional
+        Row the descriptor was read from. Default None.
     """
 
+    descriptor: str
+    """Reported descriptor code."""
+    source_slot: str
+    """Source slot name, such as ``path1``."""
     source_ordinal: int
-    """One-based occurrence within a descriptor slot; must be a positive integer."""
+    """One-based slot number."""
+    source: Optional[SourceRef] = None
+    """Row the descriptor was read from."""
 
-    def __init__(
-        self,
-        descriptor: str,
-        source_slot: str,
-        source_ordinal: int,
-        source: Optional[SourceRef] = None,
-    ) -> None:
-        super().__init__()
-        self.descriptor = _required_text(descriptor, "descriptor")
-        self.source_slot = _required_text(source_slot, "source_slot")
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "descriptor", _required_text(self.descriptor, "descriptor"))
+        object.__setattr__(self, "source_slot", _required_text(self.source_slot, "source_slot"))
         if (
-            isinstance(source_ordinal, bool)
-            or not isinstance(source_ordinal, int)
-            or source_ordinal < 1
+            isinstance(self.source_ordinal, bool)
+            or not isinstance(self.source_ordinal, int)
+            or self.source_ordinal < 1
         ):
             raise ValueError("source_ordinal must be a positive integer")
-        self.source_ordinal = source_ordinal
-        self.source = optional_source(source)
-        self._finish_initialization()
+        object.__setattr__(self, "source", optional_source(self.source))
 
     @property
     def identity(self) -> Tuple[str, int]:
-        """Semantic identity used for equality of addresses, independent of Python object identity."""
+        """Return ``(source_slot, source_ordinal)``."""
 
         return self.source_slot, self.source_ordinal
-
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
-        return {
-            "descriptor": self.descriptor,
-            "source_slot": self.source_slot,
-            "source_ordinal": self.source_ordinal,
-            "source": self.source,
-        }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
-
-
-class PathologyDiagnosis(MutableEntity):
-    """Mutable diagnosis evidence with an explicit documentation date.
-
-    Parameters
-    ----------
-    source : Optional[SourceRef], optional
-        Optional SourceRef locating the source row; evidence, not a
-        clinical event. Default: None.
-    diagnosis : Optional[str], optional
-        Reported diagnosis text; None means absent. No diagnosis is inferred.
-        Default: None.
-    result_category : Optional[str], optional
-        Reported result category; None means absent. Default: None.
-    malignant : Optional[bool], optional
-        Reported malignancy flag; None means unknown, not False. Default: None.
-    severity : Optional[PathologySeverity], optional
-        Reported EMBED severity on the 0–5 scale; invalid numeric facts are
-        retained for validate. Default: None.
-    raw_severity : Any, optional
-        Unnormalized source severity retained for comparison; None means absent.
-        Default: None.
-    report_documented_date : Optional[str], optional
-        Date the report was documented, conventionally ISO YYYY-MM-DD; not a
-        diagnosis/event date. Default: None.
-    validation_issues : Tuple[object, ...], optional
-        Supplied diagnostics retained in order; does not run validation.
-        Default: ().
-
-    Notes
-    -----
-    Scalar fields are mutable. Constructor parameters describe the initial public
-    fields; collection properties document their views. Use update/rekey to keep
-    registered identities and relationships coherent. Construction checks basic
-    representation; validate performs optional quality checks. No files are owned.
-    """
-
-    diagnosis: Optional[str]
-    """Reported diagnosis text; None means absent. No diagnosis is inferred."""
-    result_category: Optional[str]
-    """Reported result category; None means absent."""
-    malignant: Optional[bool]
-    """Reported malignancy flag; None means unknown, not False."""
-    raw_severity: Any
-    """Unnormalized source severity retained for comparison; None means absent."""
-    report_documented_date: Optional[str]
-    """Date the report was documented, conventionally ISO YYYY-MM-DD; not a
-    diagnosis/event date.
-    """
-
-    def __init__(
-        self,
-        source: Optional[SourceRef] = None,
-        diagnosis: Optional[str] = None,
-        result_category: Optional[str] = None,
-        malignant: Optional[bool] = None,
-        severity: Optional[PathologySeverity] = None,
-        raw_severity: Any = None,
-        report_documented_date: Optional[str] = None,
-        validation_issues: Tuple[object, ...] = (),
-    ) -> None:
-        super().__init__()
-        self.source = optional_source(source)
-        self.diagnosis = diagnosis
-        self.result_category = result_category
-        self.malignant = malignant
-        self.severity = severity
-        self.raw_severity = raw_severity
-        self.report_documented_date = report_documented_date
-        self.validation_issues = tuple(validation_issues)
-        if any(
-            getattr(issue, "source", self.source) != self.source
-            for issue in self.validation_issues
-        ):
-            raise ValueError("Pathology diagnosis issues must reference its source")
-        represented_values = (
-            self.diagnosis,
-            self.result_category,
-            self.malignant,
-            self.severity,
-            self.raw_severity,
-            self.report_documented_date,
-        )
-        if all(value is None for value in represented_values) and not self.validation_issues:
-            raise ValueError("PathologyDiagnosis requires represented diagnosis evidence")
-        self._finish_initialization()
-
-    def _to_dict_data(self, state: Any) -> Dict[str, Any]:
-        return {
-            "source": self.source,
-            "diagnosis": self.diagnosis,
-            "result_category": self.result_category,
-            "malignant": self.malignant,
-            "severity": self.severity,
-            "raw_severity": self.raw_severity,
-            "report_documented_date": self.report_documented_date,
-            "validation_issues": self.validation_issues,
-        }
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Return a new dictionary representation of the represented fields. Nested
-        entity serialization uses semantic references for repeated objects; consumer
-        values are not a guaranteed lossless round trip.
-        """
-
-        return serialize_entity(self)
 
 
 class Pathology(MutableEntity):

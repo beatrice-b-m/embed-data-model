@@ -1,8 +1,8 @@
-"""Pathology descriptor slots and diagnosis evidence."""
+"""Pathology descriptor slots."""
 
 import pytest
 
-from embed_data_model.clinical.pathology import PathologyDiagnosis, PathologyObservation
+from embed_data_model.clinical.pathology import PathologyObservation
 
 
 def test_descriptor_occurrences_keep_their_slot_and_repeated_values():
@@ -16,10 +16,3 @@ def test_descriptor_occurrences_keep_their_slot_and_repeated_values():
 def test_descriptor_slot_ordinal_is_one_based():
     with pytest.raises(ValueError):
         PathologyObservation("ADH", "path0", 0)
-
-
-def test_diagnosis_requires_some_represented_evidence():
-    with pytest.raises(ValueError):
-        PathologyDiagnosis()
-
-    assert PathologyDiagnosis(report_documented_date="2020-01-05").report_documented_date == "2020-01-05"

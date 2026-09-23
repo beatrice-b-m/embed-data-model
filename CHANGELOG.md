@@ -4,6 +4,9 @@
 
 ### Removed
 
+- `PathologyDiagnosis`, an intermediate object the adapter copied field by
+  field into `Pathology`. `normalize_pathology` returns a dictionary of
+  supplied `Pathology` fields plus the descriptor slots.
 - `docs/qualification.md`, a dated record of one local test run whose counts
   and commit hashes went stale with the next change. CI records test results.
 - `load_embed` parameters `retain_raw` (validated but never used),
@@ -25,6 +28,8 @@
 
 ### Changed
 
+- `PathologyObservation` is a frozen value `(descriptor, source_slot,
+  source_ordinal, source)`.
 - `ImagingInterpretation(assessment=None, recommendation=None, sources=())` is
   a mutable value stored on its finding; it no longer takes or repeats
   `accession_number` and `finding_number`.
