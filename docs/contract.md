@@ -33,6 +33,10 @@ or row order. One accession identifies one exam. Conflicting source patient clai
 remain in `asserted_patient_ids`; ownership stays unset until explicitly assigned
 with `graph.assign_patient`. Explicit ownership persists across reloads.
 
+A finding's side is an attribute, not part of its identity. In EMBED a supplied
+null finding side means bilateral (code `B`) and projects to both breast sides;
+a side column absent from every row leaves the side unknown.
+
 Procedure identity requires patient, performed date, procedure type, and laterality.
 Pathology uses an explicit patient-scoped record ID or a supported attachment and
 report-date key. Insufficient or ambiguous identities remain unresolved records.

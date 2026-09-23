@@ -524,10 +524,11 @@ def _load_findings(
             key,
             issues,
         )
-        if fields.get("laterality") is None:
-            laterality = Laterality.UNKNOWN
-        else:
-            laterality = fields["laterality"]
+        laterality = _finding_laterality(fields, conflicts, group, columns)
+        if laterality is Laterality.BILATERAL:
+            # A supplied null side is a populated bilateral fact, so merge
+            # applies it like any other supplied value.
+            fields["laterality"] = laterality
         record_type = _finding_record_type(fields.get("record_type"), finding_number)
         interpretation = _interpretation(
             accession,
@@ -1007,6 +1008,35 @@ def _interpretation(
         assessment=assessment,
         recommendation=recommendation,
     )
+
+
+def _finding_laterality(
+    fields: Mapping[str, Any],
+    conflicts: Mapping[str, bool],
+    rows: Sequence[_InputRow],
+    columns: Mapping[str, Optional[str]],
+) -> Laterality:
+    """Return finding side, reading a supplied null side as bilateral.
+
+    In EMBED MagView a null finding side is equivalent to code ``B`` and
+    projects to both breast sides. Only a column that is absent from every row,
+    or conflicting populated values, leave the side unknown.
+    """
+
+    value = fields.get("laterality")
+    if value is not None:
+        return value
+    if conflicts.get("laterality"):
+        return Laterality.UNKNOWN
+    if _column_supplied(rows, columns.get("laterality")):
+        return Laterality.BILATERAL
+    return Laterality.UNKNOWN
+
+
+def _column_supplied(rows: Sequence[_InputRow], column: Optional[str]) -> bool:
+    """Return whether any row carries ``column``, including an explicit null."""
+
+    return column is not None and any(column in row.mapping for row in rows)
 
 
 def _finding_record_type(value: Any, finding_number: str) -> FindingRecordType:

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A supplied null finding `side` now loads as bilateral and projects to both
+  breast sides, matching the EMBED MagView convention. It previously loaded as
+  unknown and the finding appeared on neither side.
+
 ## 0.1.0 — 2026-09-09
 
 First tagged source release, `v0.1.0`, under the MIT license, with Python

@@ -248,7 +248,7 @@ The supported default map is:
 | --- | --- |
 | `patients` | `patient_id <- empi_anon`; `sex <- GENDER_DESC`; `birth_year <- birth_year`; `context_date <- studydate_anon` |
 | `exams` | `accession <- acc_anon`; `patient_id <- empi_anon`; `exam_date <- studydate_anon`; `exam_description <- desc` |
-| `findings` | `(accession, finding_number) <- (acc_anon, numfind)`; `patient_id <- empi_anon`; `laterality <- side`; `assessment <- asses`; `recommendation <- recc`; `location <- location`; `depth <- depth`; `distance <- distance` |
+| `findings` | `(accession, finding_number) <- (acc_anon, numfind)`; `patient_id <- empi_anon`; `laterality <- side` (a supplied null side is bilateral, like `B`); `assessment <- asses`; `recommendation <- recc`; `location <- location`; `depth <- depth`; `distance <- distance` |
 | `images` | source path `anon_dicom_path`; patient/accession `empi_anon`/`acc_anon`; laterality/view `ImageLateralityFinal`/`ViewPosition`; modality `Modality`; derived type `FinalImageType`; dimensions `Rows`/`Columns`; frames `ImagesInAcquisition`; series UID `SeriesInstanceUID` |
 | `rois` | source path `anon_dicom_path`; coordinates `ROI_coords`; frame facts `ROI_frames`; depth flag `ROI_depth_derived` |
 | `procedures` | identity `(empi_anon, procdate_anon, type, bside)`; optional accession/finding `(acc_anon, numfind)` |
