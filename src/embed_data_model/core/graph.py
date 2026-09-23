@@ -391,10 +391,7 @@ class DatasetGraph:
         if kind == "patient" and "patient_id" in fields:
             old_patient_id = getattr(entity, "patient_id", None)
             new_patient_id = fields["patient_id"]
-            for observation in (
-                *getattr(entity, "attribute_observations", ()),
-                *getattr(entity, "history_observations", ()),
-            ):
+            for observation in getattr(entity, "history_observations", ()):
                 if getattr(observation, "patient_id", None) == old_patient_id:
                     updates.append((observation, {"patient_id": new_patient_id}))
         elif kind == "exam" and "accession_number" in fields:

@@ -281,7 +281,6 @@ _ENTITY_ROLES = {
     "BreastSide": "breast_side",
     "ImagingInterpretation": "interpretation",
     "ExamAttributeObservation": "exam_attribute",
-    "PatientAttributeObservation": "patient_attribute",
     "PatientHistoryObservation": "patient_history",
     "ImageLandmark": "image_landmark",
 }
@@ -326,7 +325,6 @@ def _embedded_entities(entity: MutableEntity) -> Tuple[MutableEntity, ...]:
     role = _entity_role(entity)
     candidates: list[Any] = []
     if role == "patient":
-        candidates.extend(getattr(entity, "attribute_observations", ()))
         candidates.extend(getattr(entity, "history_observations", ()))
     elif role == "exam":
         candidates.extend(getattr(entity, "attribute_observations", ()))
@@ -407,7 +405,7 @@ def _standalone_rekey(entity: MutableEntity, identifiers: Mapping[str, Any]) -> 
                 ):
                     _add_standalone_change(candidate, "patient_id", new_patient_id, changes)
                     owner_explicit.add(id(candidate))
-                elif candidate_role in {"patient_attribute", "patient_history"}:
+                elif candidate_role == "patient_history":
                     if getattr(candidate, "patient_id", _MISSING) == old_patient_id:
                         _add_standalone_change(
                             candidate, "patient_id", new_patient_id, changes

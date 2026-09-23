@@ -96,3 +96,41 @@ def test_merge_conflict_in_image_metadata_is_reported():
 
     assert graph.images[0].view_position.value == "UNKNOWN"
     assert "conflicting_image_view_position" in {issue.code for issue in report.issues}
+
+
+def test_patient_attribute_that_changes_between_exams_is_kept_per_exam():
+    from datetime import date
+
+    rows = [
+        {"empi_anon": "P1", "acc_anon": "A1", "numfind": 1, "studydate_anon": "2020-01-01", "GENDER_DESC": "F"},
+        {"empi_anon": "P1", "acc_anon": "A2", "numfind": 1, "studydate_anon": "2022-01-01", "GENDER_DESC": "U"},
+    ]
+    report = load_embed(magview=rows)
+    patient = report.graph.patient("P1")
+
+    assert patient.sex is None
+    assert patient.attribute_as_of("sex", date(2021, 1, 1)) == "F"
+    assert patient.attribute_as_of("sex", date(2022, 1, 1)) == "U"
+    assert not [issue for issue in report.issues if issue.code.startswith("conflicting_patient")]
+
+
+def test_patient_attribute_that_agrees_across_exams_is_a_scalar():
+    rows = [
+        {"empi_anon": "P1", "acc_anon": "A1", "numfind": 1, "studydate_anon": "2020-01-01", "GENDER_DESC": "F"},
+        {"empi_anon": "P1", "acc_anon": "A2", "numfind": 1, "studydate_anon": "2022-01-01", "GENDER_DESC": "F"},
+    ]
+    patient = load_embed(magview=rows).graph.patient("P1")
+
+    assert patient.sex == "F"
+    assert len(patient.attribute_history("sex")) == 2
+
+
+def test_conflicting_patient_values_within_one_exam_are_reported():
+    rows = [
+        {"empi_anon": "P1", "acc_anon": "A1", "numfind": 1, "GENDER_DESC": "F"},
+        {"empi_anon": "P1", "acc_anon": "A1", "numfind": 2, "GENDER_DESC": "M"},
+    ]
+    report = load_embed(magview=rows)
+
+    assert report.graph.patient("P1").sex is None
+    assert "conflicting_patient_sex" in {issue.code for issue in report.issues}

@@ -72,7 +72,8 @@ conflicts with another supplied value or with a populated value already in the
 graph becomes unknown with a diagnostic. Wide and narrow projections
 share one grouping stage. Child rows ensure parents without refreshing them.
 
-Managed fields by grain (bound mapped fields only): patient sex/birth_year/context_date;
+Managed fields by grain (bound mapped fields only): patient sex/birth_year, recorded
+per exam context as attribute observations;
 exam exam_date/description; finding laterality/finding_type/interpretation/anatomy,
 source anatomy codes/descriptors/record_type; image laterality/view/modality,
 source modality/derived type, dimensions/frame_count, study/series IDs and coordinate

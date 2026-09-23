@@ -3,19 +3,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import date
 
 import pytest
 
 from embed_data_model.clinical.attributes import (
     ExamAttributeName,
     ExamAttributeObservation,
-    PatientAttributeAsOfPolicy,
-    PatientAttributeName,
-    PatientAttributeObservation,
-    PatientObservationTimeBasis,
-    UndatedObservationPolicy,
-    select_patient_attribute_as_of,
 )
 from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.findings import Finding
@@ -49,40 +42,10 @@ def test_optional_source_observations_are_mutable_standalone() -> None:
     assert exam_observation.source is None
     assert exam_observation.to_dict()["value"] == "screening"
 
-    patient_observation = PatientAttributeObservation(
-        "P-1", PatientAttributeName.SEX, "F", context_date=date(2020, 1, 1)
-    )
-    patient_observation.update(value="M")
-    assert patient_observation.source is None
-    assert patient_observation.value == "M"
-
     interpretation = ImagingInterpretation("ACC-1", "1")
     interpretation.update(assessment="4")
     assert interpretation.sources == ()
     assert interpretation.to_dict()["assessment"] == "4"
-
-
-def test_as_of_selection_accepts_source_less_observations() -> None:
-    observation = PatientAttributeObservation(
-        "P-1",
-        PatientAttributeName.BIRTH_YEAR,
-        1970,
-        context_date=date(2020, 1, 1),
-        time_basis=PatientObservationTimeBasis.EXAM_DATE_CONTEXT,
-    )
-    selected = select_patient_attribute_as_of(
-        [observation],
-        patient_id="P-1",
-        attribute=PatientAttributeName.BIRTH_YEAR,
-        policy=PatientAttributeAsOfPolicy(
-            as_of_date=date(2021, 1, 1),
-            time_basis=PatientObservationTimeBasis.EXAM_DATE_CONTEXT,
-            undated=UndatedObservationPolicy.EXCLUDE,
-        ),
-    )
-    assert selected.selected_value == 1970
-    assert selected.supporting_sources == (None,)
-    assert selected.to_dict()["supporting_sources"] == [None]
 
 
 def test_history_time_keeps_raw_numeric_values_without_quality_ranges() -> None:

@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Patient attributes are recorded per exam context as
+  `PatientAttributeObservation(attribute, value, accession_number,
+  context_date)`. `Patient.attribute_as_of` and `Patient.attribute_history`
+  choose values explicitly. `patient.sex` keeps a value only when all
+  observations agree. Values that differ between exams are no longer reported
+  as conflicts or discarded. `Patient.context_date` and the unused
+  `select_patient_attribute_as_of` selection types are removed.
 - `Pathology(...)` requires an explicit `identity` or both `patient_id` and
   `record_id`. The undocumented `**identity_parts` attachment/report-date
   fallback, which could not be reached through the constructor, is removed.

@@ -10,6 +10,7 @@ from math import isfinite
 from numbers import Integral, Real
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Union
 
+from embed_data_model.clinical.attributes import PatientAttributeObservation
 from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.findings import (
     Finding,
@@ -438,27 +439,53 @@ def _load_patients(
     mode: str,
     issues: list[Issue],
 ) -> None:
+    """Record patient attributes per exam context and derive stable scalars.
+
+    Patient attributes repeat on every exam row and may legitimately change
+    over time. Each row contributes an observation for its exam context
+    (accession and exam date); refresh replaces the observation for a supplied
+    context and merge fills it. The scalar attribute keeps a value only when
+    every observation of the patient agrees; otherwise consumers choose one
+    with ``Patient.attribute_as_of``.
+    """
+
+    converters = {"sex": _text_value, "birth_year": _birth_year_value}
     groups = _group_rows(rows, columns, ("patient_id",), "patient", issues)
     for key in sorted(groups, key=repr):
-        group = groups[key]
         patient = _ensure_patient(graph, key)
-        fields, conflicts = _combine_fields(
-            group,
-            columns,
-            {
-                "sex": _text_value,
-                "birth_year": _birth_year_value,
-                "context_date": _date_value,
-            },
-            "patient",
-            key,
-            issues,
-        )
-        updates = _updates_for_mode(fields, conflicts, mode)
-        if mode == "merge":
-            reconcile_merge(_current(patient, updates), updates, grain="patient", key=key, issues=issues)
-        if updates:
-            _update_entity(graph, patient, updates)
+        date_column = columns.get("context_date")
+        contexts: dict[tuple[Optional[str], Optional[date]], list[_InputRow]] = {}
+        for row in groups[key]:
+            context = (
+                _mapped_identifier(row.mapping, columns.get("accession")),
+                _date_value(row.mapping.get(date_column)) if date_column else None,
+            )
+            contexts.setdefault(context, []).append(row)
+        touched: set[str] = set()
+        for (accession, context_date), context_rows in sorted(contexts.items(), key=repr):
+            fields, conflicts = _combine_fields(context_rows, columns, converters, "patient", key, issues)
+            updates = _updates_for_mode(fields, conflicts, mode)
+            current = {
+                item.attribute: item.value
+                for item in patient.attribute_observations
+                if item.accession_number == accession and item.context_date == context_date
+            }
+            if mode == "merge":
+                reconcile_merge({name: current.get(name) for name in updates}, updates, grain="patient", key=key, issues=issues)
+            for attribute, value in updates.items():
+                patient.add_attribute_observation(
+                    PatientAttributeObservation(attribute, value, accession, context_date)
+                )
+                touched.add(attribute)
+        scalars = {}
+        for attribute in sorted(touched):
+            values: list[Any] = []
+            for item in patient.attribute_observations:
+                if item.attribute == attribute and item.value is not None and item.value not in values:
+                    values.append(item.value)
+            scalars[attribute] = values[0] if len(values) == 1 else None
+        if scalars:
+            _update_entity(graph, patient, scalars)
 
 
 def _load_exams(

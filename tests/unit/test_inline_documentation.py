@@ -29,7 +29,6 @@ FUNCTIONS = {
     "core.tables": ("iter_records",),
     "core.validation": ("validate",),
     "core.selection": ("select", "partition"),
-    "clinical.attributes": ("select_patient_attribute_as_of",),
     "core.birads": ("normalize_mass_shape", "normalize_mass_margin",
                     "normalize_calc_morphology", "normalize_asymmetry_type"),
     "sources.embed.loader": ("load_embed",),

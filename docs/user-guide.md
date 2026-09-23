@@ -160,6 +160,29 @@ supported patient, exam, and finding grains while its procedure, pathology,
 registry, and linked-accession columns are handled by their corresponding
 adapters.
 
+## Patient attributes over time
+
+Patient attributes such as sex repeat on every exam row and can change over
+time or disagree. The loader records one `PatientAttributeObservation` per
+exam context (accession and exam date). `patient.sex` holds a value only when
+every observation agrees; otherwise choose a value as of an explicit date so
+later information does not leak into an earlier analysis:
+
+```python
+from datetime import date
+
+from embed_data_model import load_embed
+
+rows = [
+    {"empi_anon": "P-9", "acc_anon": "A-1", "numfind": 1, "studydate_anon": "2020-01-01", "GENDER_DESC": "F"},
+    {"empi_anon": "P-9", "acc_anon": "A-2", "numfind": 1, "studydate_anon": "2022-01-01", "GENDER_DESC": "U"},
+]
+patient = load_embed(magview=rows).graph.patient("P-9")
+assert patient.sex is None
+assert patient.attribute_as_of("sex", date(2021, 1, 1)) == "F"
+assert [item.value for item in patient.attribute_history("sex")] == ["F", "U"]
+```
+
 ## Refresh and merge
 
 One invocation is one complete grouped snapshot for each grain it addresses.
@@ -252,7 +275,7 @@ The supported default map is:
 
 | Input | Identity and default bindings |
 | --- | --- |
-| `patients` | `patient_id <- empi_anon`; `sex <- GENDER_DESC`; `context_date <- studydate_anon`; `birth_year` unbound |
+| `patients` | `patient_id <- empi_anon`; exam context `acc_anon`/`studydate_anon`; `sex <- GENDER_DESC`; `birth_year` unbound |
 | `exams` | `accession <- acc_anon`; `patient_id <- empi_anon`; `exam_date <- studydate_anon`; `exam_description <- desc` |
 | `findings` | `(accession, finding_number) <- (acc_anon, numfind)`; `patient_id <- empi_anon`; `laterality <- side` (a supplied null side is bilateral, like `B`); `assessment <- asses`; `recommendation <- recc`; `location <- location`; `depth <- depth`; `distance <- distance` (negative values are exceptional codes, kept raw only) |
 | `images` | source path `anon_dicom_path`; patient/accession `empi_anon`/`acc_anon`; laterality/view `ImageLateralityFinal`/`ViewPosition`; modality `Modality`; derived type `FinalImageType`; dimensions `Rows`/`Columns`; frames `ImagesInAcquisition` (DBT images only); study/series UIDs from the path |

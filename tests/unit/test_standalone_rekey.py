@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import date
 
 import pytest
 
@@ -21,8 +20,6 @@ from embed_data_model import (
 from embed_data_model.clinical.attributes import (
     ExamAttributeName,
     ExamAttributeObservation,
-    PatientAttributeName,
-    PatientAttributeObservation,
 )
 from embed_data_model.clinical.histories import MedicationHistoryObservation
 from embed_data_model.clinical.interpretations import ImagingInterpretation
@@ -86,15 +83,11 @@ def test_standalone_exam_and_image_rekeys_preserve_tree_objects() -> None:
 
 
 def test_standalone_patient_rekey_updates_owners_and_embedded_context_only() -> None:
-    patient_observation = PatientAttributeObservation(
-        "P-1", PatientAttributeName.SEX, "F", context_date=date(2020, 1, 1)
-    )
     history = MedicationHistoryObservation(
         "P-1", category="hormone", medication="estrogen"
     )
     patient = Patient(
         "P-1",
-        attribute_observations=(patient_observation,),
         history_observations=(history,),
     )
     exam = patient.add_exam(Exam("A-1", asserted_patient_ids=("P-1",)))
@@ -114,7 +107,6 @@ def test_standalone_patient_rekey_updates_owners_and_embedded_context_only() -> 
     assert exam.patient_id == "P-2"
     assert exam.owner_explicit
     assert exam.asserted_patient_ids == {"P-1"}
-    assert patient_observation.patient_id == "P-2"
     assert history.patient_id == "P-2"
     assert image.patient_id == "source-P"
     assert procedure.identity is procedure_identity

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -42,8 +43,8 @@ class Patient(MutableEntity):
         Initial exams in supplied order; entities are attached by reference, not
         copied. Default: None.
     attribute_observations : Optional[Iterable[PatientAttributeObservation]], optional
-        Source-attributed facts retained by reference in supplied order; context
-        must match the parent. Default: None.
+        Reported attribute values per exam context. A later observation with
+        the same context replaces an earlier one. Default: None.
     metadata : Optional[Mapping[str, Any]], optional
         Consumer metadata, shallow-copied into a mutable dict. Nested values
         remain shared. Default: None.
@@ -51,14 +52,11 @@ class Patient(MutableEntity):
         Patient-reported facts retained by reference; explicit IDs reconcile
         matching records. Default: None.
     sex : Optional[str], optional
-        Source-reported sex value; None means absent, with no inference.
-        Default: None.
+        Source-reported sex when every observation agrees; None means absent or
+        varying over time (see ``attribute_as_of``). No inference. Default: None.
     birth_year : Optional[int], optional
         Reported calendar birth year; None means unknown. Plausibility is
         checked by validate. Default: None.
-    context_date : Optional[Any], optional
-        Date of the reporting context, not necessarily the date of the reported
-        event. Default: None.
     source : Optional[object], optional
         Optional provenance. SourceRef and SourceLocator identify evidence, not
         clinical events. Default: None.
@@ -80,11 +78,9 @@ class Patient(MutableEntity):
     __key_fields__ = ("patient_id",)
 
     sex: Optional[str]
-    """Source-reported sex value; None means absent, with no inference."""
+    """Source-reported sex when all observations agree; None if absent or varying."""
     birth_year: Optional[int]
     """Reported calendar birth year; None means unknown. Plausibility is checked by validate."""
-    context_date: Optional[Any]
-    """Date of the reporting context, not necessarily the date of the reported event."""
     source: Optional[object]
     """Optional provenance. SourceRef and SourceLocator identify evidence, not clinical events."""
 
@@ -97,14 +93,12 @@ class Patient(MutableEntity):
         history_observations: Optional[Iterable[PatientHistoryObservation]] = None,
         sex: Optional[str] = None,
         birth_year: Optional[int] = None,
-        context_date: Optional[Any] = None,
         source: Optional[object] = None,
     ) -> None:
         super().__init__()
         self.patient_id = _required_text(patient_id, "patient_id")
         self.sex = sex
         self.birth_year = birth_year
-        self.context_date = context_date
         self.source = source
         self._metadata: Dict[str, Any] = dict(metadata or {})
         self._exams: List[Exam] = []
@@ -142,9 +136,69 @@ class Patient(MutableEntity):
 
     @property
     def attribute_observations(self) -> Tuple[PatientAttributeObservation, ...]:
-        """Tuple snapshot of live source-attributed observations in insertion order."""
+        """Reported attribute values, one per exam context, in insertion order."""
 
         return tuple(self._attribute_observations)
+
+    def attribute_history(self, attribute: str) -> Tuple[PatientAttributeObservation, ...]:
+        """Return the observations of one attribute, dated ones first by date.
+
+        Undated observations follow in insertion order. Values are as reported,
+        including explicit nulls.
+        """
+
+        matching = [item for item in self._attribute_observations if item.attribute == attribute]
+        dated = sorted(
+            (item for item in matching if item.context_date is not None),
+            key=lambda item: item.context_date,  # type: ignore[arg-type,return-value]
+        )
+        return (*dated, *(item for item in matching if item.context_date is None))
+
+    def attribute_as_of(self, attribute: str, as_of: date) -> Any:
+        """Return the latest reported value of ``attribute`` on or before ``as_of``.
+
+        Parameters
+        ----------
+        attribute : str
+            Attribute name, such as ``"sex"``.
+        as_of : datetime.date
+            Inclusive cutoff compared with each observation's ``context_date``.
+
+        Returns
+        -------
+        Any
+            The value from the latest dated observation that reports a value.
+            None when no dated observation qualifies or when observations on
+            that latest date disagree. Undated observations and explicit nulls
+            are ignored, so later information never leaks into an earlier date.
+
+        Examples
+        --------
+        >>> from datetime import date
+        >>> patient = Patient("P1", attribute_observations=[
+        ...     PatientAttributeObservation("sex", "F", "A1", date(2020, 1, 1)),
+        ...     PatientAttributeObservation("sex", "U", "A2", date(2022, 1, 1)),
+        ... ])
+        >>> patient.attribute_as_of("sex", date(2021, 6, 1))
+        'F'
+        """
+
+        eligible = [
+            item
+            for item in self._attribute_observations
+            if item.attribute == attribute
+            and item.value is not None
+            and item.context_date is not None
+            and item.context_date <= as_of
+        ]
+        if not eligible:
+            return None
+        latest = max(item.context_date for item in eligible if item.context_date is not None)
+        values = []
+        for item in eligible:
+            if item.context_date == latest and item.value not in values:
+                values.append(item.value)
+        return values[0] if len(values) == 1 else None
 
     @property
     def history_observations(self) -> Tuple[PatientHistoryObservation, ...]:
@@ -297,29 +351,30 @@ class Patient(MutableEntity):
         self,
         observation: PatientAttributeObservation,
     ) -> PatientAttributeObservation:
-        """Attach observation and return the retained live object.
+        """Record an attribute observation, replacing one with the same context.
 
         Parameters
         ----------
         observation : PatientAttributeObservation
-            Compatible object with matching parent context. Retained by reference.
+            Value reported for this patient in one exam context.
 
         Returns
         -------
         PatientAttributeObservation
-            Attached object. Graph-backed containment delegates membership to the
-            graph; embedded observations remain local values.
+            The stored observation.
 
         Raises
         ------
-        TypeError, ValueError
-            Wrong object kind, incompatible parent context, or conflicting identity.
+        TypeError
+            ``observation`` is not a PatientAttributeObservation.
         """
 
         if not isinstance(observation, PatientAttributeObservation):
             raise TypeError("observation must be a PatientAttributeObservation")
-        if observation.patient_id != self.patient_id:
-            raise ValueError("PatientAttributeObservation patient_id must match Patient")
+        for index, existing in enumerate(self._attribute_observations):
+            if existing.context == observation.context:
+                self._attribute_observations[index] = observation
+                return observation
         self._attribute_observations.append(observation)
         return observation
 
@@ -477,7 +532,6 @@ class Patient(MutableEntity):
             "patient_id": self.patient_id,
             "sex": self.sex,
             "birth_year": self.birth_year,
-            "context_date": self.context_date,
             "exams": self.exams,
             "attribute_observations": self.attribute_observations,
             "history_observations": self.history_observations,
