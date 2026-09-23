@@ -117,6 +117,13 @@ Codes compare and hash by code (by token set for comma-separated codes) and
 never equal plain strings. Constructors accept text for these fields and store a
 `Code` without meaning.
 
+Patient-history codes are scoped by category: a hormone-history `code` is
+decoded in the hormone, therapy or contraceptive table its `type` selects, and
+a procedure-history `pcode` in the breast or gynecological table. An unknown
+category or code keeps its source code without a meaning and adds a warning. A
+procedure-history result of `NONE` means no result was reported; it is not a
+negative result.
+
 ## Pathology and reported facts
 
 A pathology bundle is keyed by a supplied patient-scoped record ID,

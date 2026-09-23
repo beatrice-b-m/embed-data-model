@@ -379,7 +379,10 @@ order and duplicate values. A report date is not substituted for the procedure
 date or a diagnosis event date.
 
 `hormone_history` and `procedure_history` are patient-owned reported facts.
-They are distinct from performed procedures. Identified history rows refresh
+They are distinct from performed procedures. Their category, code and result
+are `Code` values, and a code is decoded within its category, so `O` under
+hormone `H` reads "Other hormone" but under contraceptive `O` reads "Other
+contraceptive". Identified history rows refresh
 their existing object in place. Without an event ID, refresh replaces that
 history kind as a patient snapshot; merge requires explicit record IDs and
 preserves existing unkeyed facts while reporting the limitation.
