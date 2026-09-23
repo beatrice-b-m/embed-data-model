@@ -92,17 +92,17 @@ def test_supplied_generators_are_consumed_once():
     assert load_embed(patients=Once()).graph.patient("P") is not None
 def test_interpretation_without_diagnostics_refreshes_in_place_and_respects_unbinding():
     from embed_data_model import load_embed
-    graph = load_embed(findings=[{"acc_anon": "A", "numfind": 1, "asses": "4", "recc": "biopsy"}]).graph
+    graph = load_embed(findings=[{"acc_anon": "A", "numfind": 1, "asses": "4", "recc": "BIOPSY"}]).graph
     interpretation = graph.findings[0].interpretation
     assert interpretation.assessment == "4" and interpretation.sources == ()
     interpretation.consumer_note = {"reviewed": True}
     load_embed(findings=[{"acc_anon": "A", "numfind": 1, "asses": "2"}],
                columns={"findings": {"recommendation": None}}, into=graph)
     assert graph.findings[0].interpretation is interpretation
-    assert interpretation.assessment == "2" and interpretation.recommendation == "biopsy"
+    assert interpretation.assessment == "2" and interpretation.recommendation == "BIOPSY"
     assert interpretation.consumer_note == {"reviewed": True}
-    load_embed(findings=[{"acc_anon": "A", "numfind": 1, "recc": "follow up"}], into=graph, mode="merge")
-    assert interpretation.assessment == "2" and interpretation.recommendation == "follow up"
+    load_embed(findings=[{"acc_anon": "A", "numfind": 1, "recc": "FU"}], into=graph, mode="merge")
+    assert interpretation.assessment == "2" and interpretation.recommendation == "FU"
     load_embed(findings=[{"acc_anon": "A", "numfind": 1}], into=graph)
     assert graph.findings[0].interpretation is interpretation
     assert interpretation.assessment is None and interpretation.recommendation is None

@@ -175,6 +175,9 @@ def load_embed(
     There is no row limit; memory use grows with the materialized inputs. No files
     or pixels are opened. Objects own metadata, not file resources.
 
+    Coded values (assessment, recommendation, procedure type, pathology
+    descriptors) are trimmed and uppercased before comparison and storage.
+
     ROI input replaces the complete addressed collection in either mode, including
     manual annotations. Save/pop manual ROIs before replacement if needed.
     Association refresh replaces supplied sets; merge unions them. Explicit null
@@ -512,8 +515,8 @@ def _load_findings(
             {
                 "laterality": lambda value: Laterality.coerce(value),
                 "finding_type": _text_value,
-                "assessment": _text_value,
-                "recommendation": _text_value,
+                "assessment": _code_value,
+                "recommendation": _code_value,
                 "record_type": _text_value,
                 "location": _raw_value,
                 "depth": _raw_value,
@@ -1097,6 +1100,17 @@ def _text_value(value: Any) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _code_value(value: Any) -> Optional[str]:
+    """Normalize a MagView code for comparison: trim whitespace and uppercase.
+
+    EMBED supports comparing alphabetic codes after this normalization; it does
+    not assign a meaning to otherwise unexplained tokens.
+    """
+
+    text = _text_value(value)
+    return None if text is None else text.upper()
 
 
 def _raw_value(value: Any) -> Any:

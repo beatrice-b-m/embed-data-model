@@ -7,6 +7,10 @@
 - A supplied null finding `side` now loads as bilateral and projects to both
   breast sides, matching the EMBED MagView convention. It previously loaded as
   unknown and the finding appeared on neither side.
+- Coded values (assessment, recommendation, procedure type, pathology
+  descriptors) are trimmed and uppercased before comparison, so formatting
+  variants of one code no longer register as conflicting values. Procedure
+  identities and descriptors now carry the normalized code.
 
 ## 0.1.0 — 2026-09-09
 

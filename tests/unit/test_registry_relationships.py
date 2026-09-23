@@ -172,9 +172,9 @@ def test_explicit_pathology_id_is_patient_scoped_and_preserves_reference():
     )
     assert len(graph.pathology) == 2
     obj = graph.get("pathology", ("P", "R"))
-    load(graph, columns=columns, pathology=[clinical_row(report_id="R", path1="new")])
+    load(graph, columns=columns, pathology=[clinical_row(report_id="R", path1="NEW")])
     assert graph.get("pathology", ("P", "R")) is obj
-    assert obj.descriptors[0].descriptor == "new"
+    assert obj.descriptors[0].descriptor == "NEW"
 
 
 def test_insufficient_identity_preserves_useful_snapshot():

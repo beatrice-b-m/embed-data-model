@@ -66,8 +66,8 @@ report = load_embed(
             "numfind": 1,
             "side": "L",
             "desc": "screening",
-            "asses": "4",
-            "recc": "biopsy",
+            "asses": "S",
+            "recc": "B",
             "location": "W",
             "depth": "P",
         }
@@ -80,7 +80,7 @@ exam = graph.exam("A-001")
 finding = graph.finding("A-001", "1")
 assert patient is not None and exam is not None and finding is not None
 assert finding.laterality is Laterality.LEFT
-assert finding.interpretation.assessment == "4"
+assert finding.interpretation.assessment == "S"
 assert not finding.normalization_warnings
 assert not report.issues
 

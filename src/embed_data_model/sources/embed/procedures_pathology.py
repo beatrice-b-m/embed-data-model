@@ -48,7 +48,7 @@ def normalize_procedure(
     performed_date = _text(
         row, columns.get("performed_date", columns.get("procedure_date"))
     )
-    procedure_type = _text(row, columns.get("procedure_type"))
+    procedure_type = _code(row, columns.get("procedure_type"))
     laterality = Laterality.coerce(_text(row, columns.get("laterality")))
     missing = tuple(
         name
@@ -131,7 +131,7 @@ def normalize_pathology(
         )
         for index in range(1, 11)
         if (column := columns.get(f"descriptor_{index}")) is not None
-        if (descriptor := _text(row, column)) is not None
+        if (descriptor := _code(row, column)) is not None
     )
     raw_severity = _value(row, columns.get("severity"))
     severity, severity_issues = _severity(raw_severity, observations, source)
@@ -222,6 +222,13 @@ def _text(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _code(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
+    """Return a MagView code trimmed and uppercased for comparison."""
+
+    text = _text(row, column)
+    return None if text is None else text.upper()
 
 
 def _identifier(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:

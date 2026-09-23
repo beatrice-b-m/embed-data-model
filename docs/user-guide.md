@@ -129,8 +129,8 @@ report = load_embed(
             "numfind": 1,
             "side": "L",
             "desc": "screening",
-            "asses": "4",
-            "recc": "biopsy",
+            "asses": "S",
+            "recc": "B",
             "location": "W",
             "depth": "P",
         }
@@ -143,16 +143,19 @@ finding = graph.finding("A-001", "1")
 assert exam is not None and finding is not None
 assert graph.patient("P-001") is not None
 assert finding.laterality is Laterality.LEFT
-assert finding.interpretation.assessment == "4"
+assert finding.interpretation.assessment == "S"
 assert not finding.normalization_warnings
-assert finding.interpretation.recommendation == "biopsy"
+assert finding.interpretation.recommendation == "B"
 assert not report.issues
 ```
 
 The loader groups rows by semantic identity before updating an object. A
 patient is keyed by `patient_id`, an exam by accession, and a finding by
 `(accession, finding_number)`. Numeric identifiers normalize to stable strings;
-blank identifiers do not manufacture shared objects. A `magview` row projects
+blank identifiers do not manufacture shared objects. Coded values such as
+assessment, recommendation, procedure type, and pathology descriptors are
+trimmed and uppercased, so `"b"` and `" B"` are the same code; no meaning
+is assigned to unexplained tokens. A `magview` row projects
 supported patient, exam, and finding grains while its procedure, pathology,
 registry, and linked-accession columns are handled by their corresponding
 adapters.
