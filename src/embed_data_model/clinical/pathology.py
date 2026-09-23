@@ -29,20 +29,27 @@ def _optional_source(source: Optional[object]) -> Optional[SourceValue]:
 
 
 class PathologySeverity(IntEnum):
-    """Governed EMBED pathology severities without inferred labels.
+    """EMBED ``path_severity`` groups; lower values are more severe.
+
+    The scale is inverse: 0 is the most severe group. Never select the numeric
+    maximum as the most severe result. Code 5 is non-breast cancer, which is
+    not benign or cancer-free (older public documentation used 5 for normal
+    tissue). Code 6 is invalid and has no member; it is kept only as
+    ``raw_severity`` and flagged by ``validate``. A missing severity means no
+    pathology is attached, not a benign or negative result.
 
     Members
     -------
-    SEVERITY_0=0, SEVERITY_1=1, SEVERITY_2=2, SEVERITY_3=3, SEVERITY_4=4,
-    SEVERITY_5=5.
+    INVASIVE_BREAST_CANCER=0, IN_SITU_BREAST_CANCER=1, HIGH_RISK_LESION=2,
+    BORDERLINE_LESION=3, BENIGN=4, NON_BREAST_CANCER=5.
     """
 
-    SEVERITY_0 = 0
-    SEVERITY_1 = 1
-    SEVERITY_2 = 2
-    SEVERITY_3 = 3
-    SEVERITY_4 = 4
-    SEVERITY_5 = 5
+    INVASIVE_BREAST_CANCER = 0
+    IN_SITU_BREAST_CANCER = 1
+    HIGH_RISK_LESION = 2
+    BORDERLINE_LESION = 3
+    BENIGN = 4
+    NON_BREAST_CANCER = 5
 
 
 class PathologyRecordKind(str, Enum):

@@ -165,7 +165,7 @@ def test_pathology_diagnosis_has_explicit_report_documentation_time() -> None:
     diagnosis = PathologyDiagnosis(
         source=source(),
         diagnosis="ductal carcinoma in situ",
-        severity=PathologySeverity.SEVERITY_2,
+        severity=PathologySeverity.HIGH_RISK_LESION,
         raw_severity=2,
         report_documented_date="2020-01-05",
     )
