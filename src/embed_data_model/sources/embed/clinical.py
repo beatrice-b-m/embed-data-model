@@ -1,316 +1,326 @@
-"""Grouped clinical projections over rows already normalized by the loader.
+"""Procedures, pathology, registry entries and exam associations from EMBED rows.
 
-One call is one complete refresh snapshot. Registry payload fields are opt-in:
-only non-key entries in columns['registry'] are projected. The supplied EMBED
-binding identifies entries but does not bind their payload. No physical row
-address, payload hash, or row ordinal identifies a clinical event.
+Narrow ``procedures``/``pathology`` tables and wide MagView rows are grouped
+together. A procedure is identified by patient, procedure date, type and biopsy
+side. Pathology is identified by an explicit record ID or by the procedure it
+belongs to. Rows that cannot establish an identity are kept as unresolved
+payload snapshots; no row position, payload hash or date becomes an identity.
+One call is one snapshot of every grain it addresses.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict
 from copy import deepcopy
-from typing import Any, Mapping, Optional, Iterable
+from dataclasses import dataclass, field
+from typing import Any, Dict, Hashable, Iterable, List, Mapping, Optional, Set, Tuple
 
 from embed_data_model.clinical.exams import Exam
-from embed_data_model.clinical.pathology import CancerRegistryEntry, Pathology
+from embed_data_model.clinical.pathology import CancerRegistryEntry, Pathology, PathologyObservation
 from embed_data_model.clinical.patients import Patient
-from embed_data_model.core.source import Issue
-from embed_data_model.sources.embed._values import reconcile_merge
-from embed_data_model.sources.embed._values import cell, identifier
-from embed_data_model.sources.embed.procedures_pathology import (
-    normalize_pathology,
-    normalize_procedure,
+from embed_data_model.clinical.procedures import Procedure
+from embed_data_model.core.graph import DatasetGraph
+from embed_data_model.core.source import Issue, IssueSeverity
+from embed_data_model.sources.embed._values import cell, identifier, reconcile_merge
+from embed_data_model.sources.embed.procedures_pathology import normalize_pathology, normalize_procedure
+
+ColumnMap = Mapping[str, Optional[str]]
+Attachment = Optional[Tuple[str, Any]]
+
+_PROCEDURE_IDENTITY_FIELDS = frozenset(
+    {"patient_id", "performed_date", "procedure_date", "procedure_type", "laterality", "accession", "finding_number"}
 )
+_PATHOLOGY_FIELDS = ("diagnosis", "result_category", "malignant", "severity", "report_documented_date")
+_REFERENCE_FIELDS = {"finding": "finding_references", "exam": "exam_references", "procedure": "procedure_references"}
+
+
+@dataclass
+class _Snapshot:
+    """State shared by the steps of one invocation."""
+
+    graph: DatasetGraph
+    merge: bool
+    issues: List[Issue]
+    claims: Dict[str, Set[str]]
+    addressed: Set[Any] = field(default_factory=set)
+    unresolved: Dict[Any, List[Dict[str, Any]]] = field(default_factory=lambda: defaultdict(list))
+
+    def keep_unresolved(self, kind: str, attachment: Attachment, row: Mapping[str, Any], reason: str) -> None:
+        address = ("clinical", kind, attachment)
+        self.addressed.add(address)
+        self.unresolved[address].append({"payload": deepcopy(dict(row)), "attachment": attachment, "reason": reason})
+        self.issues.append(Issue(reason, "Clinical record needs explicit identity", context={"attachment": attachment}))
+
+
+@dataclass(frozen=True)
+class _ProcedureRow:
+    procedure: Procedure
+    attachment: Attachment
+    row: Mapping[str, Any]
+    payload_columns: ColumnMap
+
+
+@dataclass(frozen=True)
+class _PathologyRow:
+    descriptors: Tuple[PathologyObservation, ...]
+    attachment: Attachment
+    row: Mapping[str, Any]
+    columns: ColumnMap
+    explicit: bool
 
 
 def load_clinical(
     *,
-    procedures: list[Mapping],
-    pathology: list[Mapping],
-    magview: list[Mapping],
-    registry: list[Mapping],
-    graph: Any,
-    columns: Mapping,
+    procedures: List[Mapping[str, Any]],
+    pathology: List[Mapping[str, Any]],
+    magview: List[Mapping[str, Any]],
+    registry: List[Mapping[str, Any]],
+    graph: DatasetGraph,
+    columns: Mapping[str, ColumnMap],
     mode: str,
-    issues: list[Issue],
-    claims: dict[str, set[str]],
+    issues: List[Issue],
+    claims: Dict[str, Set[str]],
 ) -> None:
-    """Apply narrow and wide projections together, preserving object references.
+    """Apply procedure, pathology, registry and association rows to ``graph``.
 
-    Source patient claims are recorded in ``claims`` by accession; the caller
-    applies them once for the whole invocation.
+    Source patient claims are recorded in ``claims`` by accession for the
+    caller to apply once for the whole invocation.
     """
+
     if mode not in {"refresh", "merge"}:
         raise ValueError("mode must be 'refresh' or 'merge'")
-    merge = mode == "merge"
-    procedure_groups: dict[Any, list] = defaultdict(list)
-    pathology_groups: dict[Any, list] = defaultdict(list)
-    snapshots: dict[Any, list] = defaultdict(list)
-    addressed = set()
-    key: Any
-
-    def unresolved(
-        kind: str, attachment: Any, row: Mapping[str, Any], reason: str
-    ) -> None:
-        address = ("clinical", kind, attachment)
-        addressed.add(address)
-        snapshots[address].append(
-            {"payload": deepcopy(dict(row)), "attachment": attachment, "reason": reason}
-        )
-        issues.append(
-            Issue(
-                code=reason,
-                message="Clinical record needs explicit identity",
-                context={"attachment": attachment},
-            )
-        )
-
-    for rows, cmap, grain, wide in (
-        (procedures, columns.get("procedures", {}), "procedure", False),
-        (magview, columns.get("procedures", {}), "procedure", True),
-        (pathology, columns.get("pathology", {}), "pathology", False),
-        (magview, columns.get("pathology", {}), "pathology", True),
-    ):
+    state = _Snapshot(graph, mode == "merge", issues, claims)
+    procedure_rows: Dict[Hashable, List[_ProcedureRow]] = defaultdict(list)
+    pathology_rows: Dict[Hashable, List[_PathologyRow]] = defaultdict(list)
+    for rows, wide in ((procedures, False), (magview, True)):
         for row in rows:
-            attachment = _attachment(row, cmap)
-            patient_id = _id_at(row, cmap.get("patient_id"))
-            if grain == "procedure":
-                if wide and not any(
-                    cell(row, cmap.get(k)) is not None
-                    for k in ("performed_date", "procedure_type")
-                ):
-                    continue
-                _claim(graph, row, cmap, claims)
-                addressed.add(("clinical", grain, attachment))
-                procedure, errors = normalize_procedure(row, cmap)
-                if procedure is None:
-                    unresolved(grain, attachment, row, "incomplete_procedure_identity")
-                    continue
-                procedure_groups[procedure.identity].append(
-                    (procedure, attachment, row, cmap)
-                )
-            else:
-                diagnosis, descriptors = normalize_pathology(row, cmap)
-                record_id = _id_at(row, cmap.get("record_id"))
-                if not diagnosis and not descriptors and record_id is None:
-                    continue
-                _claim(graph, row, cmap, claims)
-                procedure, _ = normalize_procedure(row, cmap)
-                if procedure is not None:
-                    procedure_groups[procedure.identity].append(
-                        (procedure, attachment, row, {})
-                    )
-                    attachment = ("procedure", procedure.identity)
-                addressed.add(("clinical", grain, attachment))
-                if record_id is not None and patient_id is not None:
-                    key = (patient_id, record_id)
-                    explicit = True
-                elif record_id is None and procedure is not None:
-                    # Pathology without a record ID belongs to its procedure,
-                    # whose patient/date/type/side tuple is the reliable
-                    # identity. The report date is provisional and is kept as
-                    # an attribute, never as identity.
-                    key = ("procedure", procedure.identity)
-                    explicit = False
-                else:
-                    unresolved(grain, attachment, row, "incomplete_pathology_identity")
-                    continue
-                pathology_groups[key].append(
-                    (diagnosis, descriptors, attachment, row, cmap, explicit)
-                )
+            _collect_procedure(state, row, columns["procedures"], wide, procedure_rows)
+    for rows in (pathology, magview):
+        for row in rows:
+            _collect_pathology(state, row, columns["pathology"], procedure_rows, pathology_rows)
+    for key, group in procedure_rows.items():
+        _apply_procedure(state, key, group)
+    for key, pathology_group in pathology_rows.items():
+        _apply_pathology(state, key, pathology_group)
+    _store_unresolved(state)
+    _apply_registry(state, registry, columns["registry"])
+    _apply_associations(state, magview, {**columns["exams"], **columns["magview"]})
 
-    for key, group in procedure_groups.items():
-        entity = graph.get("procedure", key)
-        if entity is None:
-            entity = graph.register(group[0][0])
-        payload_maps = [
-            {
-                k: v
-                for k, v in item[3].items()
-                if k
-                not in {
-                    "patient_id",
-                    "performed_date",
-                    "procedure_date",
-                    "procedure_type",
-                    "laterality",
-                    "accession",
-                    "finding_number",
-                }
-            }
-            for item in group
-        ]
-        issue_start = len(issues)
-        values = _combine(
-            [(item[2], cmap) for item, cmap in zip(group, payload_maps)], issues, key
-        )
-        conflicts = _conflict_fields(issues[issue_start:])
-        procedure_updates = {
-            k: v for k, v in values.items() if not merge or v is not None or k in conflicts
-        }
-        if merge:
-            reconcile_merge(
-                {k: getattr(entity, k, None) for k in procedure_updates},
-                procedure_updates,
-                grain="procedure",
-                key=key,
-                issues=issues,
-            )
-        graph.update(entity, **procedure_updates)
-        for _, attachment, row, cmap in group:
-            _link(graph, "procedure", key, attachment)
 
-    for key, group in pathology_groups.items():
-        slots: dict[int, list] = defaultdict(list)
-        for _, descriptors, *_ in group:
-            for descriptor in descriptors:
-                if descriptor.descriptor not in slots[descriptor.source_ordinal]:
-                    slots[descriptor.source_ordinal].append(descriptor.descriptor)
-        if not group[0][5] and any(len(values) > 1 for values in slots.values()):
-            existing = graph.get("pathology", key)
-            if existing is not None and not merge:
-                graph.pop(existing)
-            for _, _, attachment, row, _, _ in group:
-                unresolved("pathology", attachment, row, "ambiguous_pathology_identity")
-            continue
-        for slot, candidates in slots.items():
-            if len(candidates) > 1:
-                issues.append(
-                    Issue(
-                        code="conflicting_clinical_values",
-                        message="Conflicting descriptor slot becomes unknown",
-                        context={"identity": key, "slot": slot, "values": candidates},
-                    )
-                )
-        entity = graph.get("pathology", key)
-        issue_start = len(issues)
-        values = _combine(
-            [
-                (
-                    row,
-                    {
-                        k: v
-                        for k, v in cmap.items()
-                        if k
-                        in {
-                            "diagnosis",
-                            "result_category",
-                            "malignant",
-                            "severity",
-                            "report_documented_date",
-                        }
-                    },
-                )
-                for _, _, _, row, cmap, _ in group
-            ],
-            issues,
-            key,
-        )
-        # Reuse the normalizer after combining scalar source values.
-        normalized, _ = normalize_pathology(values, {k: k for k in values})
-        descriptor_values = tuple(
-            next(d for _, ds, *_ in group for d in ds if d.source_ordinal == slot)
-            for slot in sorted(slots)
-            if len(slots[slot]) == 1
-        )
-        updates = {field: normalized.get(field) for field in values}
-        if "severity" in values:
-            updates["raw_severity"] = values["severity"]
-        if merge:
-            conflicts = _conflict_fields(issues[issue_start:])
-            if "severity" in conflicts:
-                conflicts.add("raw_severity")
-            updates = {
-                k: v for k, v in updates.items() if v is not None or k in conflicts
-            }
-            if entity is not None:
-                reconcile_merge(
-                    {k: getattr(entity, k, None) for k in updates},
-                    updates,
-                    grain="pathology",
-                    key=key,
-                    issues=issues,
-                )
-        if entity is None:
-            entity = graph.register(
-                Pathology(identity=key, **updates, descriptors=descriptor_values)
-            )
-        else:
-            bound_slots = {
-                int(k.split("_")[1])
-                for _, _, _, row, cmap, _ in group
-                for k, v in cmap.items()
-                if k.startswith("descriptor_") and v is not None and v in row
-            }
-            if bound_slots:
-                retained = {
-                    d.source_ordinal: d
-                    for d in entity.descriptors
-                    if merge or d.source_ordinal not in bound_slots
-                }
-                for slot, candidates in slots.items():
-                    if len(candidates) > 1:
-                        retained.pop(slot, None)
-                retained.update({d.source_ordinal: d for d in descriptor_values})
-                updates["descriptors"] = tuple(retained[k] for k in sorted(retained))
-            graph.update(entity, **updates)
-        for _, _, attachment, _, _, _ in group:
-            _link(graph, "pathology", key, attachment)
+# -- grouping ------------------------------------------------------------------
 
-    for address in addressed:
-        incoming = snapshots.get(address, [])
-        # Unidentified facts have no event key with which to perform a merge.
-        # Keep one current snapshot, rather than accumulating repeated loads.
-        if merge and not incoming:
-            continue
-        if incoming:
-            # A collection of facts, not inferred distinct event identities.
-            graph.unresolved_records[address] = incoming
-        else:
-            graph.unresolved_records.pop(address, None)
 
-    registry_map = columns.get(
-        "registry", {"patient_id": "empi_anon", "registry_id": "cancer_registry_id"}
-    )
-    groups: dict[Any, list] = defaultdict(list)
-    for row in registry:
-        key = (
-            _id_at(row, registry_map.get("patient_id")),
-            _id_at(row, registry_map.get("registry_id")),
-        )
-        if None in key:
-            issues.append(
+def _collect_procedure(
+    state: _Snapshot,
+    row: Mapping[str, Any],
+    columns: ColumnMap,
+    wide: bool,
+    grouped: Dict[Hashable, List[_ProcedureRow]],
+) -> None:
+    if wide and cell(row, columns.get("performed_date")) is None and cell(row, columns.get("procedure_type")) is None:
+        return  # A MagView row without procedure facts describes only a finding.
+    attachment = _attachment(row, columns)
+    _claim(state, row, columns)
+    state.addressed.add(("clinical", "procedure", attachment))
+    procedure, _ = normalize_procedure(row, columns)
+    if procedure is None:
+        state.keep_unresolved("procedure", attachment, row, "incomplete_procedure_identity")
+        return
+    payload = {name: column for name, column in columns.items() if name not in _PROCEDURE_IDENTITY_FIELDS}
+    grouped[procedure.identity].append(_ProcedureRow(procedure, attachment, row, payload))
+
+
+def _collect_pathology(
+    state: _Snapshot,
+    row: Mapping[str, Any],
+    columns: ColumnMap,
+    procedure_rows: Dict[Hashable, List[_ProcedureRow]],
+    grouped: Dict[Hashable, List[_PathologyRow]],
+) -> None:
+    fields, descriptors = normalize_pathology(row, columns)
+    record_id = _id_at(row, columns.get("record_id"))
+    if not fields and not descriptors and record_id is None:
+        return
+    _claim(state, row, columns)
+    attachment = _attachment(row, columns)
+    procedure, _ = normalize_procedure(row, columns)
+    if procedure is not None:
+        # Pathology rows also establish the procedure they were reported for.
+        procedure_rows[procedure.identity].append(_ProcedureRow(procedure, attachment, row, {}))
+        attachment = ("procedure", procedure.identity)
+    state.addressed.add(("clinical", "pathology", attachment))
+    patient_id = _id_at(row, columns.get("patient_id"))
+    if record_id is not None and patient_id is not None:
+        key: Hashable = (patient_id, record_id)
+    elif record_id is None and procedure is not None:
+        # The procedure tuple is the reliable identity; the provisional report
+        # date is an attribute, never part of the key.
+        key = ("procedure", procedure.identity)
+    else:
+        state.keep_unresolved("pathology", attachment, row, "incomplete_pathology_identity")
+        return
+    grouped[key].append(_PathologyRow(descriptors, attachment, row, columns, record_id is not None))
+
+
+# -- applying ------------------------------------------------------------------
+
+
+def _apply_procedure(state: _Snapshot, key: Hashable, group: List[_ProcedureRow]) -> None:
+    graph = state.graph
+    entity = graph.get("procedure", key)
+    if entity is None:
+        entity = graph.register(group[0].procedure)
+    values, conflicts = _combine([(item.row, item.payload_columns) for item in group], state.issues, key)
+    updates = _for_mode(values, conflicts, state.merge)
+    if state.merge:
+        reconcile_merge(_current(entity, updates), updates, grain="procedure", key=key, issues=state.issues)
+    graph.update(entity, **updates)
+    for item in group:
+        _link(graph, "procedure", key, item.attachment)
+
+
+def _apply_pathology(state: _Snapshot, key: Hashable, group: List[_PathologyRow]) -> None:
+    graph = state.graph
+    slots = _descriptor_slots(group)
+    if not group[0].explicit and any(len(values) > 1 for values in slots.values()):
+        # Rows of one procedure disagree on a descriptor slot; without a record
+        # ID there is no way to tell which report is which.
+        existing = graph.get("pathology", key)
+        if existing is not None and not state.merge:
+            graph.pop(existing)
+        for item in group:
+            state.keep_unresolved("pathology", item.attachment, item.row, "ambiguous_pathology_identity")
+        return
+    for slot, candidates in slots.items():
+        if len(candidates) > 1:
+            state.issues.append(
                 Issue(
-                    code="incomplete_registry_identity",
-                    message="Registry needs patient and entry IDs",
-                    context={"payload": dict(row)},
+                    "conflicting_clinical_values",
+                    "Conflicting descriptor slot becomes unknown",
+                    IssueSeverity.WARNING,
+                    context={"identity": key, "slot": slot, "values": candidates},
                 )
             )
-            continue
-        groups[key].append(row)
-    for key, rows in groups.items():
-        cmap = {
-            k: v
-            for k, v in registry_map.items()
-            if k not in {"patient_id", "registry_id"}
+    scalar_columns = [
+        (item.row, {name: column for name, column in item.columns.items() if name in _PATHOLOGY_FIELDS})
+        for item in group
+    ]
+    values, conflicts = _combine(scalar_columns, state.issues, key)
+    normalized, _ = normalize_pathology(values, {name: name for name in values})
+    updates = {name: normalized.get(name) for name in values}
+    if "severity" in values:
+        updates["raw_severity"] = values["severity"]
+        if "severity" in conflicts:
+            conflicts.add("raw_severity")
+    updates = _for_mode(updates, conflicts, state.merge)
+    agreed = tuple(
+        next(descriptor for item in group for descriptor in item.descriptors if descriptor.source_ordinal == slot)
+        for slot in sorted(slots)
+        if len(slots[slot]) == 1
+    )
+    entity = graph.get("pathology", key)
+    if entity is None:
+        graph.register(Pathology(identity=key, descriptors=agreed, **updates))
+    else:
+        if state.merge:
+            reconcile_merge(_current(entity, updates), updates, grain="pathology", key=key, issues=state.issues)
+        supplied = {
+            int(name.split("_")[1])
+            for item in group
+            for name, column in item.columns.items()
+            if name.startswith("descriptor_") and column is not None and column in item.row
         }
-        issue_start = len(issues)
-        payload = _combine([(row, cmap) for row in rows], issues, key)
-        conflicts = _conflict_fields(issues[issue_start:])
-        entity = graph.registry_entry(*key)
+        if supplied:
+            kept = {d.source_ordinal: d for d in entity.descriptors if state.merge or d.source_ordinal not in supplied}
+            for slot, candidates in slots.items():
+                if len(candidates) > 1:
+                    kept.pop(slot, None)
+            kept.update({descriptor.source_ordinal: descriptor for descriptor in agreed})
+            updates["descriptors"] = tuple(kept[slot] for slot in sorted(kept))
+        graph.update(entity, **updates)
+    for item in group:
+        _link(graph, "pathology", key, item.attachment)
+
+
+def _store_unresolved(state: _Snapshot) -> None:
+    """Replace each addressed attachment's unresolved snapshot with this call's.
+
+    Unkeyed facts have no identity to merge by, so the latest snapshot is kept
+    rather than accumulating repeated loads; merge leaves untouched ones alone.
+    """
+
+    for address in state.addressed:
+        incoming = state.unresolved.get(address)
+        if incoming:
+            state.graph.unresolved_records[address] = incoming
+        elif not state.merge:
+            state.graph.unresolved_records.pop(address, None)
+
+
+def _apply_registry(state: _Snapshot, rows: Iterable[Mapping[str, Any]], columns: ColumnMap) -> None:
+    grouped: Dict[Tuple[str, str], List[Mapping[str, Any]]] = defaultdict(list)
+    for row in rows:
+        patient_id = _id_at(row, columns.get("patient_id"))
+        registry_id = _id_at(row, columns.get("registry_id"))
+        if patient_id is None or registry_id is None:
+            state.issues.append(
+                Issue("incomplete_registry_identity", "Registry needs patient and entry IDs", context={"payload": dict(row)})
+            )
+            continue
+        grouped[(patient_id, registry_id)].append(row)
+    payload_columns = {name: column for name, column in columns.items() if name not in {"patient_id", "registry_id"}}
+    for key, group in grouped.items():
+        payload, conflicts = _combine([(row, payload_columns) for row in group], state.issues, key)
+        entity = state.graph.registry_entry(*key)
         if entity is None:
-            graph.register(CancerRegistryEntry(key[0], key[1], payload=payload))
-        else:
-            retained = dict(entity.payload)
-            payload_updates = {
-                k: v for k, v in payload.items() if not merge or v is not None or k in conflicts
-            }
-            if merge:
-                reconcile_merge(retained, payload_updates, grain="registry", key=key, issues=issues)
-            retained.update(payload_updates)
-            graph.update(entity, payload=retained)
-    _collections(magview, graph, columns, merge, issues, claims)
+            state.graph.register(CancerRegistryEntry(key[0], key[1], payload=payload))
+            continue
+        updates = _for_mode(payload, conflicts, state.merge)
+        current = dict(entity.payload)
+        if state.merge:
+            reconcile_merge(current, updates, grain="registry", key=key, issues=state.issues)
+        state.graph.update(entity, payload={**current, **updates})
+
+
+def _apply_associations(state: _Snapshot, rows: Iterable[Mapping[str, Any]], columns: ColumnMap) -> None:
+    """Set each exam's linked accessions and registry assignments from MagView rows.
+
+    Refresh replaces a supplied set and merge extends it. A column absent from
+    the rows leaves the set unchanged; an explicit null clears it.
+    """
+
+    assignment_column = columns.get("registry_assignment")
+    linked_column = columns.get("linked_accession")
+    assignments: Dict[str, Set[Tuple[str, str]]] = defaultdict(set)
+    links: Dict[str, Set[str]] = defaultdict(set)
+    for row in rows:
+        accession = _id_at(row, columns.get("accession"))
+        if accession is None:
+            continue
+        _claim(state, row, columns)
+        if assignment_column is not None and assignment_column in row:
+            patient_id = _id_at(row, columns.get("patient_id"))
+            for registry_id in _identifiers(cell(row, assignment_column)):
+                if patient_id is None:
+                    state.issues.append(
+                        Issue(
+                            "incomplete_registry_assignment",
+                            "Confirmed registry assignment lacks source patient",
+                            context={"accession": accession, "registry_id": registry_id},
+                        )
+                    )
+                else:
+                    assignments[accession].add((patient_id, registry_id))
+            assignments.setdefault(accession, set())
+        if linked_column is not None and linked_column in row:
+            links[accession].update(_identifiers(cell(row, linked_column)))
+    for accession, keys in assignments.items():
+        state.graph.set_registry_assignments(_exam(state.graph, accession), keys, merge=state.merge)
+    for accession, targets in links.items():
+        state.graph.set_linked_accessions(_exam(state.graph, accession), targets, merge=state.merge)
+
+
+# -- helpers -------------------------------------------------------------------
 
 
 def _id_at(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
@@ -319,136 +329,103 @@ def _id_at(row: Mapping[str, Any], column: Optional[str]) -> Optional[str]:
     return identifier(cell(row, column))
 
 
-def _attachment(
-    row: Mapping[str, Any], cmap: Mapping[str, Optional[str]]
-) -> Optional[tuple[str, Any]]:
-    accession = _id_at(row, cmap.get("accession"))
-    finding = _id_at(row, cmap.get("finding_number"))
+def _identifiers(value: Any) -> List[str]:
+    """Return the identifiers in a scalar or list-like cell, skipping missing ones."""
+
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    return [normalized for normalized in (identifier(item) for item in values) if normalized is not None]
+
+
+def _attachment(row: Mapping[str, Any], columns: ColumnMap) -> Attachment:
+    accession = _id_at(row, columns.get("accession"))
     if accession is None:
         return None
-    return (
-        ("finding", (accession, finding))
-        if finding is not None
-        else ("exam", accession)
-    )
+    finding = _id_at(row, columns.get("finding_number"))
+    return ("finding", (accession, finding)) if finding is not None else ("exam", accession)
 
 
-def _claim(
-    graph: Any,
-    row: Mapping[str, Any],
-    cmap: Mapping[str, Optional[str]],
-    claims: dict[str, set[str]],
-) -> None:
-    accession = _id_at(row, cmap.get("accession"))
-    patient = _id_at(row, cmap.get("patient_id"))
-    if patient is not None and graph.patient(patient) is None:
-        graph.register(Patient(patient))
+def _exam(graph: DatasetGraph, accession: str) -> Exam:
+    """Return the exam with this accession, registering an empty one if needed."""
+
+    return graph.exam(accession) or graph.register(Exam(accession))
+
+
+def _claim(state: _Snapshot, row: Mapping[str, Any], columns: ColumnMap) -> None:
+    """Ensure the row's patient and exam exist and record its patient claim."""
+
+    accession = _id_at(row, columns.get("accession"))
+    patient_id = _id_at(row, columns.get("patient_id"))
+    if patient_id is not None and state.graph.patient(patient_id) is None:
+        state.graph.register(Patient(patient_id))
     if accession is not None:
-        exam = graph.exam(accession)
-        if exam is None:
-            exam = graph.register(Exam(accession))
-        if patient is not None:
-            claims.setdefault(accession, set()).add(patient)
+        _exam(state.graph, accession)
+        if patient_id is not None:
+            state.claims.setdefault(accession, set()).add(patient_id)
 
 
-def _link(
-    graph: Any, kind: str, key: Any, attachment: Optional[tuple[str, Any]]
-) -> None:
+def _link(graph: DatasetGraph, kind: str, key: Hashable, attachment: Attachment) -> None:
     """Add the attachment's key to the entity's reference set for that kind."""
 
     entity = graph.get(kind, key)
     if attachment is None or entity is None:
         return
-    field = {"finding": "finding_references", "exam": "exam_references", "procedure": "procedure_references"}[attachment[0]]
-    current = getattr(entity, field)
+    name = _REFERENCE_FIELDS[attachment[0]]
+    current = getattr(entity, name)
     if attachment[1] not in current:
-        graph.update(entity, **{field: {*current, attachment[1]}})
+        graph.update(entity, **{name: {*current, attachment[1]}})
+
+
+def _descriptor_slots(group: List[_PathologyRow]) -> Dict[int, List[str]]:
+    slots: Dict[int, List[str]] = defaultdict(list)
+    for item in group:
+        for descriptor in item.descriptors:
+            if descriptor.descriptor not in slots[descriptor.source_ordinal]:
+                slots[descriptor.source_ordinal].append(descriptor.descriptor)
+    return slots
 
 
 def _combine(
-    rows: Iterable[tuple[Mapping[str, Any], Mapping[str, Optional[str]]]],
-    issues: list[Issue],
+    rows: Iterable[Tuple[Mapping[str, Any], ColumnMap]],
+    issues: List[Issue],
     key: Any,
-) -> dict[str, Any]:
-    grouped: dict[str, list] = defaultdict(list)
-    for row, cmap in rows:
-        for field, physical in cmap.items():
-            if physical is None or physical not in row:
-                # Absent columns are outside this snapshot and stay unchanged.
+) -> Tuple[Dict[str, Any], Set[str]]:
+    """Combine supplied columns across rows; conflicting values become None.
+
+    Returns the combined values and the names of fields that conflicted. A
+    column absent from every row is not part of the result.
+    """
+
+    grouped: Dict[str, List[Any]] = defaultdict(list)
+    for row, columns in rows:
+        for name, column in columns.items():
+            if column is None or column not in row:
                 continue
-            values = grouped[field]
-            value = cell(row, physical)
+            values = grouped[name]
+            value = cell(row, column)
             if value is not None and value not in values:
                 values.append(value)
-    result = {}
-    for field, values in grouped.items():
-        result[field] = values[0] if len(values) == 1 else None
+    result: Dict[str, Any] = {}
+    conflicts: Set[str] = set()
+    for name, values in grouped.items():
+        result[name] = values[0] if len(values) == 1 else None
         if len(values) > 1:
+            conflicts.add(name)
             issues.append(
                 Issue(
-                    code="conflicting_clinical_values",
-                    message="Conflicting populated values become unknown",
-                    context={"identity": key, "field": field, "values": values},
+                    "conflicting_clinical_values",
+                    "Conflicting populated values become unknown",
+                    IssueSeverity.WARNING,
+                    context={"identity": key, "field": name, "values": values},
                 )
             )
-    return result
+    return result, conflicts
 
 
-def _conflict_fields(issues: Iterable[Issue]) -> set[str]:
-    return {
-        issue.context["field"]
-        for issue in issues
-        if issue.code == "conflicting_clinical_values" and "field" in issue.context
-    }
+def _for_mode(values: Mapping[str, Any], conflicts: Set[str], merge: bool) -> Dict[str, Any]:
+    """Keep every supplied value in refresh; in merge only populated or conflicting ones."""
+
+    return {name: value for name, value in values.items() if not merge or value is not None or name in conflicts}
 
 
-def _collections(
-    rows: list[Mapping],
-    graph: Any,
-    columns: Mapping,
-    merge: bool,
-    issues: list[Issue],
-    claims: dict[str, set[str]],
-) -> None:
-    cmap = dict(columns.get("exams", {}))
-    cmap.update(columns.get("magview", {}))
-    assignment = cmap.get("registry_assignment", "cancer_outcome_registry_id")
-    linked = cmap.get(
-        "linked_accession", cmap.get("linkedaccession_anon", "linkedaccession_anon")
-    )
-    assignments: dict[str, set] = defaultdict(set)
-    links: dict[str, set] = defaultdict(set)
-    for row in rows:
-        accession = _id_at(row, cmap.get("accession", "acc_anon"))
-        if accession is None:
-            continue
-        _claim(graph, row, cmap, claims)
-        if assignment is not None and assignment in row:
-            values = assignments[accession]
-            patient = _id_at(row, cmap.get("patient_id", "empi_anon"))
-            raw_ids = cell(row, assignment)
-            for value in (
-                raw_ids if isinstance(raw_ids, (list, tuple, set)) else [raw_ids]
-            ):
-                rid = identifier(value)
-                if rid is not None and patient is not None:
-                    values.add((patient, rid))
-                elif rid is not None:
-                    issues.append(
-                        Issue(
-                            code="incomplete_registry_assignment",
-                            message="Confirmed registry assignment lacks source patient",
-                            context={"accession": accession, "registry_id": rid},
-                        )
-                    )
-        if linked is not None and linked in row:
-            values = links[accession]
-            raw = cell(row, linked)
-            for value in raw if isinstance(raw, (list, tuple, set)) else [raw]:
-                target = identifier(value)
-                if target is not None:
-                    values.add(target)
-    for accession, values in assignments.items():
-        graph.set_registry_assignments(graph.exam(accession), values, merge=merge)
-    for accession, values in links.items():
-        graph.set_linked_accessions(graph.exam(accession), values, merge=merge)
+def _current(entity: Any, updates: Mapping[str, Any]) -> Dict[str, Any]:
+    return {name: getattr(entity, name, None) for name in updates}
