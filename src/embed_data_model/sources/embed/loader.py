@@ -1050,7 +1050,7 @@ def _descriptor_code(value: Any) -> Optional[str]:
 
     number = scalar(value)
     if isinstance(number, Real) and not isinstance(number, bool) and float(number).is_integer():
-        return str(int(number))
+        return str(int(float(number)))
     return code(number)
 
 
