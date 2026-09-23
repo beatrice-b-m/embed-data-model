@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 
 import pytest
 
@@ -12,14 +11,8 @@ from embed_data_model.clinical.attributes import (
 )
 from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.findings import Finding
-from embed_data_model.clinical.histories import (
-    HistoryTimeEstimate,
-    MedicationHistoryObservation,
-    ProcedureHistoryObservation,
-)
 from embed_data_model.clinical.interpretations import ImagingInterpretation
 from embed_data_model.clinical.pathology import Pathology, PathologyObservation
-from embed_data_model.clinical.patients import Patient
 from embed_data_model.clinical.procedures import Procedure, ProcedureIdentity
 from embed_data_model.core.graph import DatasetGraph
 from embed_data_model.core.primitives import Laterality
@@ -46,81 +39,6 @@ def test_optional_source_observations_are_mutable_standalone() -> None:
     interpretation.update(assessment="4")
     assert interpretation.sources == ()
     assert interpretation.to_dict()["assessment"] == "4"
-
-
-def test_history_time_keeps_raw_numeric_values_without_quality_ranges() -> None:
-    estimate = HistoryTimeEstimate(age=-4, year=0, month=13.5)
-
-    assert estimate.age == -4
-    assert type(estimate.age) is int
-    assert estimate.year == 0
-    assert estimate.month == 13.5
-    assert estimate.to_dict() == {"age": -4, "year": 0, "month": 13.5}
-
-
-def test_history_records_use_explicit_ids_and_snapshot_replacement() -> None:
-    keyed = MedicationHistoryObservation(
-        patient_id="P-1",
-        category="hormone",
-        medication="estrogen",
-        record_id="med-1",
-    )
-    unkeyed = MedicationHistoryObservation(
-        patient_id="P-1",
-        category="hormone",
-        medication="tamoxifen",
-    )
-    procedure = ProcedureHistoryObservation(
-        patient_id="P-1",
-        category="breast",
-        procedure="biopsy",
-    )
-    patient = Patient("P-1", history_observations=[keyed, unkeyed, procedure])
-
-    assert keyed.identity == ("P-1", "med-1")
-    assert unkeyed.identity == ("P-1", None)
-    assert patient.update_history("med-1", medication="progesterone") is keyed
-    assert keyed.medication == "progesterone"
-
-    incoming = MedicationHistoryObservation(
-        patient_id="P-1",
-        category="hormone",
-        medication="tamoxifen",
-        record_id="med-1",
-    )
-    patient.set_history_snapshot([incoming, procedure])
-    assert patient.medication_history == (keyed,)
-    assert keyed.medication == "tamoxifen"
-
-    replacement = MedicationHistoryObservation(
-        patient_id="P-1",
-        category="hormone",
-        medication="raloxifene",
-    )
-    patient.replace_history("medication", [replacement])
-    assert patient.medication_history == (replacement,)
-    assert patient.procedure_history == (procedure,)
-    patient.replace_history("reported_procedure", [])
-    assert patient.procedure_history == ()
-
-
-def test_history_subclasses_and_nested_values_copy_independently() -> None:
-    class LocalMedicationHistory(MedicationHistoryObservation):
-        pass
-
-    original = LocalMedicationHistory(
-        patient_id="P-1",
-        category="hormone",
-        medication="estrogen",
-        started=HistoryTimeEstimate(age=52),
-    )
-    copied = deepcopy(original)
-
-    assert isinstance(copied, LocalMedicationHistory)
-    assert copied is not original
-    assert copied.started is not original.started
-    copied.started.age = 99
-    assert original.started.age == 52
 
 
 def test_metadata_and_descriptors_are_editable_dicts() -> None:

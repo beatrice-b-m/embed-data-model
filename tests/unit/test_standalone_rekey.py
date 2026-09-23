@@ -21,7 +21,6 @@ from embed_data_model.clinical.attributes import (
     ExamAttributeName,
     ExamAttributeObservation,
 )
-from embed_data_model.clinical.histories import MedicationHistoryObservation
 from embed_data_model.clinical.interpretations import ImagingInterpretation
 from embed_data_model.imaging.landmarks import ImageLandmark, LandmarkType
 
@@ -82,12 +81,8 @@ def test_standalone_exam_and_image_rekeys_preserve_tree_objects() -> None:
 
 
 def test_standalone_patient_rekey_updates_owners_and_embedded_context_only() -> None:
-    history = MedicationHistoryObservation(
-        "P-1", category="hormone", medication="estrogen"
-    )
     patient = Patient(
         "P-1",
-        history_observations=(history,),
     )
     exam = patient.add_exam(Exam("A-1", asserted_patient_ids=("P-1",)))
     finding = exam.add_finding(Finding("A-1", Laterality.LEFT, "1"))
@@ -106,7 +101,6 @@ def test_standalone_patient_rekey_updates_owners_and_embedded_context_only() -> 
     assert exam.patient_id == "P-2"
     assert exam.owner_explicit
     assert exam.asserted_patient_ids == {"P-1"}
-    assert history.patient_id == "P-2"
     assert image.patient_id == "source-P"
     assert procedure.identity is procedure_identity
     assert procedure.identity.patient_id == "P-1"

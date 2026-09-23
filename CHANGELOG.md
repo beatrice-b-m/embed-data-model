@@ -25,6 +25,11 @@
 
 ### Changed
 
+- Patient history observations and `HistoryTimeEstimate` are values stored
+  on their `Patient` and no longer carry `patient_id`; construct them without
+  it. Observations stay mutable through `update`, which re-checks fields.
+  `HistoryTimeEstimate` is frozen. The history normalizers no longer take a
+  `patient_id` argument.
 - `ImageLandmark` is a frozen value `(y, x, landmark_type, confidence,
   source)` that no longer repeats its image's ID. Change one with
   `dataclasses.replace`. `ImageLandmark.owned_by`, the `image_id` and

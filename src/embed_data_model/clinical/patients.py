@@ -384,16 +384,14 @@ class Patient(MutableEntity):
     ) -> PatientHistoryObservation:
         """Add a reported fact or reconcile an explicitly keyed history record.
 
-        The observation must be PatientHistoryObservation with this patient_id, or
-        TypeError/ValueError is raised. Matching (concrete type, non-null record_id)
+        The observation must be a PatientHistoryObservation, or TypeError is
+        raised. Matching (concrete type, non-null record_id)
         updates and returns the existing live object; unkeyed facts append in order.
         Repeated insertion of the identical Python object returns it unchanged.
         """
 
         if not isinstance(observation, PatientHistoryObservation):
             raise TypeError("observation must be a PatientHistoryObservation")
-        if observation.patient_id != self.patient_id:
-            raise ValueError("Patient history patient_id must match Patient")
         for existing in self._history_observations:
             if existing is observation:
                 return existing
@@ -424,8 +422,6 @@ class Patient(MutableEntity):
         for item in replacement:
             if not isinstance(item, PatientHistoryObservation):
                 raise TypeError("history snapshot must contain history observations")
-            if item.patient_id != self.patient_id:
-                raise ValueError("Patient history patient_id must match Patient")
         existing_by_id = {
             (type(item), item.record_id): item
             for item in self._history_observations
@@ -498,8 +494,6 @@ class Patient(MutableEntity):
         for item in replacement:
             if not isinstance(item, PatientHistoryObservation):
                 raise TypeError("history replacement must contain history observations")
-            if item.patient_id != self.patient_id:
-                raise ValueError("Patient history patient_id must match Patient")
             if not _history_matches(item, kind):
                 raise ValueError("history item kind does not match replacement kind")
         replacement_values = [

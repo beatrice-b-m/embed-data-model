@@ -657,7 +657,7 @@ def _load_history(
         for row in groups[patient_id]:
             source = row.source
             record_id = _mapped_identifier(row.mapping, columns.get("record_id"))
-            observation, row_issues = normalizer(row.mapping, columns, source, patient_id, record_id=record_id)
+            observation, row_issues = normalizer(row.mapping, columns, source, record_id=record_id)
             issues.extend(row_issues)
             if observation is not None and isinstance(observation, observation_type):
                 observations.append(observation)

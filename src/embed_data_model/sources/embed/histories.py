@@ -91,7 +91,6 @@ def normalize_medication_history(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
     source: Optional[SourceRef],
-    patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[MedicationHistoryObservation], tuple[Issue, ...]]:
     """Normalize one patient-reported medication row.
@@ -105,8 +104,6 @@ def normalize_medication_history(
         Use the matching map from resolve_columns for EMBED defaults.
     source : SourceRef or None
         Physical diagnostic provenance, not clinical identity.
-    patient_id : str
-        Non-empty patient ID supplied by the loader/caller.
     record_id : str or None, optional
         Explicit patient-scoped record ID; None (default) is an unkeyed snapshot.
 
@@ -154,8 +151,8 @@ def normalize_medication_history(
             )
         )
     observation = MedicationHistoryObservation(
-        patient_id=patient_id,
         source=source,
+        record_id=_record_id(row, columns, record_id),
         category=category,
         medication=medication,
         context_accession=_text(row, columns["accession"]),
@@ -178,10 +175,6 @@ def normalize_medication_history(
         ),
         comment=_text(row, columns["comment"]),
     )
-    _set_record_id(
-        observation,
-        record_id if record_id is not None else _text(row, columns.get("record_id")),
-    )
     return observation, tuple(issues)
 
 
@@ -189,7 +182,6 @@ def normalize_procedure_history(
     row: Mapping[str, Any],
     columns: Mapping[str, Optional[str]],
     source: Optional[SourceRef],
-    patient_id: str,
     record_id: Optional[str] = None,
 ) -> tuple[Optional[ProcedureHistoryObservation], tuple[Issue, ...]]:
     """Normalize one patient-reported prior procedure row.
@@ -203,8 +195,6 @@ def normalize_procedure_history(
         Use the matching map from resolve_columns for EMBED defaults.
     source : SourceRef or None
         Physical diagnostic provenance, not clinical identity.
-    patient_id : str
-        Non-empty patient ID supplied by the loader/caller.
     record_id : str or None, optional
         Explicit patient-scoped record ID; None (default) is an unkeyed snapshot.
 
@@ -264,8 +254,8 @@ def normalize_procedure_history(
             )
         )
     observation = ProcedureHistoryObservation(
-            patient_id=patient_id,
             source=source,
+            record_id=_record_id(row, columns, record_id),
             category=category,
             procedure=procedure,
             detail=detail,
@@ -273,10 +263,6 @@ def normalize_procedure_history(
             laterality=Laterality.coerce(_text(row, columns["laterality"])),
             reported_result=result,
         )
-    _set_record_id(
-        observation,
-        record_id if record_id is not None else _text(row, columns.get("record_id")),
-    )
     return observation, tuple(issues)
 
 
@@ -414,18 +400,11 @@ def _time_estimate(
     return None if estimate.is_empty else estimate
 
 
-def _set_record_id(observation: Any, record_id: Optional[str]) -> None:
-    """Attach an explicit semantic record identifier when the domain supports it."""
+def _record_id(
+    row: Mapping[str, Any],
+    columns: Mapping[str, Optional[str]],
+    explicit: Optional[str],
+) -> Optional[str]:
+    """Return the explicit record ID, else the mapped record-ID column value."""
 
-    if record_id is None:
-        return
-    normalized = str(record_id).strip()
-    if not normalized:
-        return
-    # The mutable history domain is being updated alongside this adapter.  The
-    # object-level fallback keeps this normalizer usable during that cutover
-    # without deriving an event identity from a source row or ordinal.
-    object.__setattr__(observation, "record_id", normalized)
-
-
-__all__ = ["normalize_medication_history", "normalize_procedure_history"]
+    return explicit if explicit is not None else _text(row, columns.get("record_id"))

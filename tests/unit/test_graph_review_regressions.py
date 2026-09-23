@@ -16,7 +16,6 @@ from embed_data_model.clinical.attributes import (
     ExamAttributeName,
     ExamAttributeObservation,
 )
-from embed_data_model.clinical.histories import MedicationHistoryObservation
 
 
 def test_source_sop_collision_is_preflighted_for_update() -> None:
@@ -194,15 +193,11 @@ def test_registered_patient_rekey_preserves_source_scoped_child_identities() -> 
 
 
 def test_registered_rekey_updates_embedded_observation_context_only() -> None:
-    history = MedicationHistoryObservation(
-        "P", category="hormone", medication="estrogen"
-    )
     exam_observation = ExamAttributeObservation(
         "A", ExamAttributeName.DESCRIPTION, "screening"
     )
     patient = Patient(
         "P",
-        history_observations=(history,),
     )
     exam = patient.add_exam(
         Exam("A", asserted_patient_ids=("P",), attribute_observations=(exam_observation,))
@@ -217,7 +212,6 @@ def test_registered_rekey_updates_embedded_observation_context_only() -> None:
     graph.rekey(patient, patient_id="Q")
     graph.rekey(exam, accession_number="B")
 
-    assert history.patient_id == "Q"
     assert exam_observation.accession_number == "B"
     assert exam.patient_id == "Q"
     assert exam.asserted_patient_ids == {"P"}
@@ -231,7 +225,6 @@ def test_registered_rekey_updates_embedded_observation_context_only() -> None:
 
     assert destination.patient("Q") is patient
     assert destination.exam("B") is exam
-    assert history.patient_id == "Q"
     assert exam_observation.accession_number == "B"
     assert not destination.unresolved_references
 
