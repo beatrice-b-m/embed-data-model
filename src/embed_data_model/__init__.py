@@ -24,6 +24,7 @@ from embed_data_model.clinical.findings import Finding
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.clinical.procedures import Procedure, ProcedureIdentity
 from embed_data_model.clinical.pathology import Pathology, CancerRegistryEntry
+from embed_data_model.core.codes import Code
 from embed_data_model.core.primitives import Laterality, ImageModality, ViewPosition
 from embed_data_model.core.validation import ValidationResult, validate
 from embed_data_model.core.graph import DatasetGraph
@@ -34,6 +35,7 @@ from embed_data_model.sources.embed import LoadReport, load_embed
 
 __all__ = [
     "BreastSide",
+    "Code",
     "Box",
     "DatasetGraph",
     "Exam",
