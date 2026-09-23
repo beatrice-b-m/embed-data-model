@@ -14,7 +14,12 @@ def test_exam_level_features_load_as_source_values():
         magview=[row(tissueden=3.0, mg_exam_type="screening", vtype="SC", modality_desc="MG", age_at_study_anon=57.0)]
     ).graph.exam("A1")
 
-    assert (exam.density, exam.exam_type, exam.visit_type, exam.modality) == ("3", "screening", "SC", "MG")
+    assert [code.code for code in (exam.density, exam.exam_type, exam.visit_type, exam.modality)] == [
+        "3", "screening", "SC", "MG"
+    ]
+    assert exam.density.meaning == "Heterogeneously dense"
+    assert exam.exam_type.meaning == "screening exam"
+    assert exam.modality.meaning == "mammogram"
     assert exam.patient_age == 57
 
 
@@ -44,7 +49,8 @@ def test_finding_descriptors_keep_source_codes():
         magview=[row(mass=1, massshape="x", massmargin="S", calc=0, calcfind="A,B", calcnumber=-2.0)]
     ).graph.finding("A1", "1")
 
-    assert finding.descriptors == {
+    codes = {name: value.code for name, value in finding.descriptors.items()}
+    assert codes == {
         "mass": "1",
         "mass_shape": "X",
         "mass_margin": "S",
@@ -52,10 +58,15 @@ def test_finding_descriptors_keep_source_codes():
         "calcification_morphology": "A,B",
         "calcification_number": "-2",
     }
+    assert finding.descriptors["mass"].meaning == "Represented"
+    assert finding.descriptors["mass_shape"].meaning == "Irregular"
+    assert finding.descriptors["mass_margin"].meaning == "Spiculated"
+    assert finding.descriptors["calcification_morphology"].tokens == ("A", "B")
+    assert finding.descriptors["calcification_number"].meaning is None
 
 
 def test_descriptor_refresh_is_per_column():
     graph = load_embed(magview=[row(massshape="O", calcfind="A")]).graph
     load_embed(magview=[row(massshape=None)], into=graph)
 
-    assert graph.finding("A1", "1").descriptors == {"calcification_morphology": "A"}
+    assert list(graph.finding("A1", "1").descriptors) == ["calcification_morphology"]

@@ -50,20 +50,20 @@ def test_codes_compare_after_trimming_and_uppercasing():
     )
 
     interpretation = report.graph.finding("A1", "1").interpretation
-    assert (interpretation.assessment, interpretation.recommendation) == ("B", "RA")
+    assert (interpretation.assessment.code, interpretation.recommendation.code) == ("B", "RA")
     assert not report.issues
 
 
 def test_procedure_type_and_pathology_codes_are_normalized():
     procedure_row = magview_row(
-        side="L", bside="L", procdate_anon="2020-01-02", type="core", path1=" idc"
+        side="L", bside="L", procdate_anon="2020-01-02", type="b", path1=" idc"
     )
     graph = load_embed(
-        magview=[procedure_row, dict(procedure_row, numfind=2, type="CORE ")]
+        magview=[procedure_row, dict(procedure_row, numfind=2, type="B ")]
     ).graph
 
     (procedure,) = graph.procedures
-    assert procedure.identity.procedure_type == "CORE"
+    assert procedure.identity.procedure_type.code == "B"
     assert {finding.finding_number for finding in graph.findings if procedure in finding.procedures} == {"1", "2"}
 
 

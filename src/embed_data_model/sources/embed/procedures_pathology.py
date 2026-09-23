@@ -12,6 +12,7 @@ from embed_data_model.clinical.procedures import Procedure, ProcedureIdentity
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, SourceRef
 from embed_data_model.sources.embed._values import cell, code, identifier, text
+from embed_data_model.sources.embed.vocabulary import PATHOLOGY_DESCRIPTOR, PROCEDURE_TYPE
 
 
 def normalize_procedure(
@@ -44,7 +45,7 @@ def normalize_procedure(
 
     patient_id = identifier(cell(row, columns.get("patient_id")))
     performed_date = text(cell(row, columns.get("performed_date", columns.get("procedure_date"))))
-    procedure_type = code(cell(row, columns.get("procedure_type")))
+    procedure_type = PROCEDURE_TYPE.decode(code(cell(row, columns.get("procedure_type"))))
     laterality = Laterality.coerce(text(cell(row, columns.get("laterality"))))
     missing = tuple(
         name
@@ -121,7 +122,7 @@ def normalize_pathology(
         )
         for index in range(1, 11)
         if (column := columns.get(f"descriptor_{index}")) is not None
-        if (descriptor := code(cell(row, column))) is not None
+        if (descriptor := PATHOLOGY_DESCRIPTOR.decode(code(cell(row, column)))) is not None
     )
     raw_severity = cell(row, columns.get("severity"))
     values = {

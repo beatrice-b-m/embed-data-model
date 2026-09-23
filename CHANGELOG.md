@@ -4,6 +4,12 @@
 
 ### Added
 
+- `Code`, a source code together with its human-readable meaning. Assessment,
+  recommendation, exam density/type/visit type/modality, finding descriptors,
+  procedure type and pathology descriptor slots load as `Code` values decoded
+  with EMBED vocabulary tables (`sources.embed.vocabulary`), generated from the
+  EMBED catalog by `tools/generate_embed_vocabulary.py`. These fields no longer
+  equal plain strings; compare `.code` or `.meaning`.
 - Exam fields `density` (`tissueden`), `exam_type` (`mg_exam_type`),
   `visit_type` (`vtype`), `modality` (`modality_desc`) and `patient_age`
   (`age_at_study_anon`), loaded by default. `validate` flags a patient age

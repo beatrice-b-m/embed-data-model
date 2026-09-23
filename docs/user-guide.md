@@ -144,9 +144,10 @@ finding = graph.finding("A-001", "1")
 assert exam is not None and finding is not None
 assert graph.patient("P-001") is not None
 assert finding.laterality is Laterality.LEFT
-assert finding.interpretation.assessment == "S"
+assert finding.interpretation.assessment.code == "S"
+assert finding.interpretation.assessment.meaning == "Suspicious"
 assert not finding.normalization_warnings
-assert finding.interpretation.recommendation == "B"
+assert finding.interpretation.recommendation.meaning == "Biopsy"
 assert not report.issues
 ```
 
@@ -160,6 +161,36 @@ is assigned to unexplained tokens. A `magview` row projects
 supported patient, exam, and finding grains while its procedure, pathology,
 registry, and linked-accession columns are handled by their corresponding
 adapters.
+
+## Coded values and their meanings
+
+Coded MagView fields load as `Code` values that carry both the source code and
+its human-readable meaning from the EMBED data dictionary, so analyses do not
+need to look codes up. This covers assessment and recommendation, exam density,
+type, visit type and modality, the finding descriptors, procedure type and the
+pathology descriptor slots:
+
+```python
+from embed_data_model import load_embed
+
+row = {"empi_anon": "P-1", "acc_anon": "A-1", "numfind": 1, "side": "L", "asses": "S",
+       "recc": "B,U", "massshape": "O", "tissueden": 3}
+graph = load_embed(magview=[row]).graph
+finding = graph.finding("A-1", "1")
+
+assert finding.interpretation.assessment.meaning == "Suspicious"
+assert finding.interpretation.recommendation.meaning == "Biopsy; An ultrasound exam"
+assert finding.descriptors["mass_shape"].code == "O"
+assert str(finding.descriptors["mass_shape"]) == "Oval"
+assert graph.exam("A-1").density.meaning == "Heterogeneously dense"
+```
+
+A `Code` compares by its code, never by meaning, and never equals a plain
+string: compare `.code` or `.meaning`. Comma-separated codes list their parts in
+`tokens` and compare regardless of order. A code the dictionary does not explain
+keeps its `code` with `meaning` None, and `is_known` is False. The tables live in
+`embed_data_model.sources.embed.vocabulary` and are generated from the EMBED
+catalog by `tools/generate_embed_vocabulary.py`.
 
 ## Patient attributes over time
 
@@ -481,7 +512,7 @@ Run from the repository root:
 ```bash
 uv sync --frozen
 uv run --frozen pytest
-uv run --frozen ruff check src/embed_data_model tests examples benchmarks
+uv run --frozen ruff check src/embed_data_model tests examples benchmarks tools
 uv run --frozen mypy
 uv run --frozen python -m examples.researcher_journeys
 ```

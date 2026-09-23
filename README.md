@@ -80,7 +80,8 @@ exam = graph.exam("A-001")
 finding = graph.finding("A-001", "1")
 assert patient is not None and exam is not None and finding is not None
 assert finding.laterality is Laterality.LEFT
-assert finding.interpretation.assessment == "S"
+assert finding.interpretation.assessment.code == "S"
+assert finding.interpretation.assessment.meaning == "Suspicious"
 assert not finding.normalization_warnings
 assert not report.issues
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Dict, Hashable, Iterable, Mapping, Optional, Set, Tuple
 
+from embed_data_model.core.codes import Code
 from embed_data_model.core.entity import MutableEntity, Reference
 from embed_data_model.core.source import SourceRef, optional_source
 
@@ -45,8 +46,9 @@ class PathologyObservation:
 
     Attributes
     ----------
-    descriptor : str
-        Non-empty reported descriptor code.
+    descriptor : Code
+        Reported descriptor code with its meaning. Text is accepted as a code
+        without meaning.
     source_slot : str
         Non-empty source slot name, such as ``"path1"``.
     source_ordinal : int
@@ -55,8 +57,8 @@ class PathologyObservation:
         Row the descriptor was read from. Default None.
     """
 
-    descriptor: str
-    """Reported descriptor code."""
+    descriptor: Code
+    """Reported descriptor code and its meaning."""
     source_slot: str
     """Source slot name, such as ``path1``."""
     source_ordinal: int
@@ -65,7 +67,10 @@ class PathologyObservation:
     """Row the descriptor was read from."""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "descriptor", _required_text(self.descriptor, "descriptor"))
+        descriptor = Code.coerce(self.descriptor)
+        if descriptor is None:
+            raise ValueError("descriptor must be a non-empty code")
+        object.__setattr__(self, "descriptor", descriptor)
         object.__setattr__(self, "source_slot", _required_text(self.source_slot, "source_slot"))
         if (
             isinstance(self.source_ordinal, bool)

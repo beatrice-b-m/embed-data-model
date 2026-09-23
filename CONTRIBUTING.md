@@ -13,7 +13,7 @@ From the repository root, with Python 3.9–3.13 and `uv` available:
 ```bash
 uv sync --frozen
 uv run --frozen pytest
-uv run --frozen ruff check src/embed_data_model tests examples benchmarks
+uv run --frozen ruff check src/embed_data_model tests examples benchmarks tools
 uv run --frozen mypy
 uv run --frozen python -m examples.researcher_journeys
 uv run --frozen python -m build
@@ -68,6 +68,11 @@ by the behavior they protect:
 - `tests/packaging/` runs every docstring example and documented example,
   builds the wheel, installs it into a clean environment, and type-checks
   `tests/typing/public_api.py` against the installed package.
+
+EMBED code meanings in `src/embed_data_model/sources/embed/vocabulary.py` are
+generated from the EMBED clinical-semantic catalog. After the catalog changes,
+regenerate them with `python -m tools.generate_embed_vocabulary --catalog
+<catalog-set.json>` instead of editing the tables by hand.
 
 Test observable behavior through the public API. Do not assert private
 attributes, exact error-message text, docstring wording or module layout.

@@ -107,6 +107,16 @@ History snapshots replace each addressed patient's supplied history kind when no
 explicit event ID is bound; merge of unkeyed history collections requires explicit
 record IDs rather than guessing event equality.
 
+## Coded values
+
+Coded source fields hold `Code(code, meaning, tokens, unknown)` values. `code` is
+the trimmed source code (alphabetic codes uppercased, exam types kept as
+supplied); `meaning` comes from the EMBED vocabulary tables in
+`sources.embed.vocabulary`, or is None for a code without a documented meaning.
+Codes compare and hash by code (by token set for comma-separated codes) and
+never equal plain strings. Constructors accept text for these fields and store a
+`Code` without meaning.
+
 ## Pathology and reported facts
 
 A pathology bundle is keyed by a supplied patient-scoped record ID,

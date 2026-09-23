@@ -26,7 +26,7 @@ def test_pathology_without_a_report_date_attaches_to_its_procedure():
     (procedure,) = graph.procedures
     (pathology,) = graph.pathology
     assert procedure.pathology == (pathology,)
-    assert [d.descriptor for d in pathology.descriptors] == ["IDC"]
+    assert [d.descriptor.code for d in pathology.descriptors] == ["IDC"]
     assert pathology.report_documented_date is None
     assert not graph.unresolved_records
     assert graph.finding("A1", "1").pathology == (pathology,)

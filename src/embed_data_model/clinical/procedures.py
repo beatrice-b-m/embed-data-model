@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
+from embed_data_model.core.codes import Code
 from embed_data_model.core.entity import MutableEntity, Reference
 from embed_data_model.core.graph import ensure_graph
 from embed_data_model.core.primitives import Laterality
@@ -27,8 +28,10 @@ class ProcedureIdentity:
     performed_date : str
         Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
         Construction checks text, validate checks dates.
-    procedure_type : str
-        Non-empty reported procedure kind; part of semantic identity.
+    procedure_type : Code
+        Reported procedure type (EMBED ``B`` needle biopsy, ``S`` surgical)
+        with its meaning; part of the identity, compared by code. Text is
+        accepted as a code without meaning.
     laterality : Laterality
         Known LEFT, RIGHT or BILATERAL side. UNKNOWN raises ValueError.
     """
@@ -41,32 +44,32 @@ class ProcedureIdentity:
     """Non-empty reported procedure date, conventionally ISO YYYY-MM-DD.
     Construction checks text, validate checks dates.
     """
-    procedure_type: str
-    """Non-empty reported procedure kind; part of semantic identity."""
+    procedure_type: Code
+    """Reported procedure type and its meaning; compared by code."""
     laterality: Laterality
     """Known LEFT, RIGHT or BILATERAL side. UNKNOWN raises ValueError."""
 
     def __post_init__(self) -> None:
-        for attribute in ("patient_id", "performed_date", "procedure_type"):
+        for attribute in ("patient_id", "performed_date"):
             value = getattr(self, attribute)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{attribute} must be a non-empty string")
             object.__setattr__(self, attribute, value.strip())
+        if not isinstance(self.procedure_type, (str, Code)) or not str(getattr(self.procedure_type, "code", self.procedure_type)).strip():
+            raise ValueError("procedure_type must be a non-empty code")
+        object.__setattr__(self, "procedure_type", Code.coerce(self.procedure_type))
         side = Laterality.coerce(self.laterality)
         if side is Laterality.UNKNOWN:
             raise ValueError("Resolved procedure identity requires known laterality")
         object.__setattr__(self, "laterality", side)
 
-    def to_dict(self) -> Dict[str, str]:
-        """Return a new non-recursive dictionary of represented fields, encoding enum
-        values and nested evidence through their serializers. Graph ownership is not
-        included.
-        """
+    def to_dict(self) -> Dict[str, Any]:
+        """Return the identity as JSON-compatible values."""
 
         return {
             "patient_id": self.patient_id,
             "performed_date": self.performed_date,
-            "procedure_type": self.procedure_type,
+            "procedure_type": self.procedure_type.to_dict(),
             "laterality": self.laterality.value,
         }
 

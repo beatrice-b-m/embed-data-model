@@ -17,7 +17,7 @@ def test_out_of_range_severity_is_kept_raw_for_validation():
     load(graph, pathology=[clinical_row(path_severity=99)])
     (pathology,) = graph.pathology
     assert (pathology.severity, pathology.raw_severity) == (None, 99)
-    assert pathology.descriptors[0].descriptor == "ADH"
+    assert pathology.descriptors[0].descriptor.meaning == "Atypical ductal hyperplasia"
 
 
 def load(graph, *, mode="refresh", columns=None, **tables):
@@ -118,7 +118,7 @@ def test_repeated_narrow_wide_rows_share_descendants_and_preserve_parent():
             graph.finding("A", "1").procedures[0]
             is graph.finding("A", "2").procedures[0]
         )
-        assert [d.descriptor for d in graph.pathology[0].descriptors] == ["ADH", "ADH"]
+        assert [d.descriptor.code for d in graph.pathology[0].descriptors] == ["ADH", "ADH"]
 
 
 def test_fallback_descriptor_conflict_unresolved_and_refresh_bounded():
@@ -150,7 +150,7 @@ def test_explicit_pathology_id_is_patient_scoped_and_preserves_reference():
     obj = graph.get("pathology", ("P", "R"))
     load(graph, columns=columns, pathology=[clinical_row(report_id="R", path1="NEW")])
     assert graph.get("pathology", ("P", "R")) is obj
-    assert obj.descriptors[0].descriptor == "NEW"
+    assert obj.descriptors[0].descriptor.code == "NEW" and obj.descriptors[0].descriptor.meaning is None
 
 
 def test_insufficient_identity_preserves_useful_snapshot():

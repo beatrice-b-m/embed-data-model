@@ -20,7 +20,7 @@ def test_partial_magview_load_keeps_patient_and_exam_fields_it_does_not_supply()
     exam = graph.exam("A1")
     assert (exam.exam_date, exam.description) == ("2020-01-01", "screen")
     assert graph.patient("P1").sex == "F"
-    assert graph.finding("A1", "1").interpretation.assessment == "N"
+    assert graph.finding("A1", "1").interpretation.assessment.meaning == "Negative"
 
 
 def test_refresh_clears_a_field_whose_column_is_supplied_as_null():

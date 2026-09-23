@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
+from embed_data_model.core.codes import Code
 from embed_data_model.core.entity import plain_value
 from embed_data_model.core.source import SourceRef, optional_source
 
@@ -19,11 +20,12 @@ class ImagingInterpretation:
 
     Attributes
     ----------
-    assessment : str or None, optional
-        Reported assessment code, such as a BI-RADS category; None means
-        missing and no category is inferred. Default None.
-    recommendation : str or None, optional
-        Reported recommendation code string; None means missing. Default None.
+    assessment : Code or None, optional
+        Reported BI-RADS assessment with its meaning; None means missing and
+        no category is inferred. Text is accepted as a code without meaning.
+    recommendation : Code or None, optional
+        Reported recommendation, possibly several comma-separated codes, with
+        their meanings. Default None.
     sources : tuple of SourceRef, optional
         Distinct source rows supporting the interpretation. Default ().
 
@@ -33,18 +35,21 @@ class ImagingInterpretation:
 
     Examples
     --------
-    >>> ImagingInterpretation(assessment="S", recommendation="B").assessment
-    'S'
+    >>> from embed_data_model import Code
+    >>> ImagingInterpretation(assessment=Code("S", "Suspicious")).assessment.meaning
+    'Suspicious'
     """
 
-    assessment: Optional[str] = None
-    """Reported assessment code; None means missing."""
-    recommendation: Optional[str] = None
-    """Reported recommendation code string; None means missing."""
+    assessment: Optional[Code] = None
+    """Reported assessment and its meaning; None means missing."""
+    recommendation: Optional[Code] = None
+    """Reported recommendation codes and their meanings; None means missing."""
     sources: Tuple[SourceRef, ...] = field(default=())
     """Distinct source rows supporting the interpretation."""
 
     def __post_init__(self) -> None:
+        self.assessment = Code.coerce(self.assessment)
+        self.recommendation = Code.coerce(self.recommendation)
         sources = tuple(
             value for value in (optional_source(item) for item in self.sources) if value is not None
         )
@@ -70,7 +75,7 @@ class ImagingInterpretation:
         """Return ``{"assessment", "recommendation", "sources"}`` as JSON values."""
 
         return {
-            "assessment": self.assessment,
-            "recommendation": self.recommendation,
+            "assessment": plain_value(self.assessment),
+            "recommendation": plain_value(self.recommendation),
             "sources": plain_value(self.sources),
         }

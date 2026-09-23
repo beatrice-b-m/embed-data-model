@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, Optional, Set, Tuple
 
+from embed_data_model.core.codes import Code
 from embed_data_model.core.entity import MutableEntity, Reference, readonly_mapping
 from embed_data_model.core.graph import ensure_graph
 from embed_data_model.core.primitives import Laterality
@@ -61,15 +62,16 @@ class Exam(MutableEntity):
         Exam date as supplied, conventionally ISO ``YYYY-MM-DD``. Default None.
     description : str or None, optional
         Source exam (procedure) description. Default None.
-    density : str or None, optional
-        Breast tissue density source code (EMBED ``1``-``4``, ``5`` normal
-        male); not an ordinal scale. Default None.
-    exam_type : str or None, optional
-        Exam type derived from the description, such as ``"screening"``.
-    visit_type : str or None, optional
-        Source visit type. Default None.
-    modality : str or None, optional
-        Source exam modality description. Default None.
+    density : Code or None, optional
+        Breast tissue density with its meaning (EMBED ``1``-``4``, ``5``
+        normal male); not an ordinal scale. Default None.
+    exam_type : Code or None, optional
+        Exam type derived from the description, such as ``screening``.
+    visit_type : Code or None, optional
+        Visit type with its meaning. Default None.
+    modality : Code or None, optional
+        Exam modality with its meaning. Default None.
+        Text is accepted for these four as a code without meaning.
     patient_age : float or None, optional
         Patient age in years at the exam, top-coded to 89 in EMBED. Default None.
     asserted_patient_ids : iterable of str, optional
@@ -119,14 +121,14 @@ class Exam(MutableEntity):
     """Exam date as supplied."""
     description: Optional[str]
     """Source exam description."""
-    density: Optional[str]
-    """Breast tissue density source code; not an ordinal scale."""
-    exam_type: Optional[str]
-    """Exam type derived from the description, such as ``"screening"``."""
-    visit_type: Optional[str]
-    """Source visit type."""
-    modality: Optional[str]
-    """Source exam modality description."""
+    density: Optional[Code]
+    """Breast tissue density and its meaning; not an ordinal scale."""
+    exam_type: Optional[Code]
+    """Exam type derived from the description, such as ``screening``."""
+    visit_type: Optional[Code]
+    """Visit type and its meaning."""
+    modality: Optional[Code]
+    """Exam modality and its meaning."""
     patient_age: Optional[float]
     """Patient age in years at the exam; EMBED top-codes ages of 90 or more to 89."""
     asserted_patient_ids: Set[str]
@@ -146,10 +148,10 @@ class Exam(MutableEntity):
         patient_id: Optional[str] = None,
         exam_date: Optional[str] = None,
         description: Optional[str] = None,
-        density: Optional[str] = None,
-        exam_type: Optional[str] = None,
-        visit_type: Optional[str] = None,
-        modality: Optional[str] = None,
+        density: Optional[Code] = None,
+        exam_type: Optional[Code] = None,
+        visit_type: Optional[Code] = None,
+        modality: Optional[Code] = None,
         patient_age: Optional[float] = None,
         asserted_patient_ids: Optional[Iterable[str]] = None,
         linked_accessions: Optional[Iterable[str]] = None,
@@ -169,10 +171,10 @@ class Exam(MutableEntity):
         self.asserted_patient_ids = claims
         self.exam_date = exam_date
         self.description = description
-        self.density = density
-        self.exam_type = exam_type
-        self.visit_type = visit_type
-        self.modality = modality
+        self.density = Code.coerce(density)
+        self.exam_type = Code.coerce(exam_type)
+        self.visit_type = Code.coerce(visit_type)
+        self.modality = Code.coerce(modality)
         self.patient_age = patient_age
         self.linked_accessions = set(linked_accessions or ())
         self.registry_references = set(registry_references or ())
@@ -194,6 +196,8 @@ class Exam(MutableEntity):
             }
         if name == "metadata":
             return dict(value or {})
+        if name in {"density", "exam_type", "visit_type", "modality"}:
+            return Code.coerce(value)
         return value
 
     def _prepare_update(self, values: Dict[str, Any]) -> Dict[str, Any]:

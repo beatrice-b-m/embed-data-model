@@ -24,6 +24,7 @@ from embed_data_model.clinical.histories import (
 from embed_data_model.clinical.interpretations import ImagingInterpretation
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.core.anatomy import AnatomicalPosition, Quadrant
+from embed_data_model.core.codes import Code, Vocabulary
 from embed_data_model.core.graph import DatasetGraph
 from embed_data_model.core.primitives import Laterality
 from embed_data_model.core.source import Issue, IssueSeverity, SourceRef
@@ -38,6 +39,7 @@ from embed_data_model.sources.embed._values import (
     scalar,
     text,
 )
+from embed_data_model.sources.embed import vocabulary
 from embed_data_model.sources.embed.columns import resolve_columns
 from embed_data_model.sources.embed.histories import (
     normalize_medication_history,
@@ -483,10 +485,10 @@ def _load_exams(
             {
                 "exam_date": text,
                 "exam_description": text,
-                "density": _descriptor_code,
-                "exam_type": text,
-                "visit_type": text,
-                "modality": text,
+                "density": _decoder(vocabulary.DENSITY),
+                "exam_type": _decoder(vocabulary.EXAM_TYPE, uppercase=False),
+                "visit_type": _decoder(vocabulary.VISIT_TYPE),
+                "modality": _decoder(vocabulary.EXAM_MODALITY),
                 "patient_age": _number,
             },
             "exam",
@@ -533,13 +535,13 @@ def _load_findings(
             {
                 "laterality": lambda value: Laterality.coerce(value),
                 "finding_type": text,
-                "assessment": code,
-                "recommendation": code,
+                "assessment": _decoder(vocabulary.ASSESSMENT),
+                "recommendation": _decoder(vocabulary.RECOMMENDATION),
                 "record_type": text,
                 "location": _raw_value,
                 "depth": _raw_value,
                 "distance": _raw_value,
-                **{name: _descriptor_code for name in FINDING_DESCRIPTORS},
+                **{name: _decoder(table) for name, table in FINDING_DESCRIPTORS.items()},
             },
             "finding",
             key,
@@ -1024,34 +1026,40 @@ def _interpretation(
     )
 
 
-FINDING_DESCRIPTORS = (
-    "mass",
-    "asymmetry",
-    "architectural_distortion",
-    "calcification",
-    "mass_shape",
-    "mass_margin",
-    "mass_density",
-    "calcification_morphology",
-    "calcification_distribution",
-    "calcification_number",
-    "other_finding",
-    "implant_finding",
-)
-"""Finding descriptor fields loaded into ``Finding.descriptors`` as source codes."""
+FINDING_DESCRIPTORS: Mapping[str, Vocabulary] = {
+    "mass": vocabulary.PRESENCE,
+    "asymmetry": vocabulary.PRESENCE,
+    "architectural_distortion": vocabulary.PRESENCE,
+    "calcification": vocabulary.PRESENCE,
+    "mass_shape": vocabulary.MASS_SHAPE,
+    "mass_margin": vocabulary.MASS_MARGIN,
+    "mass_density": vocabulary.MASS_DENSITY,
+    "calcification_morphology": vocabulary.CALCIFICATION_MORPHOLOGY,
+    "calcification_distribution": vocabulary.CALCIFICATION_DISTRIBUTION,
+    "calcification_number": vocabulary.CALCIFICATION_NUMBER,
+    "other_finding": vocabulary.OTHER_FINDING,
+    "implant_finding": vocabulary.IMPLANT_FINDING,
+}
+"""Finding descriptors loaded into ``Finding.descriptors``, with the vocabulary decoding each."""
 
 
-def _descriptor_code(value: Any) -> Optional[str]:
-    """Return a descriptor source code: whole numbers as ``"2"``, text trimmed and uppercased.
-
-    Comma-separated code strings are kept whole; their composition is not
-    documented, so no splitting or reordering is applied.
-    """
+def _source_code(value: Any) -> Optional[str]:
+    """Return a source code as text: whole numbers as ``"2"``, other text trimmed and uppercased."""
 
     number = scalar(value)
     if isinstance(number, Real) and not isinstance(number, bool) and float(number).is_integer():
         return str(int(float(number)))
     return code(number)
+
+
+def _decoder(table: Vocabulary, *, uppercase: bool = True) -> Callable[[Any], Optional[Code]]:
+    """Return a converter that decodes a source value with ``table``.
+
+    ``uppercase=False`` keeps the source case, for label-like codes such as the
+    exam type ``"screening and diagnostic"``; the lookup ignores case either way.
+    """
+
+    return lambda value: table.decode(_source_code(value) if uppercase else text(value))
 
 
 def _finding_descriptors(

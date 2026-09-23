@@ -19,6 +19,7 @@ from embed_data_model.clinical.exams import Exam
 from embed_data_model.clinical.pathology import CancerRegistryEntry, Pathology, PathologyObservation
 from embed_data_model.clinical.patients import Patient
 from embed_data_model.clinical.procedures import Procedure
+from embed_data_model.core.codes import Code
 from embed_data_model.core.graph import DatasetGraph
 from embed_data_model.core.source import Issue, IssueSeverity
 from embed_data_model.sources.embed._values import cell, identifier, reconcile_merge
@@ -375,8 +376,8 @@ def _link(graph: DatasetGraph, kind: str, key: Hashable, attachment: Attachment)
         graph.update(entity, **{name: {*current, attachment[1]}})
 
 
-def _descriptor_slots(group: List[_PathologyRow]) -> Dict[int, List[str]]:
-    slots: Dict[int, List[str]] = defaultdict(list)
+def _descriptor_slots(group: List[_PathologyRow]) -> Dict[int, List[Code]]:
+    slots: Dict[int, List[Code]] = defaultdict(list)
     for item in group:
         for descriptor in item.descriptors:
             if descriptor.descriptor not in slots[descriptor.source_ordinal]:
